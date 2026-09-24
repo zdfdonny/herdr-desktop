@@ -60,6 +60,8 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: false,
       spellcheck: false,
+      // 允许渲染进程用 <webview> 内嵌 DeepSeek Harness Web GUI
+      webviewTag: true,
     },
   });
 
@@ -264,6 +266,8 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
+  // 先结束 dsh web 子进程树，再排空持久化写入
+  router.disposeWebAgents();
   void router.flush().finally(() => {
     app.quit();
   });

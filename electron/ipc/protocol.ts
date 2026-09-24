@@ -19,11 +19,15 @@ export const IPC = {
   AGENT_AVAILABILITY: 'agent:availability',
   /** 菜单/快捷键请求新建 agent（Ctrl+T）。 */
   NEW_AGENT: 'ui:new-agent',
+  /** DeepSeek Harness Web pane 就绪（带认证链接）。 */
+  WEB_READY: 'web:ready',
   // 控制命令（Renderer → Main）
   ADD_PROJECT: 'control:add-project',
   REMOVE_PROJECT: 'control:remove-project',
   TOGGLE_PROJECT: 'control:toggle-project',
   SPAWN_AGENT: 'control:spawn-agent',
+  /** 创建内嵌 DeepSeek Harness Web GUI 的 agent。 */
+  SPAWN_WEB_AGENT: 'control:spawn-web-agent',
   ATTACH_PANE: 'control:attach-pane',
   /** 重启一个恢复出的（已停止的）pane：走与 spawn 相同的两阶段流程。 */
   RESPAWN_PANE: 'control:respawn-pane',

@@ -25,6 +25,7 @@ const MESSAGE_CHANNELS = [
   IPC.AGENT_STATUS,
   IPC.AGENT_AVAILABILITY,
   IPC.NEW_AGENT,
+  IPC.WEB_READY,
 ] as const;
 
 const api: HerdrDesktopApi = {

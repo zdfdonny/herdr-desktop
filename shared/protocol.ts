@@ -12,6 +12,7 @@ import type {
   SessionState,
   SessionStatePatch,
   SpawnAgentParams,
+  SpawnWebAgentParams,
   AddProjectParams,
   AppSettings,
   ThemePreference,
@@ -45,6 +46,7 @@ export type ControlMessage =
       version: 1;
     })
   | (IpcEnvelope<SpawnAgentParams> & { type: 'control:spawn-agent'; version: 1 })
+  | (IpcEnvelope<SpawnWebAgentParams> & { type: 'control:spawn-web-agent'; version: 1 })
   | (IpcEnvelope<{ paneId: string }> & { type: 'control:attach-pane'; version: 1 })
   | (IpcEnvelope<{ paneId: string }> & { type: 'control:respawn-pane'; version: 1 })
   | (IpcEnvelope<{ paneId: string }> & { type: 'control:close-pane'; version: 1 })
@@ -72,7 +74,11 @@ export type MainToRendererMessage =
   | { type: 'app:error'; payload: AppErrorPayload }
   | { type: 'agent:status'; payload: AgentStatusPayload }
   | { type: 'agent:availability'; payload: AgentAvailabilityPayload }
-  | { type: 'ui:new-agent'; payload: { projectId?: string } };
+  | { type: 'ui:new-agent'; payload: { projectId?: string } }
+  | {
+      type: 'web:ready';
+      payload: { paneId: string; url: string };
+    };
 
 /**
  * 用户可见的错误（spawn 失败等），不崩溃主进程。
@@ -160,6 +166,7 @@ export type {
   SessionState,
   SessionStatePatch,
   SpawnAgentParams,
+  SpawnWebAgentParams,
   AddProjectParams,
   AppSettings,
   ThemePreference,

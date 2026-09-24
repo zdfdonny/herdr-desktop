@@ -93,6 +93,21 @@ export function spawnAgent(
   });
 }
 
+/** 在项目内创建 DeepSeek Harness Web agent（内嵌 Web GUI）。 */
+export function spawnWebAgent(
+  projectId: string,
+  opts?: { label?: string },
+): void {
+  sendControl({
+    type: 'control:spawn-web-agent',
+    version: 1,
+    payload: {
+      projectId,
+      label: opts?.label,
+    },
+  });
+}
+
 /** 关闭 pane。 */
 export function closePane(paneId: string): void {
   sendControl({ type: 'control:close-pane', version: 1, payload: { paneId } });

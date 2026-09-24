@@ -16,6 +16,7 @@ import { useNotificationStore } from './stores/notificationStore';
 import { useAgentsStore } from './stores/agentsStore';
 import { useUiStore } from './stores/uiStore';
 import { useLayoutStore } from './stores/layoutStore';
+import { useWebStore } from './stores/webStore';
 import { t } from './i18n';
 import { Layout } from './components/Layout';
 
@@ -41,6 +42,13 @@ export default function App() {
               message.payload.panes.filter((p) => p.running !== false),
               message.payload.focusedPaneId,
             );
+          // 剪除已关闭 pane 的认证链接缓存
+          useWebStore
+            .getState()
+            .prune(message.payload.panes.map((p) => p.paneId));
+          break;
+        case 'web:ready':
+          useWebStore.getState().setUrl(message.payload.paneId, message.payload.url);
           break;
         case 'state:settings':
           applySettings(message.payload);

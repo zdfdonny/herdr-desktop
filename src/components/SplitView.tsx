@@ -27,6 +27,7 @@ import {
 import { focusPane, closePane } from '../ipc/client';
 import { useT } from '../i18n';
 import { TerminalPane } from './TerminalPane';
+import { WebPane } from './WebPane';
 import { AgentPicker } from './AgentPicker';
 import { IconClose, IconSplit } from './icons';
 import type { MessageKey } from '../i18n/messages';
@@ -275,7 +276,7 @@ function PaneCell({ pane, focused }: { pane: PaneState; focused: boolean }) {
         )}
       </div>
       <div className="pane-cell__body">
-        <TerminalPane pane={pane} />
+        {pane.kind === 'web' ? <WebPane pane={pane} /> : <TerminalPane pane={pane} />}
       </div>
     </div>
   );

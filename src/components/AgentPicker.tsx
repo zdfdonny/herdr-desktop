@@ -9,7 +9,7 @@
  */
 
 import { AGENT_PRESETS, useAgentsStore } from '../stores/agentsStore';
-import { spawnAgent } from '../ipc/client';
+import { spawnAgent, spawnWebAgent } from '../ipc/client';
 import { useT } from '../i18n';
 
 interface AgentPickerProps {
@@ -45,7 +45,11 @@ export function AgentPicker({ projectId, onPick }: AgentPickerProps) {
           type="button"
           className="agent-picker__item"
           onClick={() => {
-            spawnAgent(projectId, preset.command, { label: preset.label });
+            if (preset.kind === 'web') {
+              spawnWebAgent(projectId, { label: preset.label });
+            } else {
+              spawnAgent(projectId, preset.command, { label: preset.label });
+            }
             onPick?.();
           }}
         >

@@ -1034,6 +1034,33 @@
   position: relative;
 }
 
+/* DeepSeek Harness Web pane：内嵌 <webview> 占满整个 pane */
+.web-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.web-pane__webview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg-app);
+}
+
+.web-pane__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 /* scrollback 搜索栏：浮在终端右上角 */
 .terminal-search {
   position: absolute;

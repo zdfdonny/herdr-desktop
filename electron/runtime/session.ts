@@ -16,7 +16,13 @@ import type {
   AgentState,
   AddProjectParams,
   SpawnAgentParams,
+  SpawnWebAgentParams,
 } from '../../shared/state';
+
+/** Web agent 的默认展示标签。 */
+const WEB_AGENT_LABEL = 'DeepSeek Harness';
+/** Web agent 的识别名（与 detect-manifest 中的 agent 名一致）。 */
+const WEB_AGENT_NAME = 'dsh';
 
 let projectCounter = 0;
 let paneCounter = 0;
@@ -124,6 +130,7 @@ export class Session {
       command: params.command,
       args: params.args ?? [],
       running: true,
+      kind: 'pty',
     };
     this.panes.set(paneId, pane);
 
@@ -152,6 +159,69 @@ export class Session {
     project.collapsed = false;
     this.bump();
     return pane;
+  }
+
+  /**
+   * 在指定项目内创建 DeepSeek Harness Web agent。
+   *
+   * 与 createAgent（PTY）不同：web agent 没有终端可检测，
+   * 直接置 name='dsh'、status='idle'；启动命令固定为 `dsh web` 供恢复重放。
+   * 项目不存在时抛错（与 createAgent 一致）。
+   */
+  createWebAgent(params: SpawnWebAgentParams): PaneState {
+    const project = this.projects.get(params.projectId);
+    if (!project) {
+      throw new Error(`project ${params.projectId} does not exist`);
+    }
+
+    const paneId = nextId('pane');
+    const pane: PaneState = {
+      paneId,
+      projectId: project.projectId,
+      label: params.label ?? WEB_AGENT_LABEL,
+      cwd: project.path,
+      focused: true,
+      command: 'dsh web',
+      args: [],
+      running: true,
+      kind: 'web',
+      webUrl: null,
+    };
+    this.panes.set(paneId, pane);
+
+    const agent: AgentState = {
+      paneId,
+      projectId: project.projectId,
+      name: WEB_AGENT_NAME,
+      label: params.label ?? null,
+      title: null,
+      status: 'idle',
+      stateChangeSeq: 0,
+      focused: true,
+    };
+    this.agents.set(paneId, agent);
+
+    // 取消其他 pane 的 focused
+    for (const p of this.panes.values()) {
+      if (p.paneId !== paneId) {
+        p.focused = false;
+        const a = this.agents.get(p.paneId);
+        if (a) a.focused = false;
+      }
+    }
+    this.focusedPaneId = paneId;
+    project.collapsed = false;
+    this.bump();
+    return pane;
+  }
+
+  /** 更新 web pane 的干净地址（就绪后回填）。 */
+  setPaneWebUrl(paneId: string, webUrl: string | null): void {
+    const pane = this.panes.get(paneId);
+    if (!pane || pane.kind !== 'web') return;
+    if (pane.webUrl === webUrl) return;
+    pane.webUrl = webUrl;
+    this.bump();
   }
 
   /** 读取单个 pane（不存在返回 undefined）。 */
@@ -203,6 +273,9 @@ export class Session {
         args: pane.args ?? [],
         running: false,
         focused: false,
+        // 旧版本快照缺 kind/webUrl：按 PTY 处理，webUrl 归 null
+        kind: pane.kind === 'web' ? 'web' : 'pty',
+        webUrl: typeof pane.webUrl === 'string' ? pane.webUrl : null,
       });
     }
 

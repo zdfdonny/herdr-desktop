@@ -18,6 +18,7 @@ import { useLayoutStore } from '../stores/layoutStore';
 import { TitleBar } from './TitleBar';
 import { Sidebar } from './Sidebar';
 import { TerminalPane } from './TerminalPane';
+import { WebPane } from './WebPane';
 import { SplitView } from './SplitView';
 import { ViewTabs } from './ViewTabs';
 import { SettingsDialog } from './SettingsDialog';
@@ -56,8 +57,13 @@ export function Layout() {
       />
     );
   } else if (focusedPane) {
-    // 聚焦了停止态 pane（恢复失败等）：显示重启提示
-    content = <TerminalPane pane={focusedPane} />;
+    // 聚焦了停止态 pane（恢复失败等）：显示重启提示（按类型分发）
+    content =
+      focusedPane.kind === 'web' ? (
+        <WebPane pane={focusedPane} />
+      ) : (
+        <TerminalPane pane={focusedPane} />
+      );
   } else {
     content = <EmptyState />;
   }

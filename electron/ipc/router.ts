@@ -10,6 +10,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { Session } from '../runtime/session';
 import { PtyManager } from '../runtime/pty-manager';
+import { WebAgentManager } from '../runtime/web-agent-manager';
 import { SettingsStore } from '../runtime/settings';
 import { detectFromSnapshot } from '../runtime/agent-detector';
 import { detectGitBranch } from '../runtime/git';
@@ -20,6 +21,7 @@ import type { MainToRendererMessage, ProxyTestResult } from '../../shared/protoc
 import type {
   AddProjectParams,
   SpawnAgentParams,
+  SpawnWebAgentParams,
   ThemePreference,
   Language,
 } from '../../shared/state';
@@ -28,6 +30,7 @@ export class IpcRouter {
   private session = new Session();
   private settings = new SettingsStore();
   private pty: PtyManager;
+  private web: WebAgentManager;
   /** 等待终端就绪的 spawn 请求（两阶段创建的中间态）。 */
   private pendingSpawns = new Map<string, SpawnAgentParams>();
   /**
@@ -74,6 +77,10 @@ export class IpcRouter {
         this.pushSnapshot();
       },
     });
+
+    this.web = new WebAgentManager({
+      onExit: (paneId, exitCode) => this.onWebExit(paneId, exitCode),
+    });
   }
 
   /** 加载持久化设置（app ready 后、创建窗口前调用）。 */
@@ -104,6 +111,11 @@ export class IpcRouter {
     await flushState();
   }
 
+  /** 退出前结束所有 dsh web 子进程树（before-quit 调用）。 */
+  disposeWebAgents(): void {
+    this.web.disposeAll();
+  }
+
   getSettings() {
     return this.settings.get();
   }
@@ -129,6 +141,9 @@ export class IpcRouter {
     );
     ipcMain.on(IPC.SPAWN_AGENT, (_event, params: SpawnAgentParams) => {
       this.spawnAgent(params);
+    });
+    ipcMain.on(IPC.SPAWN_WEB_AGENT, (_event, params: SpawnWebAgentParams) => {
+      this.spawnWebAgent(params);
     });
     ipcMain.on(IPC.ATTACH_PANE, (_event, payload: { paneId: string }) => {
       this.attachPane(payload.paneId);
@@ -274,6 +289,7 @@ export class IpcRouter {
     const paneIds = this.session.removeProject(projectId);
     for (const paneId of paneIds) {
       this.pty.kill(paneId);
+      this.web.kill(paneId);
     }
     this.pushSnapshot();
   }
@@ -305,6 +321,89 @@ export class IpcRouter {
     this.pushSnapshot();
   }
 
+  /** 创建 DeepSeek Harness Web agent（新建路径）。 */
+  private spawnWebAgent(params: SpawnWebAgentParams): void {
+    if (!params.projectId) {
+      this.pushError('error.noProject', undefined, { messageKey: 'error.noProjectDetail' });
+      return;
+    }
+
+    let pane: ReturnType<Session['createWebAgent']>;
+    try {
+      pane = this.session.createWebAgent(params);
+    } catch {
+      this.pushError('error.projectNotFound', { id: params.projectId }, {
+        messageKey: 'error.projectNotFoundDetail',
+      });
+      return;
+    }
+
+    this.startWebAgent(pane.paneId);
+    this.pushSnapshot();
+  }
+
+  /**
+   * 启动某个 web pane 的 dsh web 子进程（新建与恢复共用）。
+   *
+   * 就绪前 pane 已标记 running、webUrl 为 null，渲染端显示「正在启动」；
+   * 就绪后回填 webUrl 并推送 `web:ready`（带认证链接）。
+   */
+  private startWebAgent(paneId: string): void {
+    const pane = this.session.getPane(paneId);
+    if (!pane || pane.kind !== 'web') return;
+
+    const env = this.launchEnvFor('dsh');
+    void this.web.spawn(paneId, env, pane.cwd ?? undefined).then((result) => {
+      if (result.ok) {
+        this.revivingPanes.delete(paneId);
+        this.session.setPaneWebUrl(paneId, result.cleanUrl);
+        this.broadcast({
+          type: IPC.WEB_READY,
+          payload: { paneId, url: result.url },
+        });
+        this.pushSnapshot();
+        return;
+      }
+
+      /*
+       * spawn 失败的回滚策略（与 PTY 一致）：
+       * - 新建的 pane：回滚删除；
+       * - 重启恢复的 pane：保留条目并回到停止态。
+       */
+      if (this.revivingPanes.has(paneId)) {
+        this.revivingPanes.delete(paneId);
+        this.session.setPaneRunning(paneId, false);
+      } else {
+        this.session.closePane(paneId);
+      }
+      this.pushError(
+        result.reason === 'not-found' ? 'error.commandNotFound' : 'error.spawnFailed',
+        { command: 'dsh web', reason: result.error },
+        { paneId, projectId: pane.projectId },
+      );
+      this.pushSnapshot();
+    });
+  }
+
+  /** 尝试恢复一个停止态的 web pane（只改状态，不推送快照）。 */
+  private tryReviveWeb(paneId: string): boolean {
+    const pane = this.session.getPane(paneId);
+    if (!pane || pane.kind !== 'web') return false;
+    if (pane.running || this.web.has(paneId)) return false;
+
+    this.revivingPanes.add(paneId);
+    this.session.setPaneRunning(paneId, true);
+    this.startWebAgent(paneId);
+    return true;
+  }
+
+  /** web 子进程意外退出（崩溃等）：按与 PTY 退出一致的方式收掉 pane。 */
+  private onWebExit(paneId: string, _exitCode: number): void {
+    this.web.kill(paneId);
+    this.session.closePane(paneId);
+    this.pushSnapshot();
+  }
+
   /**
    * 重启一个停止态 pane（「重新启动」按钮入口）。
    *
@@ -313,7 +412,9 @@ export class IpcRouter {
    * 此时 attachPane 读取暂存的参数与尺寸拉起 PTY，首帧排版即正确。
    */
   private respawnPane(paneId: string): void {
-    if (this.tryRevive(paneId)) {
+    const pane = this.session.getPane(paneId);
+    const revived = pane?.kind === 'web' ? this.tryReviveWeb(paneId) : this.tryRevive(paneId);
+    if (revived) {
       this.pushSnapshot();
     }
   }
@@ -495,6 +596,7 @@ export class IpcRouter {
 
   private closePane(paneId: string): void {
     this.pty.kill(paneId);
+    this.web.kill(paneId);
     // 清理两阶段创建的中间态，避免 pending 泄漏
     this.pendingSpawns.delete(paneId);
     this.pendingSizes.delete(paneId);
@@ -512,7 +614,12 @@ export class IpcRouter {
      * 渲染端会先收到「已聚焦但未运行」的中间态，
      * 「重新启动」提示会闪现一帧才被终端替换。
      */
-    this.tryRevive(paneId);
+    const pane = this.session.getPane(paneId);
+    if (pane?.kind === 'web') {
+      this.tryReviveWeb(paneId);
+    } else {
+      this.tryRevive(paneId);
+    }
     this.pushSnapshot();
   }
 

@@ -14,8 +14,10 @@ export interface AgentPreset {
   id: string;
   /** 展示名（品牌名，通常不翻译）。 */
   label: string;
-  /** 启动命令。 */
+  /** 启动命令（web 预设仅用于可用性探测，实际启动走 spawnWebAgent）。 */
   command: string;
+  /** 创建方式：普通终端进程（默认）或内嵌 Web GUI。 */
+  kind?: 'pty' | 'web';
 }
 
 /**
@@ -69,6 +71,11 @@ export const AGENT_PRESETS: AgentPreset[] = [
   { id: 'maki', label: 'Maki', command: 'maki' },
   { id: 'muse', label: 'Muse', command: 'muse' },
   { id: 'terminal', label: 'Terminal', command: TERMINAL_COMMAND },
+  /*
+   * DeepSeek Harness（Web GUI）：不是终端 TUI，而是由主进程托管 `dsh web`
+   * 后经 <webview> 内嵌。command 仅用于可用性探测（探测 `dsh` 是否在 PATH）。
+   */
+  { id: 'dsh-web', label: 'DeepSeek Harness', command: 'dsh', kind: 'web' },
 ];
 
 interface AgentsStore {

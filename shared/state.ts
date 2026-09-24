@@ -8,6 +8,9 @@
 
 export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 
+/** pane 类型：终端进程（默认）或内嵌 Web GUI。 */
+export type PaneKind = 'pty' | 'web';
+
 /**
  * 项目 —— agent 的归属单位。
  *
@@ -68,6 +71,18 @@ export interface PaneState {
    * 旧版本快照中可能缺失，读取方按 true 处理（向后兼容）。
    */
   running?: boolean;
+  /**
+   * pane 类型：终端进程（默认）或内嵌 Web GUI。
+   * 旧版本快照中缺失，读取方按 'pty' 处理。
+   */
+  kind?: PaneKind;
+  /**
+   * Web pane 的干净地址（不含 token 查询参数）。
+   *
+   * 仅用于持久化/恢复与展示；带 token 的认证链接是进程内敏感信息，
+   * 由 Main 运行时通过 `web:ready` 下发给渲染端，绝不落盘。
+   */
+  webUrl?: string | null;
 }
 
 /** 完整会话状态（Renderer 端投影的权威结构）。 */
@@ -110,6 +125,14 @@ export interface SpawnAgentParams {
   /** 工作目录，缺省为项目路径。 */
   cwd?: string;
   /** 可选 agent 标签。 */
+  label?: string;
+}
+
+/** 创建 DeepSeek Harness Web agent 的参数。 */
+export interface SpawnWebAgentParams {
+  /** agent 归属的项目。 */
+  projectId: string;
+  /** 可选展示标签，缺省为「DeepSeek Harness」。 */
   label?: string;
 }
 
