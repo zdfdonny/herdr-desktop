@@ -383,6 +383,20 @@ export class IpcRouter {
     }
 
     this.revivingPanes.delete(paneId);
+
+    /*
+     * 工作目录失效时 pane 仍会启动（回退到主目录），但用户需要知道
+     * 「agent 不在我以为的那个目录里」——否则会在错误的目录里改文件。
+     * 不当作错误处理：agent 已经正常跑起来了。
+     */
+    if (result.cwdFallback) {
+      this.pushError(
+        'error.cwdNotFound',
+        { path: result.cwdFallback.requested, used: result.cwdFallback.used },
+        { paneId, projectId: params.projectId },
+      );
+    }
+
     this.pushSnapshot();
   }
 

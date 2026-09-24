@@ -56,6 +56,8 @@ export interface Messages {
     stoppedHint: string;
     /** 重新启动按钮。 */
     restart: string;
+    /** Web pane 启动中的占位提示。 */
+    webStarting: string;
     /** scrollback 搜索占位符。 */
     searchPlaceholder: string;
     /** 搜索上一个。 */
@@ -146,6 +148,8 @@ export interface Messages {
   error: {
     commandNotFound: string;
     spawnFailed: string;
+    cwdNotFound: string;
+    cwdNotFoundDetail: string;
     noProject: string;
     noProjectDetail: string;
     projectNotFound: string;
@@ -189,6 +193,7 @@ const zhCN: Messages = {
     stoppedHint:
       '应用重启后进程不会自动恢复。点击下方按钮，或在左侧列表中点击该智能体即可启动。',
     restart: '重新启动',
+    webStarting: '正在启动 DeepSeek Harness…',
     searchPlaceholder: '搜索终端历史',
     searchPrev: '上一个',
     searchNext: '下一个',
@@ -265,6 +270,8 @@ const zhCN: Messages = {
   error: {
     commandNotFound: '命令不存在',
     spawnFailed: '启动智能体失败',
+    cwdNotFound: '项目目录不存在',
+    cwdNotFoundDetail: '目录 {path} 已不存在，已在 {used} 中启动。',
     noProject: '未选择项目',
     noProjectDetail: '请先添加一个项目，再创建智能体。',
     projectNotFound: '项目不存在',
@@ -308,6 +315,7 @@ const en: Messages = {
     stoppedHint:
       'Processes do not survive an app restart. Click the button below — or the agent in the sidebar — to start it.',
     restart: 'Restart',
+    webStarting: 'Starting DeepSeek Harness…',
     searchPlaceholder: 'Search terminal history',
     searchPrev: 'Previous',
     searchNext: 'Next',
@@ -384,6 +392,8 @@ const en: Messages = {
   error: {
     commandNotFound: 'Command not found',
     spawnFailed: 'Failed to start agent',
+    cwdNotFound: 'Project directory missing',
+    cwdNotFoundDetail: 'Directory {path} no longer exists; started in {used} instead.',
     noProject: 'No project selected',
     noProjectDetail: 'Add a project before creating an agent.',
     projectNotFound: 'Project not found',

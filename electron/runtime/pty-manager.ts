@@ -9,15 +9,39 @@
  */
 
 import * as pty from 'node-pty';
+import { statSync } from 'node:fs';
 import type { PtyRuntime, PtyCallbacks } from './types';
 import type { SpawnAgentParams } from '../../shared/state';
 import { resolveExecutable, resolveDefaultShell, isWindowsBatchFile, isWindows } from '../platform';
 
 const MAX_BUFFER_CHARS = 200_000;
 
+/**
+ * 目录是否存在且确实是目录。
+ *
+ * 必须检查 isDirectory：路径存在但是个文件时，用它当 cwd 同样会在
+ * 创建进程那一步失败，报错形式与「目录不存在」完全一样。
+ */
+function isUsableDirectory(dir: string): boolean {
+  if (!dir) return false;
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** spawn 结果：成功带 runtime，失败带可展示的错误。 */
 export type SpawnResult =
-  | { ok: true; runtime: PtyRuntime }
+  | {
+      ok: true;
+      runtime: PtyRuntime;
+      /**
+       * 请求的工作目录不可用时，实际回退到的目录；正常时为 undefined。
+       * 由调用方决定是否提示用户（agent 已启动，只是不在预期目录）。
+       */
+      cwdFallback?: { requested: string; used: string };
+    }
   | { ok: false; error: string; reason: 'not-found' | 'spawn-failed' | 'duplicate' };
 
 export class PtyManager {
@@ -71,7 +95,27 @@ export class PtyManager {
       };
     }
 
-    const cwd = cwdOverride ?? params.cwd ?? process.cwd();
+    /*
+     * 工作目录必须存在，否则 forkpty / CreateProcess 会在**创建进程**这一步失败：
+     * - macOS / Linux：`posix_spawnp failed`（errno 是 ENOENT，但 node-pty 不透出）
+     * - Windows：`Cannot create process, error code: 267`（ERROR_DIRECTORY）
+     *
+     * 报错里只有命令名，看不出真正原因是目录不存在，极难排查。
+     * 常见触发场景：项目目录被删/改名/移动，或 session.json 从别的机器同步过来，
+     * 其中记录的是本机不存在的路径。
+     *
+     * 这里不直接失败，而是回退到用户主目录（再退到进程 cwd），保证 agent 仍能启动；
+     * 目录无效的事实通过 `cwdFallback` 回传，由调用方提示用户。
+     */
+    const requestedCwd = cwdOverride ?? params.cwd ?? process.cwd();
+    let cwd = requestedCwd;
+    let cwdFallback: string | undefined;
+    if (!isUsableDirectory(cwd)) {
+      const home = process.env.HOME ?? process.env.USERPROFILE;
+      const fallback = home && isUsableDirectory(home) ? home : process.cwd();
+      cwdFallback = cwd;
+      cwd = fallback;
+    }
 
     /*
      * `.cmd` / `.bat` 不能直接交给 CreateProcess，需用 cmd.exe 包装启动。
@@ -112,10 +156,19 @@ export class PtyManager {
       };
       ptyProcess = pty.spawn(spawnFile, spawnArgs, spawnOptions);
     } catch (error) {
+      /*
+       * 把已知的底层错误翻译成人能看懂的话。
+       *
+       * `posix_spawnp failed` / `error code: 267` 是 forkpty / CreateProcess
+       * 在「创建进程」这一步失败的统称，真正原因（目录不存在、架构不匹配、
+       * 二进制损坏、无执行权限）都不会体现在这句话里，直接抛给用户等于没说。
+       */
+      const detail = describeError(error);
+      const hint = describeSpawnFailure(detail, executable, cwd);
       return {
         ok: false,
         reason: 'spawn-failed',
-        error: `Failed to start ${commandName}: ${describeError(error)}`,
+        error: `Failed to start ${commandName}: ${detail}${hint}`,
       };
     }
 
@@ -140,7 +193,7 @@ export class PtyManager {
       this.callbacks.onExit(paneId, exitCode, signal);
     });
 
-    return { ok: true, runtime };
+    return { ok: true, runtime, ...(cwdFallback ? { cwdFallback: { requested: cwdFallback, used: cwd } } : {}) };
   }
 
   /** 一键创建默认 shell（用于「Terminal」预设缺失时的回退）。 */
@@ -202,4 +255,46 @@ function describeError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+/**
+ * 为「创建进程失败」这类不透明的错误补一句可操作的原因。
+ *
+ * node-pty 在 forkpty / CreateProcess 失败时只透出一句笼统的话：
+ * - macOS / Linux：`posix_spawnp failed.`
+ * - Windows：`Cannot create process, error code: 267`
+ *
+ * 这句话对排查毫无帮助——它可能是目录不存在、二进制架构不匹配（在 Apple
+ * Silicon 上跑 x64 的 node-pty）、文件损坏、或没有执行权限。这里按已知
+ * 特征逐条给出最可能的解释。
+ *
+ * 注意：走到这里时 `cwd` 已经过 isUsableDirectory 校验，所以正常情况下
+ * 不会再是「目录不存在」；仍保留该判断以覆盖校验与实际创建之间的竞态
+ * （目录在校验后被删除）。
+ */
+function describeSpawnFailure(detail: string, executable: string, cwd: string): string {
+  const lower = detail.toLowerCase();
+  const isSpawnFailure =
+    lower.includes('posix_spawnp') ||
+    lower.includes('cannot create process') ||
+    lower.includes('error code: 267') ||
+    lower.includes('enoent');
+
+  if (!isSpawnFailure) return '';
+
+  if (!isUsableDirectory(cwd)) {
+    return `\n→ 工作目录不存在或不是目录：${cwd}`;
+  }
+
+  // Apple Silicon 上跑到 x64 的 node-pty 原生模块时，spawn 同样会失败。
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
+    return (
+      `\n→ 可执行文件：${executable}\n` +
+      `  在 Apple Silicon 上仍失败，常见原因是该二进制为 Intel 版本且未装 Rosetta 2，` +
+      `或 node-pty 原生模块架构与当前进程不匹配。\n` +
+      `  可尝试：softwareupdate --install-rosetta`
+    );
+  }
+
+  return `\n→ 可执行文件：${executable}\n  请确认该文件存在、有执行权限，且架构与当前系统匹配。`;
 }
