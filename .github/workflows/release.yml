@@ -55,6 +55,12 @@ jobs:
       - name: Verify artifact naming
         run: node scripts/check-artifacts.js
 
+      # deb 打包要求 author.email 或 linux.maintainer，缺了会在
+      # linux job 跑到最后一步才失败（前面编译 node-pty 已经花掉几分钟）。
+      # 本地打 win/mac 完全不会触发这个校验，所以在这里提前拦一道。
+      - name: Verify Linux package metadata
+        run: node scripts/check-linux-meta.js
+
       - name: Resolve version and tag
         id: meta
         run: |

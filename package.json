@@ -1,10 +1,14 @@
 {
   "name": "herdr-desktop",
   "productName": "Herdr Desktop",
+  "desktopName": "herdr-desktop.desktop",
   "version": "0.1.0",
   "description": "Multi-agent management desktop app - the runtime your coding agents live on.",
   "license": "MIT",
-  "author": "herdr-desktop contributors",
+  "author": {
+    "name": "herdr-desktop contributors",
+    "email": "zdfdonny@163.com"
+  },
   "homepage": "https://github.com/zdfdonny/herdr-desktop#readme",
   "repository": {
     "type": "git",
@@ -105,7 +109,10 @@
       "target": [
         "AppImage",
         "deb"
-      ]
+      ],
+      "syncDesktopName": true,
+      "synopsis": "Multi-agent management desktop app",
+      "maintainer": "herdr-desktop contributors <zdfdonny@163.com>"
     },
     "nsis": {
       "oneClick": false,
