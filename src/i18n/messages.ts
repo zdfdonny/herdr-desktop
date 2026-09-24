@@ -84,6 +84,8 @@ export interface Messages {
     empty: string;
     /** 关闭视图标签。 */
     close: string;
+    /** 标签 tooltip 里提示「右键可重命名」。 */
+    renameHint: string;
   };
   status: {
     idle: string;
@@ -202,6 +204,7 @@ const zhCN: Messages = {
   view: {
     empty: '新视图',
     close: '关闭视图',
+    renameHint: '右键重命名',
   },
   status: {
     idle: '空闲',
@@ -320,6 +323,7 @@ const en: Messages = {
   view: {
     empty: 'New view',
     close: 'Close view',
+    renameHint: 'Right-click to rename',
   },
   status: {
     idle: 'Idle',

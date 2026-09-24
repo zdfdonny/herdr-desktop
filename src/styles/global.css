@@ -57,6 +57,15 @@
   /* 阴影 */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  /*
+   * 选中视图标签的底色。
+   *
+   * 深色主题下不能直接复用 --bg-elevated（#232323）：它与未选中的
+   * --bg-surface-2（#1f1f1f）只差 4 级，在深色背景上几乎看不出区别。
+   * 这里特意用比未选中**明显更亮**的一档，让选中标签跳出来。
+   */
+  --view-tab-active-bg: #3d3d3d;
 }
 
 /* ===== 浅色主题 ===== */
@@ -102,6 +111,9 @@
   /* 阴影 */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+
+  /* 选中视图标签底色：浅色下用纯白即可与 #f4f4f5 拉开 */
+  --view-tab-active-bg: #ffffff;
 }
 
 /* ===== system 模式下按系统外观分配 ===== */
@@ -141,6 +153,8 @@
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+
+    --view-tab-active-bg: #ffffff;
   }
 }
 
@@ -180,6 +194,8 @@
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+    --view-tab-active-bg: #3d3d3d;
   }
 }
 

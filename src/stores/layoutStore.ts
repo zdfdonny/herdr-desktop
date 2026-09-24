@@ -63,11 +63,19 @@ export type LayoutNode = SplitNode | PaneLeaf | EmptyLeaf;
  */
 export interface View {
   id: string;
+  /**
+   * 标签显示名。新建时给一个递增序号（"1"、"2"…），
+   * 用户可通过右键标签重命名；重命名后不再随内部 agent 变化。
+   */
+  name: string;
   tree: LayoutNode | null;
 }
 
 /** 分隔条宽度（px），需与 components.css 中 .split-divider 的尺寸一致。 */
 export const DIVIDER_SIZE = 4;
+
+/** 视图标签名的最大长度，防止过长名字把标签栏撑爆。 */
+export const MAX_VIEW_NAME_LENGTH = 24;
 
 const STORAGE_KEY = 'herdr.layout.v2';
 
@@ -77,8 +85,23 @@ function nextId(): string {
   return `n${nodeSeq}-${Date.now().toString(36)}`;
 }
 
+/**
+ * 视图标签序号的计数器。
+ *
+ * 只增不减：关掉标签再新建不会复用旧数字，避免用户看到
+ * 「同一个名字先后指过两个不同视图」。
+ * 初始值由 `loadLayout()` 依据已持久化的视图名回填。
+ */
+let viewSeq = 0;
+
+/** 生成下一个标签默认名（纯数字，从 1 开始）。 */
+function nextViewName(): string {
+  viewSeq += 1;
+  return String(viewSeq);
+}
+
 function makeView(tree: LayoutNode | null): View {
-  return { id: `v-${nextId()}`, tree };
+  return { id: `v-${nextId()}`, name: nextViewName(), tree };
 }
 
 function makePaneLeaf(pane: PaneState): PaneLeaf {
@@ -409,7 +432,13 @@ function isValidTree(node: unknown): node is LayoutNode {
   return false;
 }
 
-function isValidView(value: unknown): value is View {
+/**
+ * 校验持久化的视图。
+ *
+ * 注意判定类型是 `View` 的「缺 name 版」：旧版本数据没有 name 字段，
+ * 放行后在 loadLayout 里补默认名，避免升级时清空用户的标签排列。
+ */
+function isValidView(value: unknown): value is Omit<View, 'name'> & { name?: string } {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
   return typeof v.id === 'string' && (v.tree === null || isValidTree(v.tree));
@@ -418,22 +447,42 @@ function isValidView(value: unknown): value is View {
 interface PersistedLayout {
   views: View[];
   activeViewId: string | null;
+  /** 标签序号计数器，跨会话递增，避免重名。 */
+  viewSeq: number;
 }
 
 function loadLayout(): PersistedLayout {
-  const empty: PersistedLayout = { views: [], activeViewId: null };
+  const empty: PersistedLayout = { views: [], activeViewId: null, viewSeq: 0 };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return empty;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return empty;
     const p = parsed as Record<string, unknown>;
-    const views = Array.isArray(p.views) ? p.views.filter(isValidView) : [];
+    const stored = Array.isArray(p.views) ? p.views.filter(isValidView) : [];
+    /*
+     * 计数器取「持久化值」与「现有标签名里的最大数字」的较大者：
+     * 前者覆盖正常路径，后者兜底旧数据（早期版本没有 viewSeq 字段）。
+     */
+    const maxInNames = stored.reduce((max, v) => {
+      const n = Number.parseInt(v.name ?? '', 10);
+      return Number.isInteger(n) && n > max ? n : max;
+    }, 0);
+    const persisted = typeof p.viewSeq === 'number' && Number.isFinite(p.viewSeq) ? p.viewSeq : 0;
+    const viewSeq = Math.max(persisted, maxInNames);
+    /*
+     * 旧版本持久化的视图没有 name 字段。这里就地补一个序号而不是丢弃，
+     * 否则升级后用户的整个标签排列会被静默清空。
+     */
+    let seq = viewSeq;
+    const views: View[] = stored.map((v) =>
+      typeof v.name === 'string' && v.name.length > 0 ? (v as View) : { ...v, name: String((seq += 1)) },
+    );
     const activeViewId =
       typeof p.activeViewId === 'string' && views.some((v) => v.id === p.activeViewId)
         ? p.activeViewId
         : (views[0]?.id ?? null);
-    return { views, activeViewId };
+    return { views, activeViewId, viewSeq: seq };
   } catch {
     return empty;
   }
@@ -445,7 +494,7 @@ function saveLayout(views: View[], activeViewId: string | null): void {
       localStorage.removeItem(STORAGE_KEY);
       return;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ views, activeViewId }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ views, activeViewId, viewSeq }));
   } catch {
     /* 存储不可用时静默忽略（布局只是便利，不影响功能） */
   }
@@ -494,6 +543,12 @@ interface LayoutStore {
   /** 激活包含指定 pane 的视图；找不到则忽略。返回是否命中。 */
   activateViewOfPane: (paneId: string) => boolean;
   closeView: (viewId: string) => void;
+  /**
+   * 重命名视图标签。
+   * 传入空白字符串视为「恢复默认」——重新分配一个序号，
+   * 避免留下一个看不见名字的空标签。
+   */
+  renameView: (viewId: string, name: string) => void;
   reconcile: (panes: PaneState[], focusedPaneId: string | null) => void;
   reset: () => void;
 }
@@ -512,6 +567,8 @@ function viewOfPane(views: View[], paneId: string): View | null {
 
 export const useLayoutStore = create<LayoutStore>((set, get) => {
   const initial = loadLayout();
+  // 续上持久化的序号，避免重开后新建的标签与既有标签重名。
+  viewSeq = initial.viewSeq;
 
   /** 统一的写入口：更新视图数组 + 激活项并落盘。 */
   const commit = (views: View[], activeViewId: string | null) => {
@@ -586,6 +643,16 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       commit(next, nextActive);
     },
 
+    renameView: (viewId, name) => {
+      const { views, activeViewId } = get();
+      const trimmed = name.trim().slice(0, MAX_VIEW_NAME_LENGTH);
+      const next = views.map((v) => {
+        if (v.id !== viewId) return v;
+        return { ...v, name: trimmed.length > 0 ? trimmed : nextViewName() };
+      });
+      commit(next, activeViewId);
+    },
+
     reconcile: (panes, focusedPaneId) => {
       const sig = signature(panes);
       const state = get();
@@ -651,6 +718,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
 
     reset: () => {
       saveLayout([], null);
+      viewSeq = 0;
       set({ views: [], activeViewId: null, lastSignature: '' });
     },
   };

@@ -677,7 +677,12 @@
   gap: 2px;
   flex-shrink: 0;
   padding: 4px 8px 0;
+  /*
+   * 横向可滚动；纵向必须显式 hidden——只写 overflow-x: auto 时
+   * 另一轴会变成 auto，选中标签顶部那 2px 强调线会被裁掉。
+   */
   overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--border);
   background: var(--bg-app);
 }
@@ -685,30 +690,60 @@
 .view-tab {
   display: flex;
   align-items: center;
-  max-width: 200px;
-  border: 1px solid transparent;
+  /* ::after 的定位基准 */
+  position: relative;
+  /*
+   * 固定最小宽度：默认名是纯数字（"1"、"2"），
+   * 按内容自适应会让标签窄得像个小方块，既难点中也不好看。
+   */
+  min-width: 140px;
+  max-width: 220px;
+  /*
+   * 未选中态也要有实体感：只靠文字颜色区分时，
+   * 标签会跟标签栏背景糊在一起，看不出是「可点的标签」。
+   * 用浅一档的底色 + 完整描边勾出形状，选中态再抬到更亮的层次。
+   */
+  border: 1px solid var(--border);
   border-bottom: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--bg-surface-2);
   color: var(--text-secondary);
 }
 
 .view-tab:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .view-tab.is-active {
-  background: var(--bg-elevated);
-  border-color: var(--border);
+  background: var(--view-tab-active-bg);
+  border-color: var(--border-strong);
   color: var(--text-primary);
+}
+
+/*
+ * 选中标签与下方内容区连成一体：用与标签同色的 1px 覆盖层盖住
+ * 标签栏的分隔线。贴在标签底边内侧，避免被 overflow-y 裁掉。
+ */
+.view-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--view-tab-active-bg);
 }
 
 .view-tab__label {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 撑满标签宽度，让整块区域都可点击（而不是只有文字那么宽） */
+  flex: 1;
   min-width: 0;
   height: 32px;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 12px;
   border: none;
   background: transparent;
   color: inherit;
@@ -718,6 +753,8 @@
 }
 
 .view-tab__text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -727,8 +764,9 @@
   flex-shrink: 0;
   padding: 0 5px;
   border-radius: 8px;
-  background: var(--bg-hover);
-  color: var(--text-tertiary);
+  /* 未选中标签底色已是 --bg-surface-2，这里要再深一档才看得出来 */
+  background: var(--bg-active);
+  color: var(--text-secondary);
   font-size: 10px;
   line-height: 14px;
 }
@@ -740,17 +778,32 @@
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  margin-right: 4px;
+  margin-right: 6px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .view-tab__close:hover {
   background: var(--bg-active);
   color: var(--text-primary);
+}
+
+/* 就地重命名输入框：宽度贴近标签本身，避免切换时标签栏跳动 */
+.view-tab__rename {
+  width: 140px;
+  height: 24px;
+  margin: 0 6px;
+  padding: 0 6px;
+  border: 1px solid var(--accent, var(--status-working));
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
 }
 
 /* ===== 多 pane 分屏（用户可控的二维布局树） ===== */
