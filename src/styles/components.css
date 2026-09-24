@@ -108,6 +108,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 /* ===== 主区域顶部栏（右栏专用）===== */
@@ -1068,6 +1069,28 @@
   height: 100%;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+/*
+ * 视图层：所有视图保持挂载，仅切换可见性。
+ *
+ * 用 visibility:hidden + 绝对定位（而非 display:none）：webview 元素保持
+ * 连接且保持渲染，仅不可见，最大化避免 Electron 因 display:none 回收 guest
+ * 的合成层、在重新显示时触发重载。切标签只改 visibility，webview 始终待在
+ * 原容器里，DSH Web GUI 页面与会话不中断。
+ */
+.view-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.view-layer--active {
+  visibility: visible;
+  pointer-events: auto;
 }
 
 /* scrollback 搜索栏：浮在终端右上角 */

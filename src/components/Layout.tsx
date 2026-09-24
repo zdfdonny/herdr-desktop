@@ -48,13 +48,36 @@ export function Layout() {
   const activeView = views.find((v) => v.id === activeViewId) ?? views[0] ?? null;
 
   let content: ReactNode;
-  if (activeView && activeView.tree) {
+  if (views.length > 0) {
+    /*
+     * 所有视图保持挂载，只切换可见性。
+     *
+     * 这很关键：Electron 的 <webview> guest 一旦从 DOM 移除（卸载）或 reparent
+     * 就会被销毁重建，导致切换标签页时 DSH Web GUI 整页重载。这里让每个视图都
+     * 常驻在各自的 .view-layer 里，切标签只改 display，webview 始终待在原容器，
+     * 页面与会话不中断。
+     */
     content = (
-      <SplitView
-        node={activeView.tree}
-        panes={panesById}
-        focusedPaneId={state.focusedPaneId}
-      />
+      <>
+        {views.map((v) => {
+          const active = v.id === activeViewId;
+          return (
+            <div
+              key={v.id}
+              className={`view-layer${active ? ' view-layer--active' : ''}`}
+              aria-hidden={!active}
+            >
+              {v.tree && (
+                <SplitView
+                  node={v.tree}
+                  panes={panesById}
+                  focusedPaneId={state.focusedPaneId}
+                />
+              )}
+            </div>
+          );
+        })}
+      </>
     );
   } else if (focusedPane) {
     // 聚焦了停止态 pane（恢复失败等）：显示重启提示（按类型分发）

@@ -7,6 +7,10 @@
  *
  * 每个 pane 使用独立的 session partition（`dsh-<paneId>`）隔离 Cookie，
  * 避免多个 DSH 实例在同一回环主机上的 Cookie 互相覆盖。
+ *
+ * 注意：不要在这里做「卸载时搬移 webview」之类的 DOM reparent——Electron 对
+ * <webview> 的 guest 生命周期绑定在元素连接上，reparent 会触发销毁重建导致重载。
+ * 「切换标签不重载」由 Layout 保持所有视图挂载、仅切换 display 来保证（见 Layout）。
  */
 
 import type { PaneState } from '@shared/state';
