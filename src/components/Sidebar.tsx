@@ -65,7 +65,7 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      {/* 品牌区：左侧 herdr 官方 logo，右侧应用名（无副标题） */}
+      {/* 品牌区：左侧应用图标，右侧应用名（无副标题） */}
       <div className="sidebar__brand">
         <span className="sidebar__brand-mark" aria-hidden="true">
           <IconLogo size={20} />

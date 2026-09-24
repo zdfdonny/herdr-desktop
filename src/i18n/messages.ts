@@ -64,6 +64,26 @@ export interface Messages {
     searchNext: string;
     /** 关闭搜索。 */
     searchClose: string;
+    /** 分屏按钮。 */
+    split: string;
+    /** 向左分屏。 */
+    splitLeft: string;
+    /** 向右分屏。 */
+    splitRight: string;
+    /** 向上分屏。 */
+    splitUp: string;
+    /** 向下分屏。 */
+    splitDown: string;
+    /** 分屏后空位标题。 */
+    emptySlotTitle: string;
+    /** 取消分屏（关闭空位）。 */
+    emptySlotCancel: string;
+  };
+  view: {
+    /** 视图标签没有可显示标题时的兜底文案。 */
+    empty: string;
+    /** 关闭视图标签。 */
+    close: string;
   };
   status: {
     idle: string;
@@ -171,6 +191,17 @@ const zhCN: Messages = {
     searchPrev: '上一个',
     searchNext: '下一个',
     searchClose: '关闭搜索',
+    split: '拆分',
+    splitLeft: '向左拆分',
+    splitRight: '向右拆分',
+    splitUp: '向上拆分',
+    splitDown: '向下拆分',
+    emptySlotTitle: '选择要在该区域创建的智能体',
+    emptySlotCancel: '取消拆分',
+  },
+  view: {
+    empty: '新视图',
+    close: '关闭视图',
   },
   status: {
     idle: '空闲',
@@ -278,6 +309,17 @@ const en: Messages = {
     searchPrev: 'Previous',
     searchNext: 'Next',
     searchClose: 'Close search',
+    split: 'Split',
+    splitLeft: 'Split left',
+    splitRight: 'Split right',
+    splitUp: 'Split up',
+    splitDown: 'Split down',
+    emptySlotTitle: 'Choose an agent for this area',
+    emptySlotCancel: 'Cancel split',
+  },
+  view: {
+    empty: 'New view',
+    close: 'Close view',
   },
   status: {
     idle: 'Idle',

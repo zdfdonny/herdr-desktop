@@ -15,6 +15,7 @@ import { useSettingsStore, applyThemeToDom } from './stores/settingsStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useAgentsStore } from './stores/agentsStore';
 import { useUiStore } from './stores/uiStore';
+import { useLayoutStore } from './stores/layoutStore';
 import { t } from './i18n';
 import { Layout } from './components/Layout';
 
@@ -29,6 +30,17 @@ export default function App() {
       switch (message.type) {
         case 'state:snapshot':
           setState(message.payload);
+          /*
+           * 同步分屏布局树：在 React 重渲染前完成 reconcile，
+           * 避免「pane 已加入但树还没建好」的一帧闪烁。
+           * 快照在终端每次输出时都会推来，reconcile 内部按 pane 集合签名短路。
+           */
+          useLayoutStore
+            .getState()
+            .reconcile(
+              message.payload.panes.filter((p) => p.running !== false),
+              message.payload.focusedPaneId,
+            );
           break;
         case 'state:settings':
           applySettings(message.payload);

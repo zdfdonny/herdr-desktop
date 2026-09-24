@@ -221,12 +221,24 @@
   user-select: none;
 }
 
+/*
+ * 品牌标记：与应用图标同造型（黑底圆角 + 绿箭头）。
+ *
+ * 图标底色 #171717 恰好等于深色主题的 --bg-surface，直接贴上去会「隐形」，
+ * 看不出是个图标、只像浮着的绿色箭头。这里加一圈极淡描边勾出圆角轮廓，
+ * 让它在浅色/深色背景下都读得出「一块图标」。
+ * 描边用 currentColor 的透明度，因此两种主题下都能自适应。
+ */
 .sidebar__brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
   flex-shrink: 0;
+}
+
+.sidebar__brand-mark svg {
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
 }
 
 .sidebar__brand-text {
@@ -652,24 +664,134 @@
 }
 
 /* ===== TerminalPane ===== */
-/* ===== 多 pane 分屏 ===== */
-.pane-grid {
+/* ===== 视图标签栏（侧栏新建 agent 会新开一个独立视图） ===== */
+.view-tabs {
   display: flex;
-  flex-direction: row;
-  height: 100%;
+  align-items: stretch;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 4px 8px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-app);
+}
+
+.view-tab {
+  display: flex;
+  align-items: center;
+  max-width: 200px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--text-secondary);
+}
+
+.view-tab:hover {
+  background: var(--bg-hover);
+}
+
+.view-tab.is-active {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.view-tab__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.view-tab__text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.view-tab__count {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.view-tab__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.view-tab__close:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+/* ===== 多 pane 分屏（用户可控的二维布局树） ===== */
+.split-root {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* 叶子矩形：绝对定位，尺寸由展平后的比例内联给出 */
+.split-leaf {
+  position: absolute;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-divider {
+  position: absolute;
+  background: var(--border);
+  transition: background-color 0.12s ease;
+  z-index: 5;
+}
+
+.split-divider--row {
+  cursor: col-resize;
+}
+
+.split-divider--column {
+  cursor: row-resize;
+}
+
+.split-divider:hover {
+  background: var(--accent);
 }
 
 .pane-cell {
-  flex: 1;
+  width: 100%;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
-}
-
-.pane-cell:last-child {
-  border-right: none;
+  overflow: hidden;
 }
 
 .pane-cell--focused {
@@ -678,6 +800,7 @@
 }
 
 .pane-cell__header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -700,6 +823,32 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.pane-cell__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.pane-cell__split {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.pane-cell__split:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .pane-cell__close {
@@ -726,10 +875,102 @@
   min-height: 0;
 }
 
+/* 四方向拆分菜单：fixed 定位锚在拆分按钮下方，避免被 pane 的 overflow 裁剪 */
+.split-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 116px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.split-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.split-menu__item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 分屏后的空位：等待用户选择智能体 */
+.empty-slot {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.empty-slot__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface-2);
+  user-select: none;
+}
+
+.empty-slot__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-slot__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/* 空位内的选择器去掉浮窗边框/阴影，融入背景 */
+.empty-slot__body .agent-picker {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+
 .terminal-pane {
   display: flex;
   flex-direction: column;
+  width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   position: relative;
 }
