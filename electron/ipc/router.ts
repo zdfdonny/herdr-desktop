@@ -44,6 +44,11 @@ export class IpcRouter {
    * 否则一次失败的恢复会把用户的项目结构也一并清掉。
    */
   private revivingPanes = new Set<string>();
+  /**
+   * 探测智能体用的 PATH 缓存（首次探测时从登录 shell 解析）。
+   * `null` 表示尚未解析。见 `detectionPath()`。
+   */
+  private detectionPathCache: string | null = null;
 
   /**
    * 标题栏配色回调，由主进程在创建窗口后注入。
@@ -437,12 +442,39 @@ export class IpcRouter {
     });
   }
 
+  /**
+   * 用于**探测**智能体是否安装的 PATH（懒加载并缓存）。
+   *
+   * 为什么不能直接用 `process.env.PATH`：从 Finder / Dock 启动的 macOS 应用
+   * 只继承一份极简 PATH（通常 `/usr/bin:/bin:/usr/sbin:/sbin`），
+   * homebrew（`/opt/homebrew/bin`）、npm global、`~/.local/bin` 全都不在其中，
+   * 于是「明明装了 claude 却显示未安装」。
+   *
+   * 这里复用启动 PTY 时用的同一份登录 shell 环境，保证「探测」与「启动」
+   * 看到的是同一个 PATH——探测得到的结论一定可执行。
+   *
+   * `resolveLaunchEnv()` 要起一个 `shell -ilc env` 子进程（百毫秒级），
+   * 所以只在首次探测时解析一次并缓存；设置页刷新探测也走缓存。
+   */
+  private detectionPath(): string {
+    if (this.detectionPathCache === null) {
+      try {
+        const { env } = resolveLaunchEnv();
+        this.detectionPathCache = env.PATH ?? env.Path ?? '';
+      } catch {
+        this.detectionPathCache = process.env.PATH ?? '';
+      }
+    }
+    return this.detectionPathCache;
+  }
+
   /** 探测本机 agent 命令可用性。 */
   probeAgentAvailability(commands: string[]): Record<string, boolean> {
+    const pathValue = this.detectionPath();
     const available: Record<string, boolean> = {};
     for (const command of commands) {
       const name = command.trim().split(/\s+/)[0] ?? command;
-      available[command] = isCommandAvailable(name);
+      available[command] = isCommandAvailable(name, pathValue);
     }
     return available;
   }

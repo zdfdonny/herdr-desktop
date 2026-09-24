@@ -30,8 +30,16 @@ export interface ResolvedShell {
 export interface Platform {
   resolveLaunchEnv(): PlatformEnv;
   resolveDefaultShell(): ResolvedShell;
-  resolveExecutable(command: string): string | null;
-  isCommandAvailable(command: string): boolean;
+  /**
+   * 解析命令为绝对路径。
+   *
+   * `pathValue` 用于覆盖查找用的 PATH：GUI 启动的 macOS 应用拿不到用户
+   * 真实 PATH，探测时必须传入 `resolveLaunchEnv()` 里那份登录 shell 的 PATH，
+   * 否则会误判「已安装」为「未安装」。
+   */
+  resolveExecutable(command: string, pathValue?: string): string | null;
+  /** 命令是否可被解析到（`pathValue` 语义同 `resolveExecutable`）。 */
+  isCommandAvailable(command: string, pathValue?: string): boolean;
   /**
    * 该路径是否为需要 shell 包装才能启动的批处理文件。
    * 仅 Windows 会返回 true（`.cmd` / `.bat`）；Unix 恒为 false。

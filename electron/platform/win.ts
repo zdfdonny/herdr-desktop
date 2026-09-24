@@ -83,7 +83,7 @@ function hasExtension(command: string): boolean {
  *
  * @returns 绝对路径；无法解析时返回 null。
  */
-export function resolveExecutable(command: string): string | null {
+export function resolveExecutable(command: string, pathValue?: string): string | null {
   if (!command) return null;
 
   // 已带路径分隔符的直接检查（绝对或相对）
@@ -95,8 +95,8 @@ export function resolveExecutable(command: string): string | null {
     return existsSync(resolved) ? resolved : null;
   }
 
-  const pathValue = process.env.PATH ?? process.env.Path ?? '';
-  const dirs = pathValue.split(';').filter(Boolean);
+  const searchPath = pathValue ?? process.env.PATH ?? process.env.Path ?? '';
+  const dirs = searchPath.split(';').filter(Boolean);
 
   // 已带扩展名：按原名精确查找，不再追加 PATHEXT。
   if (hasExtension(command)) {
@@ -118,9 +118,9 @@ export function resolveExecutable(command: string): string | null {
   return null;
 }
 
-/** 命令是否可被解析到。 */
-export function isCommandAvailable(command: string): boolean {
-  return resolveExecutable(command) !== null;
+/** 命令是否可被解析到（`pathValue` 语义同 `resolveExecutable`）。 */
+export function isCommandAvailable(command: string, pathValue?: string): boolean {
+  return resolveExecutable(command, pathValue) !== null;
 }
 
 /**

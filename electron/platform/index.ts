@@ -34,8 +34,10 @@ const impl = currentPlatform();
 
 export const resolveLaunchEnv = (): PlatformEnv => impl.resolveLaunchEnv();
 export const resolveDefaultShell = (): ResolvedShell => impl.resolveDefaultShell();
-export const resolveExecutable = (command: string): string | null => impl.resolveExecutable(command);
-export const isCommandAvailable = (command: string): boolean => impl.isCommandAvailable(command);
+export const resolveExecutable = (command: string, pathValue?: string): string | null =>
+  impl.resolveExecutable(command, pathValue);
+export const isCommandAvailable = (command: string, pathValue?: string): boolean =>
+  impl.isCommandAvailable(command, pathValue);
 export const isWindowsBatchFile = (file: string): boolean => impl.isWindowsBatchFile(file);
 
 /** 当前平台是否为 Windows（少数必须显式分支的场景使用，如 ConPTY 选项）。 */

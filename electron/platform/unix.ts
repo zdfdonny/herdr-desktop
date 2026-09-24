@@ -19,9 +19,27 @@ import { execFileSync } from 'node:child_process';
 import type { PlatformEnv, ResolvedShell } from './types';
 
 /** PATH 分隔符：POSIX 为 `:`。 */
-export function pathDirs(): string[] {
-  const pathValue = process.env.PATH ?? '';
+export function pathDirs(pathValue = process.env.PATH ?? ''): string[] {
   return pathValue.split(delimiter).filter((dir) => dir.length > 0);
+}
+
+/**
+ * macOS 上 GUI 应用常见的「探测不到已安装智能体」兜底目录。
+ *
+ * 即便登录 shell 环境解析成功，仍可能有目录不在 PATH 里（例如用户只在
+ * 某个 profile 里手动 export，或用了 GUI 安装器）。这些是 homebrew /
+ * 官方安装脚本的默认落点，作为补充目录追加在登录 shell PATH 之后。
+ */
+function fallbackDirs(): string[] {
+  if (process.platform !== 'darwin') return [];
+  const home = process.env.HOME;
+  return [
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    ...(home ? [`${home}/.local/bin`, `${home}/bin`] : []),
+  ];
 }
 
 /** 文件是否存在且可执行。 */
@@ -42,12 +60,17 @@ function isExecutableFile(file: string): boolean {
  * - 含 `/`：按绝对/相对路径直接判定（相对路径基于 cwd）；
  * - 否则：按 PATH 顺序找同名且带可执行位的文件。
  *
+ * `pathValue` 缺省用进程继承的 PATH。**从 Finder 启动的 GUI 应用拿到的
+ * PATH 往往只有 `/usr/bin:/bin:/usr/sbin:/sbin`**，探测智能体时必须传入
+ * 登录 shell 解析出的那份 PATH（见 `resolveLaunchEnv`），否则 homebrew /
+ * npm global 里的 claude、codex、opencode 会被误判为未安装。
+ *
  * 注意 Unix 下**不做扩展名补齐**：`cursor-agent` 就是 `cursor-agent`，
  * 不存在 `cursor-agent.cmd` 这种映射。
  *
  * @returns 绝对路径；无法解析时返回 null。
  */
-export function resolveExecutable(command: string): string | null {
+export function resolveExecutable(command: string, pathValue?: string): string | null {
   if (!command) return null;
 
   if (command.includes('/')) {
@@ -55,16 +78,30 @@ export function resolveExecutable(command: string): string | null {
     return isExecutableFile(full) ? full : null;
   }
 
-  for (const dir of pathDirs()) {
+  const explicitPath = pathValue !== undefined;
+  const dirs = explicitPath
+    ? pathDirs(pathValue)
+    : pathDirs(process.env.PATH ?? '');
+
+  for (const dir of dirs) {
     const full = join(dir, command);
     if (isExecutableFile(full)) return full;
+  }
+
+  // 登录 shell 的 PATH 里也没有时，再补查 macOS 的常见安装目录。
+  if (explicitPath) {
+    for (const dir of fallbackDirs()) {
+      if (dirs.includes(dir)) continue;
+      const full = join(dir, command);
+      if (isExecutableFile(full)) return full;
+    }
   }
   return null;
 }
 
-/** 命令是否可被解析到。 */
-export function isCommandAvailable(command: string): boolean {
-  return resolveExecutable(command) !== null;
+/** 命令是否可被解析到（`pathValue` 语义同 `resolveExecutable`）。 */
+export function isCommandAvailable(command: string, pathValue?: string): boolean {
+  return resolveExecutable(command, pathValue) !== null;
 }
 
 /** Unix 下不存在批处理包装，恒为 false（保持与 win 的接口一致）。 */
