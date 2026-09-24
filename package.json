@@ -1,0 +1,118 @@
+{
+  "name": "herdr-desktop",
+  "productName": "Herdr Desktop",
+  "version": "0.1.0",
+  "description": "Multi-agent management desktop app - the runtime your coding agents live on.",
+  "license": "MIT",
+  "author": "herdr-desktop contributors",
+  "homepage": "https://github.com/zdfdonny/herdr-desktop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zdfdonny/herdr-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zdfdonny/herdr-desktop/issues"
+  },
+  "keywords": [
+    "electron",
+    "ai-agent",
+    "coding-agent",
+    "terminal",
+    "xterm",
+    "claude-code",
+    "codex",
+    "multi-agent"
+  ],
+  "main": "dist-electron/main/main.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "icon": "node scripts/gen-icon.js",
+    "test:unix": "esbuild electron/platform/unix.ts --bundle --platform=node --format=esm --outfile=.tmp-unix.mjs && node scripts/test-unix-platform.mjs",
+    "check:artifacts": "node scripts/check-artifacts.js",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:linux": "electron-vite build && electron-builder --linux",
+    "dist:win:x64": "electron-vite build && electron-builder --win --x64",
+    "dist:win:arm64": "electron-vite build && electron-builder --win --arm64",
+    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64",
+    "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64",
+    "dist:linux:x64": "electron-vite build && electron-builder --linux --x64",
+    "dist:linux:arm64": "electron-vite build && electron-builder --linux --arm64"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "zustand": "5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "@vitejs/plugin-react": "4.3.4",
+    "electron": "44.4.2",
+    "electron-builder": "26.15.3",
+    "electron-vite": "4.0.0",
+    "typescript": "5.7.3",
+    "vite": "6.0.11"
+  },
+  "build": {
+    "appId": "dev.herdr.desktop",
+    "productName": "Herdr Desktop",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
+    }
+  }
+}

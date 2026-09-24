@@ -1,0 +1,259 @@
+/**
+ * 主题令牌
+ *
+ * 主题模型：Light / Dark / System（跟随系统外观）。
+ * 所有颜色通过 CSS 变量暴露，组件只引用变量，不写死颜色。
+ *
+ * 解析规则（由 renderer 的 themeStore 设置到 <html> 上）：
+ *   <html data-theme="light">  强制浅色
+ *   <html data-theme="dark">   强制深色
+ *   <html data-theme="system"> 交由 prefers-color-scheme 决定
+ */
+
+/* ===== 深色主题（默认） ===== */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* 背景层次 */
+  --bg-app: #0d0d0d;
+  --bg-surface: #171717;
+  --bg-surface-2: #1f1f1f;
+  --bg-elevated: #232323;
+  --bg-hover: #262626;
+  --bg-active: #2f2f2f;
+  --bg-inset: #0a0a0a;
+
+  /*
+   * 终端背景 —— 参考 VSCode 的 terminal.background：
+   * 默认跟随编辑器（此处即主区域）背景，保证终端与 shell 区域浑然一体。
+   */
+  --terminal-bg: var(--bg-app);
+  --terminal-fg: #d4d4d4;
+
+  /* 边框 */
+  --border: #2a2a2a;
+  --border-subtle: #1f1f1f;
+  --border-strong: #3d3d3d;
+
+  /* 文本 */
+  --text-primary: #ececec;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
+  --text-inverse: #0d0d0d;
+
+  /* 状态色（低饱和） */
+  --status-working: #eab308;
+  --status-blocked: #f87171;
+  --status-idle: #a3a3a3;
+  --status-done: #4ade80;
+  --status-unknown: #737373;
+
+  /* 强调 */
+  --accent: #ffffff;
+  --accent-hover: #d4d4d4;
+  --accent-subtle: rgba(255, 255, 255, 0.08);
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+/* ===== 浅色主题 ===== */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* 背景层次 */
+  --bg-app: #ffffff;
+  --bg-surface: #fafafa;
+  --bg-surface-2: #f4f4f5;
+  --bg-elevated: #ffffff;
+  --bg-hover: #f0f0f0;
+  --bg-active: #e8e8e8;
+  --bg-inset: #f7f7f7;
+
+  /* 终端背景跟随主区域背景（VSCode terminal.background 行为） */
+  --terminal-bg: var(--bg-app);
+  --terminal-fg: #18181b;
+
+  /* 边框 */
+  --border: #e4e4e7;
+  --border-subtle: #f0f0f0;
+  --border-strong: #d4d4d8;
+
+  /* 文本 */
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  --text-inverse: #ffffff;
+
+  /* 状态色（浅色下加深以保证对比度） */
+  --status-working: #ca8a04;
+  --status-blocked: #dc2626;
+  --status-idle: #71717a;
+  --status-done: #16a34a;
+  --status-unknown: #a1a1aa;
+
+  /* 强调 */
+  --accent: #18181b;
+  --accent-hover: #3f3f46;
+  --accent-subtle: rgba(0, 0, 0, 0.05);
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== system 模式下按系统外观分配 ===== */
+@media (prefers-color-scheme: light) {
+  :root[data-theme='system'] {
+    color-scheme: light;
+
+    --bg-app: #ffffff;
+    --bg-surface: #fafafa;
+    --bg-surface-2: #f4f4f5;
+    --bg-elevated: #ffffff;
+    --bg-hover: #f0f0f0;
+    --bg-active: #e8e8e8;
+    --bg-inset: #f7f7f7;
+
+    --terminal-bg: var(--bg-app);
+    --terminal-fg: #18181b;
+
+    --border: #e4e4e7;
+    --border-subtle: #f0f0f0;
+    --border-strong: #d4d4d8;
+
+    --text-primary: #18181b;
+    --text-secondary: #52525b;
+    --text-muted: #a1a1aa;
+    --text-inverse: #ffffff;
+
+    --status-working: #ca8a04;
+    --status-blocked: #dc2626;
+    --status-idle: #71717a;
+    --status-done: #16a34a;
+    --status-unknown: #a1a1aa;
+
+    --accent: #18181b;
+    --accent-hover: #3f3f46;
+    --accent-subtle: rgba(0, 0, 0, 0.05);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    color-scheme: dark;
+
+    --bg-app: #0d0d0d;
+    --bg-surface: #171717;
+    --bg-surface-2: #1f1f1f;
+    --bg-elevated: #232323;
+    --bg-hover: #262626;
+    --bg-active: #2f2f2f;
+    --bg-inset: #0a0a0a;
+
+    --terminal-bg: var(--bg-app);
+    --terminal-fg: #d4d4d4;
+
+    --border: #2a2a2a;
+    --border-subtle: #1f1f1f;
+    --border-strong: #3d3d3d;
+
+    --text-primary: #ececec;
+    --text-secondary: #a3a3a3;
+    --text-muted: #737373;
+    --text-inverse: #0d0d0d;
+
+    --status-working: #eab308;
+    --status-blocked: #f87171;
+    --status-idle: #a3a3a3;
+    --status-done: #4ade80;
+    --status-unknown: #737373;
+
+    --accent: #ffffff;
+    --accent-hover: #d4d4d4;
+    --accent-subtle: rgba(255, 255, 255, 0.08);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ===== 字体与基础 ===== */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: 'Cascadia Code', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /*
+   * 自绘标题栏。
+   * --titlebar-height 必须与主进程 TITLEBAR_HEIGHT 保持一致。
+   * --titlebar-overlay-width 为原生窗口按钮预留的宽度（Windows 约 138px）。
+   */
+  --titlebar-height: 36px;
+  --titlebar-overlay-width: 140px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+button {
+  font-family: inherit;
+}
+
+input,
+textarea {
+  font-family: inherit;
+}

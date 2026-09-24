@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-electron/
+release/
+out/
+.npm-cache/
+*.log
+.DS_Store
+.tmp-unix.mjs
+
+.tmp-msg*.txt

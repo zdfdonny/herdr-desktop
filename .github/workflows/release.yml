@@ -1,0 +1,252 @@
+name: Build & Release
+
+# 手动触发：Actions → Build & Release → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布 tag（留空则用 package.json 里的 version，格式 v0.1.0）'
+        required: false
+        type: string
+      draft:
+        description: '发布为草稿 Release（便于先检查产物）'
+        required: false
+        type: boolean
+        default: false
+
+# 发布 Release 需要写权限；GITHUB_TOKEN 由 Actions 自动注入，无需自建 secret
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) 预检：类型检查 + 单测 + 解析版本号
+  #    任何一步失败都直接中断，不浪费后面三个平台的构建时间
+  # ------------------------------------------------------------------
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Unix 平台解析逻辑的单元测试。跑在 ubuntu 上，因此 Windows 上会被
+      # 跳过的 POSIX 断言（可执行位、绝对路径）在这里是真实执行的
+      - name: Test unix platform layer
+        run: npm run test:unix
+
+      # 断言 6 个平台×架构组合的产物文件名互不冲突。
+      # 一旦有人改坏 artifactName，这里就会失败，而不是等到发布时才发现
+      # 某个架构的包把另一个覆盖掉了
+      - name: Verify artifact naming
+        run: node scripts/check-artifacts.js
+
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          INPUT_TAG="${{ inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="v$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "版本号: $VERSION / tag: $TAG"
+
+  # ------------------------------------------------------------------
+  # 2) 三平台 × 两架构 = 6 个安装包
+  #
+  #    关键约束：node-pty 1.1.0 只自带 4 组预编译产物
+  #      prebuilds/{win32, darwin}-{x64, arm64}
+  #    且 scripts/prebuild.js 是按 **构建主机** 的 process.arch 选目录的，
+  #    没有交叉编译能力。由此推出两条硬性设计：
+  #
+  #      a) arm64 必须用原生 arm64 runner 构建，不能在 x64 上交叉编译
+  #         （否则 prebuild 查找命中 x64 目录，静默产出错误架构的二进制）
+  #      b) Linux 完全没有预编译产物，必须装工具链从源码 node-gyp 编译
+  #
+  #    ⚠️ runner 标签说明：
+  #      ubuntu-24.04-arm / windows-11-arm 是 GitHub 的 arm64 托管 runner。
+  #      若你的仓库/组织用不了（私有仓库可能受限，或标签已更名），
+  #      该 job 会直接报 "no runner matching labels"。
+  #      处理办法：把对应 runner 换成自建 arm64 runner 的标签，
+  #      或暂时删掉该矩阵项，改为只出 x64 包。
+  # ------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
+            target: linux
+          # GitHub 官方 arm64 Linux runner（公开仓库可用）
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            target: linux
+          # macos-13 是最后一个 x64 runner；macos-14+ 均为 arm64
+          - os: mac
+            arch: x64
+            runner: macos-13
+            target: mac
+          - os: mac
+            arch: arm64
+            runner: macos-14
+            target: mac
+          - os: win
+            arch: x64
+            runner: windows-latest
+            target: win
+          # GitHub 官方 arm64 Windows runner（公开仓库可用）
+          - os: win
+            arch: arm64
+            runner: windows-11-arm
+            target: win
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Linux 需要完整工具链编译 node-pty（无预编译产物）：
+      #   build-essential / python3 → node-gyp 编译
+      #   rpm / fakeroot            → electron-builder 打 deb / AppImage
+      - name: Install Linux build dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 rpm fakeroot
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 断言 node-pty 确实是为目标架构构建的。
+      # 这是本 workflow 最容易静默出错的地方：架构不匹配时安装不会报错，
+      # 只有运行时才会崩。所以这里主动探测并让构建失败。
+      - name: Verify node-pty architecture
+        shell: bash
+        run: |
+          echo "runner arch : $(node -p process.arch)"
+          echo "target arch : ${{ matrix.arch }}"
+          if [ "$(node -p process.arch)" != "${{ matrix.arch }}" ]; then
+            echo "::error::runner 架构与目标架构不一致，node-pty 预编译产物会取错"
+            exit 1
+          fi
+          node -e "
+            const fs = require('fs'), path = require('path');
+            const dir = path.join('node_modules', 'node-pty', 'prebuilds',
+                                   process.platform + '-' + process.arch);
+            const has = fs.existsSync(dir);
+            console.log('prebuild dir:', dir, '->', has ? 'present' : 'absent');
+            if (!has) {
+              // Linux 走源码编译，产物在 build/Release 下
+              const built = fs.existsSync(path.join('node_modules','node-pty','build','Release','pty.node'));
+              console.log('source-built pty.node:', built ? 'present' : 'absent');
+              if (!built) { console.error('node-pty 既无预编译产物也未成功编译'); process.exit(1); }
+            }
+          "
+
+      - name: Build installer
+        shell: bash
+        # 不在这里发布，统一交给最后的 release job，避免 6 个 job 抢同一个 Release
+        run: npx electron-vite build && npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+
+      - name: List artifacts
+        shell: bash
+        run: ls -lh release/ || true
+
+      # 只收集安装包本体，排除 unpacked 目录与 builder 中间产物
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+
+  # ------------------------------------------------------------------
+  # 3) 汇总全部产物并发布到 GitHub Release
+  # ------------------------------------------------------------------
+  release:
+    name: Publish Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect installers
+        run: |
+          mkdir -p dist
+          find artifacts -type f \
+            \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
+               -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} dist/ \;
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          echo "=== 待发布文件 ==="
+          ls -lh
+          echo "=== 数量 ==="
+          ls -1 | wc -l
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          draft: ${{ inputs.draft }}
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## Herdr Desktop ${{ needs.prepare.outputs.tag }}
+
+            多 agent 管理桌面端应用 / Multi-agent management desktop app.
+
+            ### 下载 / Downloads
+
+            | 平台 | 架构 | 安装包 |
+            |------|------|--------|
+            | Windows | x64 | `*-win-x64-setup.exe` |
+            | Windows | arm64 | `*-win-arm64-setup.exe` |
+            | macOS | Intel (x64) | `*-mac-x64.dmg` |
+            | macOS | Apple Silicon (arm64) | `*-mac-arm64.dmg` |
+            | Linux | x64 | `*-linux-x64.AppImage` / `.deb` |
+            | Linux | arm64 | `*-linux-arm64.AppImage` / `.deb` |
+
+            Windows / macOS 同时提供 `.zip` 便于免安装使用。
+            校验和见 `SHA256SUMS.txt`。
+
+            > **macOS 提示**：应用未做代码签名与公证，首次打开需右键 →「打开」，
+            > 或执行 `xattr -cr "/Applications/Herdr Desktop.app"`。
+            >
+            > **Linux 提示**：AppImage 需先 `chmod +x`。

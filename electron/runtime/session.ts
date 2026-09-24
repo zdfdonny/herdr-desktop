@@ -1,0 +1,293 @@
+/**
+ * 会话拓扑管理 —— 对应 herdr `src/workspace/` + `src/app/state.rs`。
+ *
+ * 维护 project / pane / agent 的结构状态，对外产出纯 SessionState 快照。
+ * 本模块只持有数据（SessionState），不持有 PTY 句柄（由 PtyManager 持有）。
+ *
+ * 层级：Project（项目）→ Agent（agent pane）。
+ * 必须先添加项目，才能在该项目内创建 agent。
+ */
+
+import { basename } from 'node:path';
+import type {
+  SessionState,
+  Project,
+  PaneState,
+  AgentState,
+  AddProjectParams,
+  SpawnAgentParams,
+} from '../../shared/state';
+
+let projectCounter = 0;
+let paneCounter = 0;
+let stateChangeCounter = 0;
+
+function nextId(prefix: string): string {
+  const n = counterFor(prefix);
+  return `${prefix}-${n}-${Date.now().toString(36)}`;
+}
+
+function counterFor(prefix: string): number {
+  switch (prefix) {
+    case 'project':
+      projectCounter += 1;
+      return projectCounter;
+    case 'pane':
+      paneCounter += 1;
+      return paneCounter;
+    default:
+      stateChangeCounter += 1;
+      return stateChangeCounter;
+  }
+}
+
+export class Session {
+  private projects = new Map<string, Project>();
+  private panes = new Map<string, PaneState>();
+  private agents = new Map<string, AgentState>();
+  private revision = 0;
+  private focusedPaneId: string | null = null;
+
+  /** 添加项目。若路径已存在则直接返回已有项目。 */
+  addProject(params: AddProjectParams): Project {
+    const existing = this.findProjectByPath(params.path);
+    if (existing) {
+      return existing;
+    }
+    const projectId = nextId('project');
+    const project: Project = {
+      projectId,
+      name: params.name?.trim() || basename(params.path) || params.path,
+      path: params.path,
+      branch: null,
+      collapsed: false,
+      createdAt: Date.now(),
+    };
+    this.projects.set(projectId, project);
+    this.bump();
+    return project;
+  }
+
+  /** 移除项目及其下所有 agent。返回被移除的 paneId 列表（供调用方 kill PTY）。 */
+  removeProject(projectId: string): string[] {
+    const paneIds = [...this.panes.values()]
+      .filter((p) => p.projectId === projectId)
+      .map((p) => p.paneId);
+
+    for (const paneId of paneIds) {
+      this.panes.delete(paneId);
+      this.agents.delete(paneId);
+    }
+    this.projects.delete(projectId);
+
+    if (this.focusedPaneId && paneIds.includes(this.focusedPaneId)) {
+      this.focusedPaneId = this.panes.keys().next().value ?? null;
+    }
+    this.bump();
+    return paneIds;
+  }
+
+  toggleProject(projectId: string, collapsed: boolean): void {
+    const project = this.projects.get(projectId);
+    if (!project) return;
+    project.collapsed = collapsed;
+    this.bump();
+  }
+
+  /** 更新项目的 git 分支信息（异步探测结果回填）。 */
+  setProjectBranch(projectId: string, branch: string | null): void {
+    const project = this.projects.get(projectId);
+    if (!project) return;
+    if (project.branch === branch) return;
+    project.branch = branch;
+    this.bump();
+  }
+
+  /**
+   * 在指定项目内创建 agent。
+   * 项目不存在时抛错 —— 强制"先添加项目，再创建 agent"的流程。
+   */
+  createAgent(params: SpawnAgentParams): PaneState {
+    const project = this.projects.get(params.projectId);
+    if (!project) {
+      throw new Error(`project ${params.projectId} does not exist`);
+    }
+
+    const paneId = nextId('pane');
+    const pane: PaneState = {
+      paneId,
+      projectId: project.projectId,
+      label: params.label ?? params.command,
+      cwd: params.cwd ?? project.path,
+      focused: true,
+      // 记录启动命令，重启应用后可据此一键恢复
+      command: params.command,
+      args: params.args ?? [],
+      running: true,
+    };
+    this.panes.set(paneId, pane);
+
+    const agent: AgentState = {
+      paneId,
+      projectId: project.projectId,
+      name: null,
+      label: params.label ?? null,
+      title: null,
+      status: 'unknown',
+      stateChangeSeq: 0,
+      focused: true,
+    };
+    this.agents.set(paneId, agent);
+
+    // 取消其他 pane 的 focused
+    for (const p of this.panes.values()) {
+      if (p.paneId !== paneId) {
+        p.focused = false;
+        const a = this.agents.get(p.paneId);
+        if (a) a.focused = false;
+      }
+    }
+    this.focusedPaneId = paneId;
+    // 新建 agent 时自动展开所属项目分组
+    project.collapsed = false;
+    this.bump();
+    return pane;
+  }
+
+  /** 读取单个 pane（不存在返回 undefined）。 */
+  getPane(paneId: string): PaneState | undefined {
+    return this.panes.get(paneId);
+  }
+
+  closePane(paneId: string): void {
+    this.panes.delete(paneId);
+    this.agents.delete(paneId);
+    if (this.focusedPaneId === paneId) {
+      this.focusedPaneId = this.panes.keys().next().value ?? null;
+    }
+    this.bump();
+  }
+
+  /**
+   * 从持久化快照恢复会话（应用启动时调用）。
+   *
+   * 恢复的是**元数据**：项目、pane、agent 的结构关系。
+   * PTY 进程不可能跨重启存活，因此所有 pane 的 running 一律置为 false，
+   * agent 状态归为 idle（保留 label/title 供辨识）。
+   *
+   * **不恢复聚焦**：启动时不选中任何 agent，主区域显示初始空状态；
+   * 用户点击侧栏中的 agent 行才会选中并自动恢复（见 router.focusPane）。
+   * 持久化文件里的 focusedPaneId 因此成为被忽略的遗留字段。
+   *
+   * 防御性归一化：旧版本 session.json 缺 command 字段的 pane 无法重启，直接丢弃。
+   */
+  restore(saved: SessionState): void {
+    // 项目：全部恢复（按路径去重，抵御手改过的文件）
+    for (const project of saved.projects ?? []) {
+      if (!project?.projectId || !project.path) continue;
+      if (this.findProjectByPath(project.path)) continue;
+      this.projects.set(project.projectId, {
+        ...project,
+        branch: project.branch ?? null,
+        collapsed: Boolean(project.collapsed),
+        createdAt: project.createdAt ?? Date.now(),
+      });
+    }
+
+    // pane：只恢复带 command 的（可重启）；running 一律 false
+    for (const pane of saved.panes ?? []) {
+      if (!pane?.paneId || !pane.command) continue;
+      if (!this.projects.has(pane.projectId)) continue; // 孤儿 pane，丢弃
+      this.panes.set(pane.paneId, {
+        ...pane,
+        args: pane.args ?? [],
+        running: false,
+        focused: false,
+      });
+    }
+
+    // agent：跟随 pane 恢复；状态归 idle（快照里的状态已过时）
+    for (const agent of saved.agents ?? []) {
+      if (!agent?.paneId || !this.panes.has(agent.paneId)) continue;
+      this.agents.set(agent.paneId, {
+        ...agent,
+        status: 'idle',
+        focused: false,
+      });
+    }
+
+    // 聚焦保持 null：启动时不选中任何 agent（见方法注释）
+    this.focusedPaneId = null;
+
+    this.bump();
+  }
+
+  /** 更新 pane 的运行标记（重启流程使用）。 */
+  setPaneRunning(paneId: string, running: boolean): void {
+    const pane = this.panes.get(paneId);
+    if (!pane) return;
+    pane.running = running;
+    this.bump();
+  }
+
+  focusPane(paneId: string): void {
+    if (!this.panes.has(paneId)) return;
+    for (const p of this.panes.values()) {
+      p.focused = p.paneId === paneId;
+      const a = this.agents.get(p.paneId);
+      if (a) a.focused = p.paneId === paneId;
+    }
+    this.focusedPaneId = paneId;
+    this.bump();
+  }
+
+  /**
+   * 更新 agent 检测结果。
+   *
+   * 状态发生变化时返回 `{ from, to }`，供调用方判断是否需要通知；
+   * 无变化返回 null。
+   */
+  updateAgent(
+    paneId: string,
+    patch: { name: string | null; title: string | null; status: AgentState['status'] },
+  ): { from: AgentState['status']; to: AgentState['status'] } | null {
+    const agent = this.agents.get(paneId);
+    if (!agent) return null;
+    const changed =
+      agent.name !== patch.name ||
+      agent.title !== patch.title ||
+      agent.status !== patch.status;
+    if (!changed) return null;
+    const from = agent.status;
+    agent.name = patch.name;
+    agent.title = patch.title;
+    agent.status = patch.status;
+    agent.stateChangeSeq = ++stateChangeCounter;
+    this.bump();
+    return { from, to: patch.status };
+  }
+
+  snapshot(): SessionState {
+    return {
+      projects: [...this.projects.values()].sort((a, b) => a.createdAt - b.createdAt),
+      panes: [...this.panes.values()],
+      agents: [...this.agents.values()],
+      focusedPaneId: this.focusedPaneId,
+      revision: this.revision,
+    };
+  }
+
+  private findProjectByPath(path: string): Project | undefined {
+    const normalized = path.replace(/[\\/]+$/, '').toLowerCase();
+    for (const project of this.projects.values()) {
+      if (project.path.replace(/[\\/]+$/, '').toLowerCase() === normalized) {
+        return project;
+      }
+    }
+    return undefined;
+  }
+
+  private bump(): void {
+    this.revision++;
+  }
+}
