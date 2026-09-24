@@ -5,7 +5,7 @@
  * 并把运行时状态变化（结构快照 + 终端数据流）推回 Renderer。
  */
 
-import { BrowserWindow, ipcMain, dialog } from 'electron';
+import { BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { Session } from '../runtime/session';
@@ -86,6 +86,19 @@ export class IpcRouter {
   /** 加载持久化设置（app ready 后、创建窗口前调用）。 */
   loadSettings(): void {
     this.settings.loadSync();
+    this.syncNativeTheme(this.settings.get().theme);
+  }
+
+  /**
+   * 让 Electron 原生主题跟随应用主题。
+   *
+   * `nativeTheme.themeSource` 决定所有 webContents（含 <webview>）里的
+   * `prefers-color-scheme`。DSH Web 的主题偏好默认为 `system`，即用
+   * `prefers-color-scheme` 解析深浅色并监听变化，因此这一步能让内嵌的
+   * DSH Web GUI 跟随 herdr-desktop 的主题切换实时换肤。
+   */
+  private syncNativeTheme(theme: ThemePreference): void {
+    nativeTheme.themeSource = theme;
   }
 
   /**
@@ -158,7 +171,10 @@ export class IpcRouter {
       this.focusPane(payload.paneId);
     });
     ipcMain.on(IPC.SET_THEME, (_event, payload: { theme: ThemePreference }) => {
-      void this.settings.setTheme(payload.theme).then((settings) => this.pushSettings(settings));
+      void this.settings.setTheme(payload.theme).then((settings) => {
+        this.syncNativeTheme(settings.theme);
+        this.pushSettings(settings);
+      });
     });
     ipcMain.on(
       IPC.SET_TITLEBAR_THEME,
