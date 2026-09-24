@@ -139,47 +139,56 @@ export class PtyManager {
     const spawnFile = batch ? (resolveExecutable(comSpec, pathValue) ?? comSpec) : executable;
     const spawnArgs = batch ? ['/d', '/c', executable, ...args] : args;
 
+    /*
+     * 初始尺寸取渲染侧传入的值。
+     *
+     * 这里曾硬编码 120x40，而 xterm 实际尺寸不同，
+     * 导致 TUI 按错误尺寸排版、内容画到可视区外。
+     * 渲染侧现在在 spawn 时即告知真实尺寸，后续 resize 只做增量修正。
+     */
+    const cols = size?.cols && size.cols > 0 ? size.cols : 120;
+    const rows = size?.rows && size.rows > 0 ? size.rows : 40;
+    /*
+     * useConpty 是 Windows 专有选项（ConPTY）；macOS / Linux 用 forkpty，
+     * 该字段无意义。显式只在 Windows 下带上，避免向 Unix 传无关选项。
+     */
+    const spawnOptions: pty.IPtyForkOptions | pty.IWindowsPtyForkOptions = {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd,
+      env,
+      encoding: 'utf8',
+      handleFlowControl: false,
+      ...(isWindows ? { useConpty: true } : {}),
+    };
+
     let ptyProcess: pty.IPty;
     try {
-      /*
-       * 初始尺寸取渲染侧传入的值。
-       *
-       * 这里曾硬编码 120x40，而 xterm 实际尺寸不同，
-       * 导致 TUI 按错误尺寸排版、内容画到可视区外。
-       * 渲染侧现在在 spawn 时即告知真实尺寸，后续 resize 只做增量修正。
-       */
-      const cols = size?.cols && size.cols > 0 ? size.cols : 120;
-      const rows = size?.rows && size.rows > 0 ? size.rows : 40;
-      /*
-       * useConpty 是 Windows 专有选项（ConPTY）；macOS / Linux 用 forkpty，
-       * 该字段无意义。显式只在 Windows 下带上，避免向 Unix 传无关选项。
-       */
-      const spawnOptions: pty.IPtyForkOptions | pty.IWindowsPtyForkOptions = {
-        name: 'xterm-256color',
-        cols,
-        rows,
-        cwd,
-        env,
-        encoding: 'utf8',
-        handleFlowControl: false,
-        ...(isWindows ? { useConpty: true } : {}),
-      };
       ptyProcess = pty.spawn(spawnFile, spawnArgs, spawnOptions);
-    } catch (error) {
+    } catch (directError) {
       /*
-       * 把已知的底层错误翻译成人能看懂的话。
+       * macOS 上 node-pty 走 posix_spawn，个别二进制会被它拒掉（哪怕本身
+       * 可执行）。此时改经 zsh 的 `exec "$@"` 绕开：
        *
-       * `posix_spawnp failed` / `error code: 267` 是 forkpty / CreateProcess
-       * 在「创建进程」这一步失败的统称，真正原因（目录不存在、架构不匹配、
-       * 二进制损坏、无执行权限）都不会体现在这句话里，直接抛给用户等于没说。
+       *   node-pty → posix_spawn → zsh → execve → 目标进程
+       *
+       * zsh 是标准二进制，posix_spawn 必然成功；再由 zsh 用 execve 直接
+       * 替换成目标进程。execve 与 posix_spawn 是两条不同的 exec 路径，
+       * 能覆盖「posix_spawn 与某二进制不兼容、但 execve 正常」的情况。
+       *
+       * 若目标二进制真的损坏（EBADMACHO 等），zsh 会把 execve 失败的原因
+       * 打印到终端里，比一句笼统的 toast 更有用。
        */
-      const detail = describeError(error);
-      const hint = describeSpawnFailure(detail, executable, cwd, pathValue, env);
-      return {
-        ok: false,
-        reason: 'spawn-failed',
-        error: `Failed to start ${commandName}: ${detail}${hint}`,
-      };
+      const fallback = darwinExecFallback(spawnFile, spawnArgs, pathValue);
+      if (!fallback) {
+        return buildSpawnFailure(commandName, directError, executable, cwd, pathValue, env);
+      }
+      try {
+        ptyProcess = pty.spawn(fallback.file, fallback.args, spawnOptions);
+      } catch (fallbackError) {
+        return buildSpawnFailure(commandName, fallbackError, executable, cwd, pathValue, env);
+      }
     }
 
     const runtime: PtyRuntime = {
@@ -265,6 +274,36 @@ function describeError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+/** darwin 下用 zsh 的 execve 绕开 node-pty 的 posix_spawn；其它平台返回 null。 */
+function darwinExecFallback(
+  file: string,
+  args: string[],
+  pathValue: string,
+): { file: string; args: string[] } | null {
+  if (process.platform !== 'darwin') return null;
+  const zsh = resolveExecutable('zsh', pathValue) ?? '/bin/zsh';
+  // `exec "$@"`：$0 之后的参数原样透传，不做二次分词，避免 shell 转义问题。
+  return { file: zsh, args: ['-c', 'exec "$@"', 'herdr-spawn', file, ...args] };
+}
+
+/** 统一构造 spawn 失败的结果与可读错误。 */
+function buildSpawnFailure(
+  commandName: string,
+  error: unknown,
+  executable: string,
+  cwd: string,
+  pathValue: string,
+  env: NodeJS.ProcessEnv,
+): SpawnResult {
+  const detail = describeError(error);
+  const hint = describeSpawnFailure(detail, executable, cwd, pathValue, env);
+  return {
+    ok: false,
+    reason: 'spawn-failed',
+    error: `Failed to start ${commandName}: ${detail}${hint}`,
+  };
 }
 
 /**
