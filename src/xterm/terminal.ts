@@ -14,6 +14,12 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { SearchAddon } from '@xterm/addon-search';
 import type { ResolvedTheme } from '@shared/state';
 
+/**
+ * 渲染进程里判断平台：ConPTY 的 OSC 过滤器只在 Windows 上存在。
+ * 这里不引入 Electron 的 platform 模块，避免渲染进程额外依赖。
+ */
+const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+
 export interface TerminalHandle {
   terminal: Terminal;
   fit: FitAddon;
@@ -116,21 +122,50 @@ function isDarkBackground(hex: string): boolean {
 }
 
 /**
+ * 向 PTY 写入一条 OSC 序列，并绕开 Windows ConPTY 的 OSC 过滤器。
+ *
+ * ConPTY 会把 `ESC ]` 开头的 OSC 序列整条丢弃（实测 `OSC 10/11/12` 均被吞，
+ * `CSI` 与纯文本正常透传）。这不是「写入次数」的问题：把 `ESC ]` 与载荷
+ * 拆成两次 `write` 看似可行，但 ConPTY 会按缓冲区合并后再过滤，
+ * 只要两次写入落在同一个 read 里就依然被吞，结果不可靠。
+ *
+ * 可靠做法是在 `ESC` 与 `]` 之间插入一个 NUL 字节：
+ * - ConPTY 的匹配器找的是字面量两字节前缀 `ESC ]`，中间多一个 NUL 后不再命中，
+ *   整条序列原样透传；
+ * - xterm.js / opentui 的 VT 解析器会忽略游离的 NUL，仍按 `ESC ]` 解析，
+ *   因此子进程拿到的语义与标准 OSC 完全一致。
+ *
+ * 实测连续 8 次 OSC 10/11 往返全部命中。非 Windows（forkpty）无此过滤器，
+ * 直接写标准形式。
+ */
+function writeOscToPty(write: (data: string) => void, body: string): void {
+  if (isWindows) {
+    write(`\x1b\x00]${body}`);
+    return;
+  }
+  write(`\x1b]${body}`);
+}
+
+/**
  * 注册主题颜色查询的响应处理。
  *
  * 对照 VSCode 终端（Ghostty 约定）：
  * 1. opencode/opentui 发送 `CSI ? 2031 h`（启用颜色方案报告）；
  *    终端收到后主动回 `CSI ? 997 ; 1 n`（深色）或 `CSI ? 997 ; 2 n`（浅色）。
- * 2. 之后 TUI 发 `OSC 10;?`（前景）与 `OSC 11;?`（背景）查询；
- *    终端回 `rgb:RRRR/GGGG/BBBB` 格式的实际颜色。
- * 3. TUI 根据背景亮度选择 light/dark 主题。
+ * 2. TUI 收到 997 后调用原生 `queryThemeColors()`，写出 `OSC 10;?`（前景）
+ *    与 `OSC 11;?`（背景）查询；终端回 `rgb:RRRR/GGGG/BBBB` 格式的实际颜色。
+ * 3. TUI 必须**同时**拿到 10 和 11 两条响应才会重算 light/dark
+ *    （opentui `RendererThemeMode.handleSequence` 要求两个字段都非空）。
+ *
+ * `onQueryResponse` 负责把序列写回 PTY；OSC 序列一律经 `writeOscToPty`
+ * 以兼容 ConPTY。
  */
 function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string) => void): void {
   // OSC 10：前景色查询
   terminal.parser.registerOscHandler(10, (data) => {
     if (data === '?' || data === '') {
       const fg = terminal.options.theme?.foreground ?? '#d4d4d4';
-      onQueryResponse(`\x1b]10;${hexToRgbColon(fg)}\x07`);
+      writeOscToPty(onQueryResponse, `10;${hexToRgbColon(fg)}\x07`);
       return true;
     }
     return false;
@@ -140,7 +175,7 @@ function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string
   terminal.parser.registerOscHandler(11, (data) => {
     if (data === '?' || data === '') {
       const bg = terminal.options.theme?.background ?? '#0d0d0d';
-      onQueryResponse(`\x1b]11;${hexToRgbColon(bg)}\x07`);
+      writeOscToPty(onQueryResponse, `11;${hexToRgbColon(bg)}\x07`);
       return true;
     }
     return false;
@@ -241,6 +276,10 @@ export function createTerminal(
     registerThemeQueries(terminal, onQueryResponse);
   }
 
+  // 记录上次上报给 TUI 的颜色方案（997 报告）。初值取创建时的主题，
+  // 这样首次挂载时 applyTheme 不会向尚未就绪的 PTY 写入噪声序列。
+  let lastScheme: 1 | 2 = (options?.theme ?? 'dark') === 'dark' ? 1 : 2;
+
   try {
     fit.fit();
   } catch {
@@ -279,6 +318,43 @@ export function createTerminal(
     search,
     applyTheme: (theme: ResolvedTheme) => {
       terminal.options.theme = terminalTheme(theme);
+
+      /*
+       * 主题切换时主动把颜色方案变更推送给 PTY 里的 TUI。
+       *
+       * opencode/opentui 在启动时发送 `CSI ? 2031 h` 开启颜色方案报告，
+       * 之后依赖终端推送的 `CSI ? 997 ; 1 n`（深色）/ `CSI ? 997 ; 2 n`（浅色）
+       * 触发配色重探。若只改 xterm 自身配色而不推送 997，TUI 会沿用旧主题色。
+       *
+       * 注意：997 只让 opentui 去重探，真正决定 light/dark 的是随后
+       * OSC 10/11 的响应颜色，所以推送后必须补上响应（见下）。
+       */
+      const bg = terminal.options.theme?.background ?? (theme === 'dark' ? '#0d0d0d' : '#ffffff');
+      const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
+      if (scheme !== lastScheme) {
+        lastScheme = scheme;
+        onQueryResponse?.(`\x1b[?997;${scheme}n`);
+      }
+
+      /*
+       * Windows 上必须由宿主代答 OSC 10/11。
+       *
+       * opentui 的原生核心（`lib.queryThemeColors`）把 `OSC 10;?` / `OSC 11;?`
+       * 写到 stdout，但 ConPTY 会把 OSC 序列整条丢弃 —— 实测子进程输出的
+       * `\x1b]10;?\x07` 与 `\x1b]11;?\x07` 都不会出现在 PTY 的 onData 里
+       * （`CSI ? 2031 h`、`CSI ? 997;N n` 等 CSI 序列则正常透传）。
+       *
+       * 于是 registerOscHandler(10/11) 永远不会被触发，opentui 的
+       * `themeOscForeground` / `themeOscBackground` 始终为 null，
+       * `handleSequence` 因「两者必须都有值」而不改变 themeMode，
+       * `theme_mode` 事件永不触发 —— opencode 的主题就此定格在启动时的值。
+       *
+       * 因此这里主动把 OSC 查询喂给本地 parser（经 `terminal.write`，
+       * 它只做解析，不产生可见输出），让已注册的 10/11 handler 触发，
+       * 再经 `writeOscToPty` 把真实颜色拆写回 PTY。
+       */
+      terminal.write('\x1b]10;?\x07\x1b]11;?\x07');
+
       /*
        * WebGL 渲染器会在首次渲染时缓存清屏色，仅改 options.theme + clearTextureAtlas
        * 不会让它用新背景重绘（表现为浅色主题下终端仍是黑底）。
