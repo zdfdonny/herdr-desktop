@@ -9,6 +9,7 @@
  */
 
 import * as pty from 'node-pty';
+import { spawnSync } from 'node:child_process';
 import {
   statSync,
   lstatSync,
@@ -173,7 +174,7 @@ export class PtyManager {
        * 二进制损坏、无执行权限）都不会体现在这句话里，直接抛给用户等于没说。
        */
       const detail = describeError(error);
-      const hint = describeSpawnFailure(detail, executable, cwd, pathValue);
+      const hint = describeSpawnFailure(detail, executable, cwd, pathValue, env);
       return {
         ok: false,
         reason: 'spawn-failed',
@@ -290,6 +291,7 @@ function describeSpawnFailure(
   executable: string,
   cwd: string,
   pathValue: string,
+  env: NodeJS.ProcessEnv,
 ): string {
   const lower = detail.toLowerCase();
   const isSpawnFailure =
@@ -304,11 +306,92 @@ function describeSpawnFailure(
     return `\n→ 工作目录不存在或不是目录：${cwd}`;
   }
 
-  // 优先给出「检查文件本身」得到的确定结论，而不是空泛的猜测。
+  const parts: string[] = [];
+
+  // 事实一：这个文件本身是什么（脚本 / 什么架构的二进制）。
   const inspected = inspectExecutable(executable, pathValue);
-  if (inspected) return inspected;
+  if (inspected) parts.push(inspected);
+
+  // 事实二：用系统 fork+exec 复测，拿到 node-pty 吞掉的真实 errno。
+  // 这一步能区分「二进制本身有问题」还是「node-pty 的 posix_spawn 有问题」。
+  const probed = probeSpawnability(executable, env, cwd);
+  if (probed) parts.push(probed);
+
+  if (parts.length > 0) return parts.join('\n');
 
   return `\n→ 可执行文件：${executable}\n  请确认该文件存在、有执行权限，且架构与当前系统匹配。`;
+}
+
+/**
+ * 用 `spawnSync`（fork + exec）复测同一个可执行文件，拿到真实错误码。
+ *
+ * node-pty 在 macOS 上走 posix_spawn，失败时只抛一句 `posix_spawnp failed`，
+ * errno 被吞掉。而 Node 的 child_process 走 fork+exec 并用错误管道回传
+ * errno，能给出 ENOENT / EACCES / ENOEXEC / EBADARCH 等具体码。
+ *
+ * 这个探针同时还能回答一个关键问题：**到底是二进制不行，还是 node-pty 不行**。
+ * - 复测也失败 → 拿 errno 定位二进制/依赖问题；
+ * - 复测成功 → 二进制本身可执行，失败是 node-pty 的 posix_spawn 与它不兼容，
+ *   下一步要用「经 shell 启动」等方式绕开 posix_spawn。
+ *
+ * 只在 darwin 启用：本 bug 场景集中在 macOS，且 Windows 上 .cmd/.bat 的
+ * 复测语义不同，保持范围最小。
+ */
+function probeSpawnability(
+  executable: string,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): string {
+  if (process.platform !== 'darwin') return '';
+
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    // `--version` 让绝大多数 CLI 立即退出；真遇交互式程序，timeout 兜底。
+    result = spawnSync(executable, ['--version'], {
+      env,
+      cwd,
+      timeout: 2500,
+      stdio: 'ignore',
+    });
+  } catch {
+    return ''; // 探针自身异常就别再追加噪音
+  }
+
+  if (result.error) {
+    return mapSpawnErrno(result.error, executable);
+  }
+
+  // fork+exec 成功（进程确实 exec 起来了，哪怕随后被 timeout 杀掉也说明可执行）。
+  const outcome = result.signal
+    ? `进程成功 exec（随后被 ${result.signal} 终止，属超时）`
+    : `退出码 ${result.status}`;
+  return (
+    `\n→ 系统 fork+exec 复测：${outcome}。二进制本身可执行，` +
+    `失败出在 node-pty 的 posix_spawn 环节，需绕开它启动。`
+  );
+}
+
+/** 把 fork+exec 探针拿到的 errno 翻译成人话。 */
+function mapSpawnErrno(error: NodeJS.ErrnoException, executable: string): string {
+  const code = error.code ?? 'UNKNOWN';
+  const errno = error.errno === undefined ? '' : ` (errno ${error.errno})`;
+  switch (code) {
+    case 'ENOENT':
+      return `\n→ 系统 fork+exec 报 ENOENT：${executable} 或其动态链接器/依赖 dylib 缺失。`;
+    case 'EACCES':
+      return `\n→ 系统 fork+exec 报 EACCES：无执行权限，或 macOS Gatekeeper/代码签名拦截。`;
+    case 'ENOEXEC':
+      return `\n→ 系统 fork+exec 报 ENOEXEC：不是有效可执行格式（缺 shebang / 文件损坏 / Mach-O 头损坏）。`;
+    case 'EBADARCH':
+      return `\n→ 系统 fork+exec 报 EBADARCH：架构不匹配。`;
+    case 'EBADMACHO':
+      return `\n→ 系统 fork+exec 报 EBADMACHO：Mach-O 文件损坏或不完整。`;
+    case 'ENOTSUP':
+    case 'EOPNOTSUPP':
+      return `\n→ 系统 fork+exec 报 ${code}：可能二进制要求的最低 macOS 版本高于当前系统。`;
+    default:
+      return `\n→ 系统 fork+exec 报错：${code}${errno}。`;
+  }
 }
 
 /** 只读文件头部最多 maxBytes 字节；失败返回空 Buffer。 */
