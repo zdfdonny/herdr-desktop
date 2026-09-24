@@ -111,10 +111,13 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
             target: linux
-          # macos-13 是最后一个 x64 runner；macos-14+ 均为 arm64
+          # macos-13 已被 GitHub 弃用：标签还在，但已无机器承接，
+          # job 会一直停在 "Waiting for a runner" 直到超时（不会报错，只会干等）。
+          # 官方给的 x86_64 迁移目标是 macos-15-intel，可用到 2027-08。
+          # macos-14 及以上（不带 -intel 后缀）都是 arm64。
           - os: mac
             arch: x64
-            runner: macos-13
+            runner: macos-15-intel
             target: mac
           - os: mac
             arch: arm64
