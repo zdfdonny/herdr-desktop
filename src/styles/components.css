@@ -143,6 +143,15 @@
   -webkit-app-region: no-drag;
 }
 
+/*
+ * macOS 右侧没有原生窗口按钮，占位块被隐藏（见下），
+ * 只剩 4px 内边距会让主题切换贴着窗口右边缘。
+ * 这里补到与左栏品牌区对称的 12px。
+ */
+.layout--mac .topbar__actions {
+  padding-right: 12px;
+}
+
 /* 原生窗口按钮占位：右侧留白，避免主题切换被按钮盖住。
    macOS 的按钮在左侧，此处无需留白。 */
 .topbar__overlay-spacer {
@@ -1272,6 +1281,16 @@
 }
 
 /*
+ * macOS 收起态：48px 的图标栏挡不住交通灯（约 78px），
+ * 展开按钮会正好压在红黄绿按钮下面。这里把收起态的侧栏整体加宽到
+ * 能容纳交通灯，再把按钮推到交通灯右侧，而不是让两者重叠。
+ */
+.layout--mac .sidebar--collapsed {
+  width: calc(var(--mac-traffic-light-inset) + 48px);
+  min-width: calc(var(--mac-traffic-light-inset) + 48px);
+}
+
+/*
  * 顶部条：与右栏顶部栏等高的拖拽区，内嵌展开按钮。
  * 父级 drag / 子级 no-drag 是自绘标题栏放交互控件的标准模式
  * （同 .topbar → .topbar__actions）：拖拽区会吞掉点击，按钮必须显式 no-drag。
@@ -1285,6 +1304,15 @@
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
+}
+
+/*
+ * macOS：展开按钮不能居中于整条顶部栏，否则仍会落在交通灯范围内。
+ * 改为靠右对齐，并用内边距把它顶到交通灯右侧。
+ */
+.layout--mac .sidebar__rail-top {
+  justify-content: flex-end;
+  padding-right: 9px;
 }
 
 /* 展开按钮：明确的图标入口（IconPanelLeft），可交互，不参与拖拽 */
