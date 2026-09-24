@@ -1281,13 +1281,16 @@
 }
 
 /*
- * macOS 收起态：48px 的图标栏挡不住交通灯（约 78px），
- * 展开按钮会正好压在红黄绿按钮下面。这里把收起态的侧栏整体加宽到
- * 能容纳交通灯，再把按钮推到交通灯右侧，而不是让两者重叠。
+ * macOS 收起态必须放开裁剪：展开按钮被绝对定位到交通灯右侧（见下），
+ * 已越出 48px 的图标栏。而 .sidebar 是 overflow: hidden，不放开的话
+ * 按钮会被直接裁掉、完全看不见。
+ *
+ * 两轴一起用 visible：只写 overflow-x: visible 时，与 overflow-y: hidden
+ * 组合会被浏览器强制转成 auto（规范要求另一轴不能是 visible），
+ * 结果多出一条滚动条。收起态内容本身不滚动，整体放开即可。
  */
 .layout--mac .sidebar--collapsed {
-  width: calc(var(--mac-traffic-light-inset) + 48px);
-  min-width: calc(var(--mac-traffic-light-inset) + 48px);
+  overflow: visible;
 }
 
 /*
@@ -1296,6 +1299,7 @@
  * （同 .topbar → .topbar__actions）：拖拽区会吞掉点击，按钮必须显式 no-drag。
  */
 .sidebar__rail-top {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1307,12 +1311,21 @@
 }
 
 /*
- * macOS：展开按钮不能居中于整条顶部栏，否则仍会落在交通灯范围内。
- * 改为靠右对齐，并用内边距把它顶到交通灯右侧。
+ * macOS：交通灯约占 78px，而图标栏只有 48px 宽——按钮若留在栏内，
+ * 无论居中还是右对齐都必然压在红黄绿下面。
+ *
+ * 因此这里让按钮**脱离图标栏的宽度限制**，用绝对定位把它摆到交通灯
+ * 右侧的空白处。图标栏本身保持 48px 不变，不因让位而变宽。
  */
 .layout--mac .sidebar__rail-top {
-  justify-content: flex-end;
-  padding-right: 9px;
+  justify-content: flex-start;
+}
+
+.layout--mac .sidebar__rail-toggle {
+  position: absolute;
+  left: calc(var(--mac-traffic-light-inset) + 9px);
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* 展开按钮：明确的图标入口（IconPanelLeft），可交互，不参与拖拽 */
