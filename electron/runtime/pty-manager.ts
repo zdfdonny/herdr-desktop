@@ -567,6 +567,22 @@ function inspectBinary(head: Buffer, target: string): string {
   const CPU_X86 = 0x00000007;
 
   if (cpu === CPU_ARM64) {
+    /*
+     * 关键分诊：arm64 二进制 + 当前进程是 x64 = 应用是 x64 版，正跑在
+     * Rosetta 2 上。此时 node-pty 的 posix_spawn 已知会失败（fork+exec
+     * 不受影响，所以系统复测能成功、终端里也能跑），典型症状正是「连
+     * /bin/zsh 都报 posix_spawnp failed」。
+     *
+     * 能走到这里、且 fork+exec 复测成功，本身就证明机器是 Apple Silicon
+     * （Intel 机器根本无法执行 arm64 二进制），所以这个判断是确定的。
+     */
+    if (process.arch === 'x64') {
+      return (
+        `\n→ ${target} 是 arm64 二进制，但当前应用是 x64（Rosetta 2 下运行）。\n` +
+        `  node-pty 在 Rosetta 下 posix_spawn 会失败，这是应用架构问题、不是 claude 的问题。\n` +
+        `  请改装 arm64 版：herdr-desktop-*-mac-arm64.dmg`
+      );
+    }
     return `\n→ ${target} 是 arm64 二进制，与 Apple Silicon 匹配，架构不是失败原因。`;
   }
   if (cpu === CPU_X86_64 || cpu === CPU_X86) {
