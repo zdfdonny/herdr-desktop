@@ -20,10 +20,9 @@ const combos = [
   ['linux', 'x64', 'AppImage'], ['linux', 'x64', 'deb'],
   ['linux', 'arm64', 'AppImage'], ['linux', 'arm64', 'deb'],
   ['mac', 'x64', 'dmg'], ['mac', 'arm64', 'dmg'],
-  ['mac', 'x64', 'zip'], ['mac', 'arm64', 'zip'],
-  ['win', 'x64', 'zip'], ['win', 'arm64', 'zip'],
 ];
 
+// Windows 走 NSIS，用独立的模板
 const out = combos.map(([os, arch, ext]) => expand(tpl, os, arch, ext));
 out.push(expand(nsisTpl, 'win', 'x64', 'exe'));
 out.push(expand(nsisTpl, 'win', 'arm64', 'exe'));

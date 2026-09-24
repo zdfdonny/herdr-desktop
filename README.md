@@ -102,7 +102,7 @@ Herdr Desktop 不走这条捷径：它**不依赖 herdr 二进制**，而是自�
 | Linux | x64 | `herdr-desktop-*-linux-x64.AppImage` / `.deb` |
 | Linux | arm64 | `herdr-desktop-*-linux-arm64.AppImage` / `.deb` |
 
-Windows 与 macOS 额外提供 `.zip` 免安装版。每个 Release 附 `SHA256SUMS.txt` 校验和。
+每个 Release 附 `SHA256SUMS.txt` 校验和。
 
 > **macOS 用户注意**：应用**未做代码签名与公证**，首次打开请右键 →「打开」，
 > 或执行：

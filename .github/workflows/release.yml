@@ -179,7 +179,8 @@ jobs:
         shell: bash
         run: ls -lh release/ || true
 
-      # 只收集安装包本体，排除 unpacked 目录与 builder 中间产物
+      # 只收集安装包本体，排除 unpacked 目录与 builder 中间产物。
+      # 不含 *.zip：便携包已从 target 中移除，产物只有安装包
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -189,7 +190,6 @@ jobs:
           path: |
             release/*.exe
             release/*.dmg
-            release/*.zip
             release/*.AppImage
             release/*.deb
 
@@ -210,7 +210,7 @@ jobs:
         run: |
           mkdir -p dist
           find artifacts -type f \
-            \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
+            \( -name '*.exe' -o -name '*.dmg' \
                -o -name '*.AppImage' -o -name '*.deb' \) \
             -exec cp {} dist/ \;
           cd dist
@@ -244,7 +244,6 @@ jobs:
             | Linux | x64 | `herdr-desktop-*-linux-x64.AppImage` / `.deb` |
             | Linux | arm64 | `herdr-desktop-*-linux-arm64.AppImage` / `.deb` |
 
-            Windows / macOS 同时提供 `.zip` 便于免安装使用。
             校验和见 `SHA256SUMS.txt`。
 
             > **macOS 提示**：应用未做代码签名与公证，首次打开需右键 →「打开」，

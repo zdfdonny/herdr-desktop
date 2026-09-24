@@ -114,8 +114,7 @@ Grab the installer for your platform from [Releases](../../releases):
 | Linux | x64 | `herdr-desktop-*-linux-x64.AppImage` / `.deb` |
 | Linux | arm64 | `herdr-desktop-*-linux-arm64.AppImage` / `.deb` |
 
-Windows and macOS also ship `.zip` builds for portable use. Every release includes
-a `SHA256SUMS.txt`.
+Every release includes a `SHA256SUMS.txt`.
 
 > **macOS users**: the app is **not code-signed or notarized**. On first launch,
 > right-click → Open, or run:

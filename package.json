@@ -89,16 +89,14 @@
     "win": {
       "icon": "build/icon.png",
       "target": [
-        "nsis",
-        "zip"
+        "nsis"
       ]
     },
     "mac": {
       "icon": "build/icon.png",
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ]
     },
     "linux": {
