@@ -2,9 +2,6 @@
 
 > A multi-agent management desktop app — the runtime your coding agents live on.
 >
-> The project is named **Herdr Desktop**; the installed app is displayed as **Herdr**
-> (Start menu, app list, window title, and `Herdr.app` on macOS).
-> Installer filenames keep the `herdr-desktop-` prefix.
 
 **English** | [简体中文](README.md)
 
