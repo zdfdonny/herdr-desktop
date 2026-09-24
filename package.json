@@ -1,6 +1,6 @@
 {
   "name": "herdr-desktop",
-  "productName": "Herdr Desktop",
+  "productName": "Herdr",
   "desktopName": "herdr-desktop.desktop",
   "version": "0.1.0",
   "description": "Multi-agent management desktop app - the runtime your coding agents live on.",
@@ -70,7 +70,7 @@
   },
   "build": {
     "appId": "dev.herdr.desktop",
-    "productName": "Herdr Desktop",
+    "productName": "Herdr",
     "directories": {
       "output": "release",
       "buildResources": "build"

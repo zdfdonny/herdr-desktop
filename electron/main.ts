@@ -34,7 +34,7 @@ function createMainWindow(): BrowserWindow {
     ...DEFAULT_WINDOW,
     backgroundColor: APP_BACKGROUND,
     show: false,
-    title: 'Herdr Desktop',
+    title: 'Herdr',
     useContentSize: true,
     autoHideMenuBar: true,
     // macOS 忽略此项（用 bundle 的 .icns），Windows / Linux 生效

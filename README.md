@@ -1,6 +1,9 @@
 # Herdr Desktop
 
 > 多 agent 管理桌面端应用 —— 让你的 AI coding agent 常驻运行的运行时。
+>
+> 项目名为 **Herdr Desktop**；安装后应用的显示名为 **Herdr**（开始菜单、应用列表、
+> 窗口标题、macOS 的 `Herdr.app`）。安装包文件名前缀为 `herdr-desktop-`。
 
 [English](README.en.md) | **简体中文**
 
@@ -108,7 +111,7 @@ Herdr Desktop 不走这条捷径：它**不依赖 herdr 二进制**，而是自�
 > 或执行：
 >
 > ```bash
-> xattr -cr "/Applications/Herdr Desktop.app"
+> xattr -cr "/Applications/Herdr.app"
 > ```
 >
 > **Linux 用户注意**：AppImage 需要先赋予执行权限：

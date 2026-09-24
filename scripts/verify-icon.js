@@ -1,5 +1,5 @@
 // 验证构建产物中是否嵌入了应用图标资源。
-// 用法: node scripts/verify-icon.js "release/win-unpacked/Herdr Desktop.exe"
+// 用法: node scripts/verify-icon.js "release/win-unpacked/Herdr.exe"
 const fs = require('node:fs');
 
 const target = process.argv[2];

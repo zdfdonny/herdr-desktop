@@ -253,6 +253,6 @@ jobs:
             校验和见 `SHA256SUMS.txt`。
 
             > **macOS 提示**：应用未做代码签名与公证，首次打开需右键 →「打开」，
-            > 或执行 `xattr -cr "/Applications/Herdr Desktop.app"`。
+            > 或执行 `xattr -cr "/Applications/Herdr.app"`。
             >
             > **Linux 提示**：AppImage 需先 `chmod +x`。
