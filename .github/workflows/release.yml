@@ -1,6 +1,7 @@
 name: Build & Release
 
 # 手动触发：Actions → Build & Release → Run workflow
+# 触发后会依次执行：预检（类型检查/单测/产物名校验）→ 6 个平台构建 → 汇总发布
 on:
   workflow_dispatch:
     inputs:
