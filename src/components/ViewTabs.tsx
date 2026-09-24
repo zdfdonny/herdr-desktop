@@ -4,19 +4,20 @@
  * 侧栏里新建 agent 会新开一个独立视图（而不是挤进当前分屏），
  * 多个视图并存时用这条标签栏切换；只有一个视图时整条隐藏。
  *
- * 标签名默认是**递增序号**（"1"、"2"…），不跟随内部 agent 变化——
+ * 标签默认名是固定的 "New tab"，不跟随内部 agent 变化；
  * 分屏后视图里有多个 agent，用第一个的名字会误导。
- * 右键标签可就地重命名，清空则恢复为下一个序号。
+ * 右键标签可就地重命名，清空则恢复默认名。
  *
- * 关闭标签只收起视图（把它的 pane 从排列里摘掉），不杀掉进程——
- * 进程仍在侧栏列表里，点击即可重新打开。
+ * 关闭标签会**连同标签里的智能体一起关闭**（杀进程、移除会话条目）。
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
-import { useLayoutStore, MAX_VIEW_NAME_LENGTH, type View } from '../stores/layoutStore';
+import { useLayoutStore, MAX_VIEW_NAME_LENGTH, viewPaneIds, type View } from '../stores/layoutStore';
+import { closePane } from '../ipc/client';
 import { useT } from '../i18n';
 import { IconClose } from './icons';
+import { activateAndReviveView } from './viewActivation';
 
 interface ViewTabsProps {
   views: View[];
@@ -30,10 +31,38 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
   /** 正在重命名的标签 id；同一时刻只有一个。 */
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  /**
+   * 激活标签：切换到该视图，并自动恢复其中停止态的智能体。
+   *
+   * 只切 activeViewId 不够：视图里的停止态 pane 仍会显示「已停止」提示，
+   * 而且 focusPaneId 还停在旧视图，下一次 reconcile 会把激活的视图又顶回旧视图。
+   * 这里把焦点给视图内第一个 pane，并恢复其余停止态 pane（见 activateAndReviveView）。
+   */
+  const activateTab = (view: View) => {
+    const firstId = viewPaneIds(view)[0] ?? null;
+    if (firstId) {
+      activateAndReviveView(view, firstId);
+    } else {
+      useLayoutStore.getState().activateView(view.id);
+    }
+  };
+
+  /**
+   * 关闭标签：先关闭标签里所有智能体（杀进程 + 移除会话条目），
+   * 再收起视图。closeView 会把这些 pane 记入 hiddenPaneIds，
+   * 避免快照间隙里 reconcile 把正在关闭的 pane 铺成新视图。
+   */
+  const closeTab = (view: View) => {
+    for (const id of viewPaneIds(view)) {
+      closePane(id);
+    }
+    useLayoutStore.getState().closeView(view.id);
+  };
+
   return (
     <div className="view-tabs" role="tablist">
       {views.map((view) => {
-        const paneIds = collectPaneIds(view);
+        const paneIds = viewPaneIds(view);
         const active = view.id === activeViewId;
         return (
           <div
@@ -64,7 +93,7 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
                 <button
                   type="button"
                   className="view-tab__label"
-                  onClick={() => useLayoutStore.getState().activateView(view.id)}
+                  onClick={() => activateTab(view)}
                   title={paneTitle(view, paneIds, byId, t('view.renameHint'))}
                 >
                   <span className="view-tab__text">{view.name}</span>
@@ -77,7 +106,7 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
                   className="view-tab__close"
                   onClick={(e) => {
                     e.stopPropagation();
-                    useLayoutStore.getState().closeView(view.id);
+                    closeTab(view);
                   }}
                   title={t('view.close')}
                   aria-label={t('view.close')}
@@ -163,22 +192,4 @@ function ViewTabRename({
       aria-label={initial}
     />
   );
-}
-
-/** 取视图树里的 pane id（顺序即视觉顺序）。 */
-function collectPaneIds(view: View): string[] {
-  const out: string[] = [];
-  const scan = (node: View['tree']): void => {
-    if (!node) return;
-    if (node.type === 'pane') {
-      out.push(node.paneId);
-      return;
-    }
-    if (node.type === 'split') {
-      scan(node.children[0]);
-      scan(node.children[1]);
-    }
-  };
-  scan(view.tree);
-  return out;
 }

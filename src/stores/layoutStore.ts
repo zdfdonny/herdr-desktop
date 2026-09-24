@@ -19,8 +19,10 @@
  *
  * 与 Main 快照的同步靠 `reconcile`：
  * - 移除已不存在的 pane（折叠只剩单子节点的 split），视图空了就删掉视图；
- * - 用新出现的 pane 填充空位（优先 projectId 匹配）——这是分屏路径；
- * - 仍未被任何树接纳的新 pane → 各自新开一个视图并激活最后一个——这是侧栏路径。
+ * - 停止态 pane 保留在原位置：应用重启后所有 pane 都是停止态，剪掉它们
+ *   等于把整个分屏树清空，用户重启智能体时只能拿到单格视图；
+ * - 用新出现的**运行态** pane 填充空位（优先 projectId 匹配）——这是分屏路径；
+ * - 仍未被任何树接纳的新运行态 pane → 各自新开一个视图并激活最后一个——侧栏路径。
  *
  * 布局持久化到 localStorage（按 paneId 引用），应用重启后只要会话里的 paneId
  * 还在（session.json 会恢复它们），视图与布局就能原样回来。
@@ -28,6 +30,7 @@
 
 import { create } from 'zustand';
 import type { PaneState } from '@shared/state';
+import { t } from '../i18n';
 
 export type SplitOrientation = 'row' | 'column';
 export type SplitDirection = 'left' | 'right' | 'up' | 'down';
@@ -64,7 +67,7 @@ export type LayoutNode = SplitNode | PaneLeaf | EmptyLeaf;
 export interface View {
   id: string;
   /**
-   * 标签显示名。新建时给一个递增序号（"1"、"2"…），
+   * 标签显示名。新建时固定为默认名（"New tab"），
    * 用户可通过右键标签重命名；重命名后不再随内部 agent 变化。
    */
   name: string;
@@ -85,20 +88,20 @@ function nextId(): string {
   return `n${nodeSeq}-${Date.now().toString(36)}`;
 }
 
-/**
- * 视图标签序号的计数器。
- *
- * 只增不减：关掉标签再新建不会复用旧数字，避免用户看到
- * 「同一个名字先后指过两个不同视图」。
- * 初始值由 `loadLayout()` 依据已持久化的视图名回填。
- */
-let viewSeq = 0;
-
-/** 生成下一个标签默认名（纯数字，从 1 开始）。 */
+/** 生成下一个标签默认名（固定 "New tab"，不追加序号）。 */
 function nextViewName(): string {
-  viewSeq += 1;
-  return String(viewSeq);
+  return t('view.newTab');
 }
+
+/**
+ * 被 `closeView` 从布局里摘除、正在等待关闭的 paneId。
+ *
+ * 关闭标签会先发 closePane 杀进程、再收起视图。两者之间有快照间隙：
+ * 此时 pane 仍在会话里（running），若 reconcile 把它当成「尚未放置」的
+ * 运行态 pane，会在下一次快照时立刻又开出一批新视图（刚关掉的标签「复活」）。
+ * 这里记住它们，reconcile 跳过；pane 从会话消失后会被清理。
+ */
+const hiddenPaneIds = new Set<string>();
 
 function makeView(tree: LayoutNode | null): View {
   return { id: `v-${nextId()}`, name: nextViewName(), tree };
@@ -126,6 +129,24 @@ function collectPaneIds(node: LayoutNode | null, out: Set<string> = new Set()): 
     collectPaneIds(node.children[0], out);
     collectPaneIds(node.children[1], out);
   }
+  return out;
+}
+
+/** 按视觉顺序（左→右 / 上→下）返回视图树里的 paneId。 */
+export function viewPaneIds(view: View): string[] {
+  const out: string[] = [];
+  const scan = (node: LayoutNode | null): void => {
+    if (!node) return;
+    if (node.type === 'pane') {
+      out.push(node.paneId);
+      return;
+    }
+    if (node.type === 'split') {
+      scan(node.children[0]);
+      scan(node.children[1]);
+    }
+  };
+  scan(view.tree);
   return out;
 }
 
@@ -447,12 +468,10 @@ function isValidView(value: unknown): value is Omit<View, 'name'> & { name?: str
 interface PersistedLayout {
   views: View[];
   activeViewId: string | null;
-  /** 标签序号计数器，跨会话递增，避免重名。 */
-  viewSeq: number;
 }
 
 function loadLayout(): PersistedLayout {
-  const empty: PersistedLayout = { views: [], activeViewId: null, viewSeq: 0 };
+  const empty: PersistedLayout = { views: [], activeViewId: null };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return empty;
@@ -461,28 +480,17 @@ function loadLayout(): PersistedLayout {
     const p = parsed as Record<string, unknown>;
     const stored = Array.isArray(p.views) ? p.views.filter(isValidView) : [];
     /*
-     * 计数器取「持久化值」与「现有标签名里的最大数字」的较大者：
-     * 前者覆盖正常路径，后者兜底旧数据（早期版本没有 viewSeq 字段）。
-     */
-    const maxInNames = stored.reduce((max, v) => {
-      const n = Number.parseInt(v.name ?? '', 10);
-      return Number.isInteger(n) && n > max ? n : max;
-    }, 0);
-    const persisted = typeof p.viewSeq === 'number' && Number.isFinite(p.viewSeq) ? p.viewSeq : 0;
-    const viewSeq = Math.max(persisted, maxInNames);
-    /*
-     * 旧版本持久化的视图没有 name 字段。这里就地补一个序号而不是丢弃，
+     * 旧版本持久化的视图没有 name 字段。这里就地补默认名而不是丢弃，
      * 否则升级后用户的整个标签排列会被静默清空。
      */
-    let seq = viewSeq;
     const views: View[] = stored.map((v) =>
-      typeof v.name === 'string' && v.name.length > 0 ? (v as View) : { ...v, name: String((seq += 1)) },
+      typeof v.name === 'string' && v.name.length > 0 ? (v as View) : { ...v, name: nextViewName() },
     );
     const activeViewId =
       typeof p.activeViewId === 'string' && views.some((v) => v.id === p.activeViewId)
         ? p.activeViewId
         : (views[0]?.id ?? null);
-    return { views, activeViewId, viewSeq: seq };
+    return { views, activeViewId };
   } catch {
     return empty;
   }
@@ -494,7 +502,7 @@ function saveLayout(views: View[], activeViewId: string | null): void {
       localStorage.removeItem(STORAGE_KEY);
       return;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ views, activeViewId, viewSeq }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ views, activeViewId }));
   } catch {
     /* 存储不可用时静默忽略（布局只是便利，不影响功能） */
   }
@@ -542,33 +550,50 @@ interface LayoutStore {
   activateView: (viewId: string) => void;
   /** 激活包含指定 pane 的视图；找不到则忽略。返回是否命中。 */
   activateViewOfPane: (paneId: string) => boolean;
+  /**
+   * 关闭视图（标签）。调用方需先关闭其中的 pane（见 ViewTabs.closeTab）；
+   * 这里负责把视图从布局移除，并把它所含的 pane 记入 hiddenPaneIds，
+   * 防止快照间隙里 reconcile 把它们重新铺成新视图。
+   */
   closeView: (viewId: string) => void;
   /**
    * 重命名视图标签。
-   * 传入空白字符串视为「恢复默认」——重新分配一个序号，
+   * 传入空白字符串视为「恢复默认名」（"New tab"），
    * 避免留下一个看不见名字的空标签。
    */
   renameView: (viewId: string, name: string) => void;
+  /**
+   * 与 Main 快照同步布局树。
+   *
+   * `panes` 必须是**全部**会话 pane（含停止态）：
+   * - 剪枝只看 paneId 是否还存在，停止态也保留在原分屏位置；
+   * - 只有运行态 pane 才参与「填位 / 开新视图」的放置。
+   */
   reconcile: (panes: PaneState[], focusedPaneId: string | null) => void;
   reset: () => void;
 }
 
+/**
+ * 计算 reconcile 的跳过签名。
+ *
+ * 签名必须同时包含 paneId 与 running 态：paneId 集合不变但某个 pane
+ * 停止→运行翻转时（用户重启停止态智能体），也需要重新 reconcile 把它接入树，
+ * 所以只对 paneId 排序会漏掉这种结构变化。
+ */
 function signature(panes: PaneState[]): string {
   return panes
-    .map((p) => p.paneId)
+    .map((p) => `${p.paneId}:${p.running === false ? 's' : 'r'}`)
     .sort()
     .join('\u0000');
 }
 
 /** 在 views 里定位包含某 pane 的视图。 */
-function viewOfPane(views: View[], paneId: string): View | null {
+export function viewOfPane(views: View[], paneId: string): View | null {
   return views.find((v) => findPaneLeaf(v.tree, paneId) !== null) ?? null;
 }
 
 export const useLayoutStore = create<LayoutStore>((set, get) => {
   const initial = loadLayout();
-  // 续上持久化的序号，避免重开后新建的标签与既有标签重名。
-  viewSeq = initial.viewSeq;
 
   /** 统一的写入口：更新视图数组 + 激活项并落盘。 */
   const commit = (views: View[], activeViewId: string | null) => {
@@ -635,6 +660,9 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       const { views, activeViewId } = get();
       const idx = views.findIndex((v) => v.id === viewId);
       if (idx < 0) return;
+      const removed = views[idx];
+      // 记住正在关闭的 pane：reconcile 不能在快照间隙把它们铺成新视图（见 hiddenPaneIds）
+      for (const id of collectPaneIds(removed.tree)) hiddenPaneIds.add(id);
       const next = views.filter((v) => v.id !== viewId);
       let nextActive = activeViewId;
       if (activeViewId === viewId) {
@@ -661,9 +689,19 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
 
       let views = state.views;
       let activeViewId = state.activeViewId;
-      const valid = new Set(panes.map((p) => p.paneId));
 
-      // 1) 剪掉已消失的 pane（折叠只剩单子节点的 split），并丢弃空视图
+      /*
+       * 剪枝只看「paneId 是否还存在于会话」，**不区分**停止态/运行态。
+       *
+       * 停止态 pane 也要保留在树里：应用重启后所有 pane 都是停止态，
+       * 若把它们当无效剪掉，整个分屏树会被清空并落盘为空布局，用户重启
+       * 智能体时只能拿到全新单格视图。只有真正从会话里消失的 pane 才剪。
+       */
+      const valid = new Set(panes.map((p) => p.paneId));
+      // 清理已经从会话消失的隐藏 pane（它们被真正关闭了），避免集合越积越大
+      for (const id of hiddenPaneIds) {
+        if (!valid.has(id)) hiddenPaneIds.delete(id);
+      }
       views = views
         .map((v) => ({ ...v, tree: prune(v.tree, valid) }))
         .filter((v) => viewHasContent(v, valid));
@@ -672,18 +710,35 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
         activeViewId = null;
       }
 
-      // 2) 已被任何视图接纳的 pane
+      /*
+       * 「填位 / 开新视图」只针对运行态 pane。
+       *
+       * 停止态 pane 留在树里等待用户重启（原地复活），不会被挪去填空位、
+       * 也不会被铺成新视图——否则重启后每个停止态 pane 都会冒出一个新标签，
+       * 反而覆盖了用户原来的布局。
+       */
+      const running = panes.filter((p) => p.running !== false);
+
+      // 用户点选了被 closeView 摘除的 pane：解除隐藏，让它重新进入布局
+      if (focusedPaneId && hiddenPaneIds.has(focusedPaneId)) {
+        hiddenPaneIds.delete(focusedPaneId);
+      }
+
+      // 已被任何视图接纳的 pane
       const placed = new Set<string>();
       for (const v of views) {
         for (const id of collectPaneIds(v.tree)) placed.add(id);
       }
-      const newPanes = panes.filter((p) => !placed.has(p.paneId));
+      // 被 closeView 摘除的 pane 不参与放置，直到用户从侧栏点选它
+      const newPanes = running.filter(
+        (p) => !placed.has(p.paneId) && !hiddenPaneIds.has(p.paneId),
+      );
 
-      // 3) 分屏路径：用新 pane 填充空位（优先 projectId 匹配），留在原视图内
+      // 分屏路径：用新 pane 填充空位（优先 projectId 匹配），留在原视图内
       const filled = fillEmptyAcross(views, newPanes);
       views = filled.views;
 
-      // 4) 侧栏路径：剩下没被任何空位接纳的新 pane → 各自新开一个独立视图
+      // 侧栏路径：剩下没被任何空位接纳的新 pane → 各自新开一个独立视图
       const remaining = newPanes.filter((p) => !filled.used.has(p.paneId));
       const spawnedViewId = remaining.length > 0
         ? (() => {
@@ -694,10 +749,12 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
           })()
         : null;
 
-      // 5) 有存活 pane 却没有任何视图（首次启动/布局丢失）：全部按新视图铺开
-      if (views.length === 0 && panes.length > 0) {
-        views = panes.map((p) => makeView(makePaneLeaf(p)));
-        activeViewId = views[views.length - 1].id;
+      // 有存活（运行中）pane 却没有任何视图（首次启动/布局丢失）：全部按新视图铺开
+      // 被 closeView 摘除的 pane 也跳过——否则关掉最后一个标签后立刻又铺回来。
+      if (views.length === 0 && running.length > 0) {
+        const toPlace = running.filter((p) => !hiddenPaneIds.has(p.paneId));
+        views = toPlace.map((p) => makeView(makePaneLeaf(p)));
+        if (views.length > 0) activeViewId = views[views.length - 1].id;
       } else if (spawnedViewId) {
         // 新建的视图优先于下面的焦点跟随：快照里的 focusedPaneId 可能仍是旧 pane
         activeViewId = spawnedViewId;
@@ -718,7 +775,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
 
     reset: () => {
       saveLayout([], null);
-      viewSeq = 0;
+      hiddenPaneIds.clear();
       set({ views: [], activeViewId: null, lastSignature: '' });
     },
   };

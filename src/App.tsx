@@ -35,13 +35,14 @@ export default function App() {
            * 同步分屏布局树：在 React 重渲染前完成 reconcile，
            * 避免「pane 已加入但树还没建好」的一帧闪烁。
            * 快照在终端每次输出时都会推来，reconcile 内部按 pane 集合签名短路。
+           *
+           * 传**全部** panes（含停止态）：停止态 pane 的分屏位置也要保留，
+           * 否则应用重启后所有 pane 都是停止态，布局会被当成「已消失」剪掉，
+           * 用户重启智能体时只能拿到全新单格视图，分屏就丢了。
            */
           useLayoutStore
             .getState()
-            .reconcile(
-              message.payload.panes.filter((p) => p.running !== false),
-              message.payload.focusedPaneId,
-            );
+            .reconcile(message.payload.panes, message.payload.focusedPaneId);
           // 剪除已关闭 pane 的认证链接缓存
           useWebStore
             .getState()

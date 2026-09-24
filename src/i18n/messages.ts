@@ -88,6 +88,8 @@ export interface Messages {
     close: string;
     /** 标签 tooltip 里提示「右键可重命名」。 */
     renameHint: string;
+    /** 新建视图标签的默认名（重复时追加序号）。 */
+    newTab: string;
   };
   status: {
     idle: string;
@@ -103,9 +105,7 @@ export interface Messages {
   };
   empty: {
     addProjectTitle: string;
-    selectAgentTitle: string;
     addProject: string;
-    newAgent: string;
   };
   settings: {
     title: string;
@@ -210,6 +210,7 @@ const zhCN: Messages = {
     empty: '新视图',
     close: '关闭视图',
     renameHint: '右键重命名',
+    newTab: '新标签',
   },
   status: {
     idle: '空闲',
@@ -225,9 +226,7 @@ const zhCN: Messages = {
   },
   empty: {
     addProjectTitle: '添加一个项目开始使用',
-    selectAgentTitle: '选择一个智能体',
     addProject: '添加项目',
-    newAgent: '新建智能体',
   },
   settings: {
     title: '设置',
@@ -332,6 +331,7 @@ const en: Messages = {
     empty: 'New view',
     close: 'Close view',
     renameHint: 'Right-click to rename',
+    newTab: 'New tab',
   },
   status: {
     idle: 'Idle',
@@ -347,9 +347,7 @@ const en: Messages = {
   },
   empty: {
     addProjectTitle: 'Add a project to get started',
-    selectAgentTitle: 'Select an agent',
     addProject: 'Add project',
-    newAgent: 'New agent',
   },
   settings: {
     title: 'Settings',

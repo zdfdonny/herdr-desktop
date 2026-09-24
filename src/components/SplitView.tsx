@@ -19,6 +19,8 @@ import {
   findSplitNode,
   flattenLayout,
   DIVIDER_SIZE,
+  viewOfPane,
+  viewPaneIds,
   type LayoutNode,
   type FlatLeaf,
   type FlatDivider,
@@ -172,6 +174,27 @@ function PaneCell({ pane, focused }: { pane: PaneState; focused: boolean }) {
   const headerRef = useRef<HTMLDivElement>(null);
   const splitButtonRef = useRef<HTMLButtonElement>(null);
 
+  /**
+   * 关闭本 pane。
+   *
+   * 若关的是**聚焦**的 pane，先在同一视图（分屏）里找一个兄弟 pane 把焦点挪过去，
+   * 再关。否则 Main 的 closePane 会把焦点随手丢给 panes 集合里第一个 pane——
+   * 它可能在另一个 tab，导致 reconcile 的焦点跟随把标签跳到那个 tab 去。
+   */
+  const handleClose = () => {
+    if (focused) {
+      const store = useLayoutStore.getState();
+      const view = viewOfPane(store.views, pane.paneId);
+      if (view) {
+        const nextFocus = viewPaneIds(view).find((id) => id !== pane.paneId);
+        if (nextFocus) {
+          focusPane(nextFocus);
+        }
+      }
+    }
+    closePane(pane.paneId);
+  };
+
   // 分屏方向菜单打开时：点击菜单外、按 Esc 都关闭。
   useEffect(() => {
     if (!splitMenu) return;
@@ -247,7 +270,7 @@ function PaneCell({ pane, focused }: { pane: PaneState; focused: boolean }) {
             className="pane-cell__close"
             onClick={(e) => {
               e.stopPropagation();
-              closePane(pane.paneId);
+              handleClose();
             }}
             title={t('agent.close')}
             aria-label={t('agent.close')}

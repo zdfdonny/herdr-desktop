@@ -12,7 +12,8 @@ import { StatusDot } from './StatusDot';
 import { IconPlay, IconClose } from './icons';
 import { useT } from '../i18n';
 import { focusPane, closePane } from '../ipc/client';
-import { useLayoutStore } from '../stores/layoutStore';
+import { useLayoutStore, viewOfPane } from '../stores/layoutStore';
+import { activateAndReviveView } from './viewActivation';
 
 interface AgentRowProps {
   agent: ProjectGroupAgent;
@@ -25,10 +26,19 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
   const subtitle = agent.title ?? agent.paneId;
   const running = agent.running;
 
-  /** 点选 agent：把它所在的视图带到前台，再交给 Main 更新焦点。 */
+  /**
+   * 点选 agent：把它所在的视图带到前台，并恢复该视图里所有停止态的智能体
+   * （分屏的其他格子一起恢复，而不是各自拆成独立 tab），再交给 Main 更新焦点。
+   */
   const select = () => {
-    useLayoutStore.getState().activateViewOfPane(agent.paneId);
-    focusPane(agent.paneId);
+    const store = useLayoutStore.getState();
+    const view = viewOfPane(store.views, agent.paneId);
+    if (view) {
+      activateAndReviveView(view, agent.paneId);
+    } else {
+      // 不在任何视图里（布局丢失等）：只恢复被点选的这个
+      focusPane(agent.paneId);
+    }
   };
 
   return (

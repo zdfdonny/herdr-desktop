@@ -5,10 +5,9 @@
  * 没有横跨整宽的标题栏。侧栏顶部是品牌区，主区顶部是主题切换。
  *
  * 主区内容由 layoutStore 的**视图**驱动：
- * - 多个视图并存时，顶部显示标签栏用于切换/关闭；
- * - 激活视图内部渲染 SplitView 分屏树（支持左/右/上/下分屏）；
- * - 无视图但聚焦了某个停止态 pane → 显示重启提示；
- * - 否则 → 初始空状态。
+ * - 未选中任何智能体（focusedPaneId 为 null）→ 初始引导，不自动展示布局；
+ * - 选中智能体后 → 显示其所在视图的 SplitView 分屏树（停止态 pane 就地提示重启）；
+ * - 选中的智能体不在任何视图里（布局丢失等）→ 全屏显示重启提示/终端。
  */
 
 import type { ReactNode } from 'react';
@@ -40,15 +39,23 @@ export function Layout() {
    */
   const focusedPane =
     state.panes.find((p) => p.paneId === state.focusedPaneId) ?? null;
-  // running 是可选字段（旧快照缺省视为运行中），false 才表示停止态
-  const runningPanes = state.panes.filter((p) => p.running !== false);
-
-  const panesById = new Map(runningPanes.map((p) => [p.paneId, p]));
+  /*
+   * 全部 pane（含停止态）都进入分屏树渲染：
+   * 停止态 pane 在各自的分屏格内显示「重新启动」提示，而不是整体消失。
+   * 只有真正从会话里消失的 pane 才会被 reconcile 剪掉。
+   */
+  const panesById = new Map(state.panes.map((p) => [p.paneId, p]));
 
   const activeView = views.find((v) => v.id === activeViewId) ?? views[0] ?? null;
 
+  // 选中智能体后才展示分屏布局；未选中时即使布局树里还有停止态 pane 也显示引导
+  const showingViews = focusedPane !== null && views.length > 0;
+
   let content: ReactNode;
-  if (views.length > 0) {
+  if (!focusedPane) {
+    // 未选中任何智能体（应用重启后的初始状态）→ 引导，不要自动恢复
+    content = <EmptyState />;
+  } else if (showingViews) {
     /*
      * 所有视图保持挂载，只切换可见性。
      *
@@ -79,16 +86,14 @@ export function Layout() {
         })}
       </>
     );
-  } else if (focusedPane) {
-    // 聚焦了停止态 pane（恢复失败等）：显示重启提示（按类型分发）
+  } else {
+    // 选中的智能体不在任何视图里（布局丢失等）：全屏显示重启提示/终端
     content =
       focusedPane.kind === 'web' ? (
         <WebPane pane={focusedPane} />
       ) : (
         <TerminalPane pane={focusedPane} />
       );
-  } else {
-    content = <EmptyState />;
   }
 
   return (
@@ -97,7 +102,9 @@ export function Layout() {
         <Sidebar />
         <main className="layout__main">
           <TitleBar />
-          {views.length > 1 && <ViewTabs views={views} activeViewId={activeView?.id ?? null} />}
+          {showingViews && views.length > 1 && (
+            <ViewTabs views={views} activeViewId={activeView?.id ?? null} />
+          )}
           <div className="layout__content">{content}</div>
         </main>
       </div>

@@ -7,5 +7,6 @@ out/
 *.log
 .DS_Store
 .tmp-unix.mjs
+.tmp-layout.mjs
 
 .tmp-msg*.txt
