@@ -68,7 +68,7 @@ export function Sidebar() {
       {/* 品牌区：左侧 herdr 官方 logo，右侧应用名（无副标题） */}
       <div className="sidebar__brand">
         <span className="sidebar__brand-mark" aria-hidden="true">
-          <IconLogo size={18} />
+          <IconLogo size={20} />
         </span>
         <div className="sidebar__brand-text">
           <span className="sidebar__brand-name">{t('app.name')}</span>
