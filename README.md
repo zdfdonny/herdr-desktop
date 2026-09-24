@@ -95,12 +95,12 @@ Herdr Desktop 不走这条捷径：它**不依赖 herdr 二进制**，而是自�
 
 | 平台 | 架构 | 文件 |
 |------|------|------|
-| Windows | x64 | `Herdr Desktop-*-win-x64-setup.exe` |
-| Windows | arm64 | `Herdr Desktop-*-win-arm64-setup.exe` |
-| macOS | Intel | `Herdr Desktop-*-mac-x64.dmg` |
-| macOS | Apple Silicon | `Herdr Desktop-*-mac-arm64.dmg` |
-| Linux | x64 | `Herdr Desktop-*-linux-x64.AppImage` / `.deb` |
-| Linux | arm64 | `Herdr Desktop-*-linux-arm64.AppImage` / `.deb` |
+| Windows | x64 | `herdr-desktop-*-win-x64-setup.exe` |
+| Windows | arm64 | `herdr-desktop-*-win-arm64-setup.exe` |
+| macOS | Intel | `herdr-desktop-*-mac-x64.dmg` |
+| macOS | Apple Silicon | `herdr-desktop-*-mac-arm64.dmg` |
+| Linux | x64 | `herdr-desktop-*-linux-x64.AppImage` / `.deb` |
+| Linux | arm64 | `herdr-desktop-*-linux-arm64.AppImage` / `.deb` |
 
 Windows 与 macOS 额外提供 `.zip` 免安装版。每个 Release 附 `SHA256SUMS.txt` 校验和。
 
@@ -114,7 +114,7 @@ Windows 与 macOS 额外提供 `.zip` 免安装版。每个 Release 附 `SHA256S
 > **Linux 用户注意**：AppImage 需要先赋予执行权限：
 >
 > ```bash
-> chmod +x "Herdr Desktop-*-linux-x64.AppImage"
+> chmod +x "herdr-desktop-*-linux-x64.AppImage"
 > ```
 
 ---

@@ -237,12 +237,12 @@ jobs:
 
             | 平台 | 架构 | 安装包 |
             |------|------|--------|
-            | Windows | x64 | `*-win-x64-setup.exe` |
-            | Windows | arm64 | `*-win-arm64-setup.exe` |
-            | macOS | Intel (x64) | `*-mac-x64.dmg` |
-            | macOS | Apple Silicon (arm64) | `*-mac-arm64.dmg` |
-            | Linux | x64 | `*-linux-x64.AppImage` / `.deb` |
-            | Linux | arm64 | `*-linux-arm64.AppImage` / `.deb` |
+            | Windows | x64 | `herdr-desktop-*-win-x64-setup.exe` |
+            | Windows | arm64 | `herdr-desktop-*-win-arm64-setup.exe` |
+            | macOS | Intel (x64) | `herdr-desktop-*-mac-x64.dmg` |
+            | macOS | Apple Silicon (arm64) | `herdr-desktop-*-mac-arm64.dmg` |
+            | Linux | x64 | `herdr-desktop-*-linux-x64.AppImage` / `.deb` |
+            | Linux | arm64 | `herdr-desktop-*-linux-arm64.AppImage` / `.deb` |
 
             Windows / macOS 同时提供 `.zip` 便于免安装使用。
             校验和见 `SHA256SUMS.txt`。

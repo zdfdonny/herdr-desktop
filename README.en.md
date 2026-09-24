@@ -107,12 +107,12 @@ Grab the installer for your platform from [Releases](../../releases):
 
 | Platform | Arch | File |
 |----------|------|------|
-| Windows | x64 | `Herdr Desktop-*-win-x64-setup.exe` |
-| Windows | arm64 | `Herdr Desktop-*-win-arm64-setup.exe` |
-| macOS | Intel | `Herdr Desktop-*-mac-x64.dmg` |
-| macOS | Apple Silicon | `Herdr Desktop-*-mac-arm64.dmg` |
-| Linux | x64 | `Herdr Desktop-*-linux-x64.AppImage` / `.deb` |
-| Linux | arm64 | `Herdr Desktop-*-linux-arm64.AppImage` / `.deb` |
+| Windows | x64 | `herdr-desktop-*-win-x64-setup.exe` |
+| Windows | arm64 | `herdr-desktop-*-win-arm64-setup.exe` |
+| macOS | Intel | `herdr-desktop-*-mac-x64.dmg` |
+| macOS | Apple Silicon | `herdr-desktop-*-mac-arm64.dmg` |
+| Linux | x64 | `herdr-desktop-*-linux-x64.AppImage` / `.deb` |
+| Linux | arm64 | `herdr-desktop-*-linux-arm64.AppImage` / `.deb` |
 
 Windows and macOS also ship `.zip` builds for portable use. Every release includes
 a `SHA256SUMS.txt`.
@@ -127,7 +127,7 @@ a `SHA256SUMS.txt`.
 > **Linux users**: make the AppImage executable first:
 >
 > ```bash
-> chmod +x "Herdr Desktop-*-linux-x64.AppImage"
+> chmod +x "herdr-desktop-*-linux-x64.AppImage"
 > ```
 
 ---
