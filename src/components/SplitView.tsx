@@ -239,7 +239,7 @@ function PaneCell({ pane, focused }: { pane: PaneState; focused: boolean }) {
             aria-label={t('pane.split')}
             aria-expanded={splitMenu !== null}
           >
-            <IconSplit size={12} />
+            <IconSplit size={16} />
           </button>
           <button
             type="button"
@@ -251,7 +251,7 @@ function PaneCell({ pane, focused }: { pane: PaneState; focused: boolean }) {
             title={t('agent.close')}
             aria-label={t('agent.close')}
           >
-            <IconClose size={12} />
+            <IconClose size={16} />
           </button>
         </div>
 
@@ -295,7 +295,7 @@ function EmptySlot({ leafId, projectId }: { leafId: string; projectId: string })
           title={t('pane.emptySlotCancel')}
           aria-label={t('pane.emptySlotCancel')}
         >
-          <IconClose size={12} />
+          <IconClose size={16} />
         </button>
       </div>
       <div className="empty-slot__body">

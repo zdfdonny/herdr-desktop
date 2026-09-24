@@ -24,6 +24,7 @@ import { SettingsDialog } from './SettingsDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { EmptyState } from './EmptyState';
 import { NotificationToasts } from './NotificationToasts';
+import { isMac } from '../platform';
 
 export function Layout() {
   const state = useSessionStore((s) => s.state);
@@ -62,7 +63,7 @@ export function Layout() {
   }
 
   return (
-    <div className="layout">
+    <div className={`layout ${isMac ? 'layout--mac' : ''}`}>
       <div className="layout__body">
         <Sidebar />
         <main className="layout__main">

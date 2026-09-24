@@ -200,6 +200,19 @@
    */
   --titlebar-height: 36px;
   --titlebar-overlay-width: 140px;
+  /*
+   * macOS 交通灯按钮占位。
+   *
+   * 主进程用 titleBarStyle: 'hiddenInset'，原生按钮绘制在左上角且**不占布局**，
+   * 渲染侧必须自己让开，否则侧栏品牌区会被红黄绿三个按钮压住。
+   * 默认 0：Windows / Linux 的按钮在右侧，由 --titlebar-overlay-width 负责。
+   */
+  --mac-traffic-light-inset: 0px;
+}
+
+/* macOS：为交通灯按钮让出左侧空间（仅生效于 .layout--mac） */
+.layout--mac {
+  --mac-traffic-light-inset: 78px;
 }
 
 * {

@@ -143,11 +143,16 @@
   -webkit-app-region: no-drag;
 }
 
-/* 原生窗口按钮占位：右侧留白，避免主题切换被按钮盖住 */
+/* 原生窗口按钮占位：右侧留白，避免主题切换被按钮盖住。
+   macOS 的按钮在左侧，此处无需留白。 */
 .topbar__overlay-spacer {
   width: var(--titlebar-overlay-width);
   height: 100%;
   flex-shrink: 0;
+}
+
+.layout--mac .topbar__overlay-spacer {
+  display: none;
 }
 
 /* ===== 主题切换 ===== */
@@ -215,7 +220,8 @@
   align-items: center;
   gap: 9px;
   height: var(--titlebar-height);
-  padding: 0 12px;
+  /* 左侧额外留出 macOS 交通灯按钮的位置（非 mac 时为 0） */
+  padding: 0 12px 0 calc(12px + var(--mac-traffic-light-inset));
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
@@ -701,7 +707,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 28px;
+  height: 32px;
   padding: 0 4px 0 10px;
   border: none;
   background: transparent;
@@ -732,8 +738,8 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   margin-right: 4px;
   border: none;
   border-radius: var(--radius-sm);
@@ -805,9 +811,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 28px;
+  height: 34px;
   flex-shrink: 0;
-  padding: 0 6px 0 10px;
+  padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface-2);
   cursor: pointer;
@@ -828,7 +834,7 @@
 .pane-cell__actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -836,12 +842,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -855,12 +861,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -929,9 +935,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 28px;
+  height: 34px;
   flex-shrink: 0;
-  padding: 0 6px 0 10px;
+  padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface-2);
   user-select: none;
