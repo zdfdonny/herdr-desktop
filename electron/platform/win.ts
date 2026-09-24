@@ -95,7 +95,13 @@ export function resolveExecutable(command: string, pathValue?: string): string |
     return existsSync(resolved) ? resolved : null;
   }
 
-  const searchPath = pathValue ?? process.env.PATH ?? process.env.Path ?? '';
+  /*
+   * 空串视为「未提供」：调用方传空串通常意味着登录 shell / PowerShell 环境
+   * 解析失败，此时回退到进程继承的 PATH，而不是把查找目录清空。
+   * （`??` 只挡 null/undefined，挡不住空串。）
+   */
+  const inherited = process.env.PATH ?? process.env.Path ?? '';
+  const searchPath = pathValue && pathValue.length > 0 ? pathValue : inherited;
   const dirs = searchPath.split(';').filter(Boolean);
 
   // 已带扩展名：按原名精确查找，不再追加 PATHEXT。

@@ -50,8 +50,19 @@ export class PtyManager {
     const extraArgs = tokens.slice(1);
     const args = [...extraArgs, ...(params.args ?? [])];
 
-    // ConPTY 不会解析 PATHEXT，必须显式解析出真实路径，否则报 error code 2。
-    const executable = resolveExecutable(commandName);
+    /*
+     * ConPTY 不会解析 PATHEXT，必须显式解析出真实路径，否则报 error code 2。
+     *
+     * 必须传入 `env.PATH`（调用方从登录 shell 解析出的那份），不能用进程继承的
+     * `process.env.PATH`：从 Finder / .desktop 启动的 GUI 应用拿不到用户真实 PATH，
+     * macOS 上通常只有 `/usr/bin:/bin:/usr/sbin:/sbin`，homebrew 的 `/opt/homebrew/bin`
+     * 和 npm global 都不在其中。
+     *
+     * 探测（router.probeAgentAvailability）走的是登录 shell PATH，所以不传的话会出现
+     * 「列表里显示已安装、点进去却报 Command not found」的自相矛盾结果。
+     */
+    const pathValue = env.PATH ?? env.Path ?? '';
+    const executable = resolveExecutable(commandName, pathValue);
     if (!executable) {
       return {
         ok: false,
@@ -70,7 +81,8 @@ export class PtyManager {
      */
     const batch = isWindowsBatchFile(executable);
     const comSpec = process.env.ComSpec ?? 'cmd.exe';
-    const spawnFile = batch ? (resolveExecutable(comSpec) ?? comSpec) : executable;
+    // 同样按登录 shell 的 PATH 解析，避免与上面的 executable 用了两份 PATH。
+    const spawnFile = batch ? (resolveExecutable(comSpec, pathValue) ?? comSpec) : executable;
     const spawnArgs = batch ? ['/d', '/c', executable, ...args] : args;
 
     let ptyProcess: pty.IPty;

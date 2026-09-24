@@ -78,7 +78,11 @@ export function resolveExecutable(command: string, pathValue?: string): string |
     return isExecutableFile(full) ? full : null;
   }
 
-  const explicitPath = pathValue !== undefined;
+  /*
+   * `pathValue` 为空串时视为「未提供」：调用方传空串通常意味着登录 shell 解析
+   * 失败或环境里没有 PATH，此时回退到进程继承的 PATH，而不是把查找目录清空。
+   */
+  const explicitPath = pathValue !== undefined && pathValue.length > 0;
   const dirs = explicitPath
     ? pathDirs(pathValue)
     : pathDirs(process.env.PATH ?? '');
@@ -88,7 +92,22 @@ export function resolveExecutable(command: string, pathValue?: string): string |
     if (isExecutableFile(full)) return full;
   }
 
-  // 登录 shell 的 PATH 里也没有时，再补查 macOS 的常见安装目录。
+  /*
+   * 显式传入 PATH 时，再补查进程继承的 PATH。
+   *
+   * 登录 shell 解析出的 PATH 未必完整：某些 shell 配置会在非交互分支里
+   * 覆盖而非追加 PATH，导致捞回来的那份反而比继承的更短。两份都查一遍
+   * 才能保证「探测」与「启动」都不会漏掉已安装的命令。
+   */
+  if (explicitPath) {
+    for (const dir of pathDirs(process.env.PATH ?? '')) {
+      if (dirs.includes(dir)) continue;
+      const full = join(dir, command);
+      if (isExecutableFile(full)) return full;
+    }
+  }
+
+  // 两份 PATH 里都没有时，再补查 macOS 的常见安装目录。
   if (explicitPath) {
     for (const dir of fallbackDirs()) {
       if (dirs.includes(dir)) continue;
