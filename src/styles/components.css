@@ -829,6 +829,14 @@
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
+  /*
+   * 标签本身不画焦点环。
+   *
+   * 这个 button 撑满整个标签，若沿用全局 :focus-visible 的 --accent 轮廓，
+   * 会在选中的白色标签里套一个蓝框，比原来的黄框更违和。
+   * 标签的"焦点"已经由 .is-active 的整块底色表达了，不需要第二重指示。
+   */
+  outline: none;
 }
 
 .view-tab__text {

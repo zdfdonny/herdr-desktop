@@ -376,6 +376,32 @@ button {
   font-family: inherit;
 }
 
+/*
+ * 焦点环统一。
+ *
+ * Chromium 在按钮/链接获得键盘焦点时会自绘一圈**琥珀色**（#e59700）轮廓，
+ * 这是浏览器内置的 UA 样式，与应用主题无关：在浅色主题下它比任何
+ * 主题色都跳，选中标签会被描上一圈黄框，看起来像"警告"而不是"焦点"。
+ *
+ * 这里做两件事：
+ * 1) 全局清掉默认轮廓（outline: none）——否则上面那个黄框会出现在
+ *    每一个按钮上（标签、关闭按钮、分屏按钮、设置项……）；
+ * 2) 用 :focus-visible 重新给一个**跟随主题**的焦点环（--accent）。
+ *
+ * 用 :focus-visible 而不是 :focus：鼠标点击不显示焦点环（
+ * 只在键盘导航时显示），键盘 Tab 才显示，既保留可访问性又不干扰观感。
+ * 图标按钮（.icon-button 等）在各自规则里另有处理，此处不覆盖它们的
+ * 悬停/选中底色。
+ */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 input,
 textarea {
   font-family: inherit;
