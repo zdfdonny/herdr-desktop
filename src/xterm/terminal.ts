@@ -33,6 +33,15 @@ export interface TerminalHandle {
    * 否则浅色主题下终端仍显示深色背景。
    */
   applyTheme: (theme: ResolvedTheme) => void;
+  /**
+   * 更新该 pane 的启动命令，并补挂 OSC 主题查询 handler。
+   *
+   * 创建 xterm 时 `pane.command` 可能尚未就绪（见 createTerminal 里的说明），
+   * 因此 TerminalPane 在 command 后到时调用本方法。若该命令需要 OSC 适配
+   * 而此前未挂载 handler，这里补挂并立刻做一次主题协商，把已经跑起来、
+   * 但错过了首次握手的 opencode 拉回当前主题。
+   */
+  setCommand: (next: string | null) => void;
   /** scrollback 搜索。 */
   search: SearchAddon;
   dispose: () => void;
@@ -156,7 +165,7 @@ function writeOscToPty(write: (data: string) => void, body: string): void {
  *
  * 大小写不敏感，因为 Windows 上命令名不区分大小写。
  */
-function isOscThemeCommand(command: string | null | undefined): boolean {
+export function isOscThemeCommand(command: string | null | undefined): boolean {
   if (!command) return false;
   const token = command.trim().split(/\s+/)[0] ?? '';
   const base = token.replace(/^.*[\\/]/, '').replace(/\.(cmd|bat|exe|ps1)$/i, '');
@@ -164,23 +173,97 @@ function isOscThemeCommand(command: string | null | undefined): boolean {
 }
 
 /**
+ * OSC 主题适配的门控状态机。
+ *
+ * 把「当前 command → 是否需要 OSC 适配 → 是否已经挂过 handler」抽成纯函数，
+ * 因为这里的判定必须**每次现算**，不能把创建时的结果固化成常量：创建 xterm 的
+ * 那一刻 `pane.command` 未必就绪（Renderer 按 SessionState 快照投影，旧版
+ * session.json 恢复出的 pane 甚至缺这个字段），一旦固化，这些 pane 会被永久
+ * 判为非 opencode —— 不注册 handler、applyTheme 也不再推 997，主题就此定格。
+ */
+export function createOscGate(initialCommand: string | null | undefined): {
+  setCommand: (next: string | null) => { gained: boolean };
+  enabled: () => boolean;
+  markRegistered: () => boolean;
+  registered: () => boolean;
+} {
+  let command = initialCommand ?? null;
+  let oscRegistered = false;
+
+  return {
+    setCommand: (next) => {
+      const was = oscRegistered;
+      command = next;
+      const gained = !was && isOscThemeCommand(command);
+      return { gained };
+    },
+    enabled: () => isOscThemeCommand(command),
+    markRegistered: () => {
+      if (oscRegistered) return false;
+      oscRegistered = true;
+      return true;
+    },
+    registered: () => oscRegistered,
+  };
+}
+
+/** 颜色方案取值：1 = 深色，2 = 浅色（即 `CSI ? 997 ; N n` 里的 N）。 */
+export type ColorScheme = 1 | 2;
+
+/**
+ * 补推「997 颜色方案报告 + OSC 10/11 颜色应答」的重试间隔（毫秒）。
+ *
+ * opencode 收到 `CSI ? 997 ; N n` 后 queueMicrotask 重新探测调色板
+ * （opencode packages/tui/src/context/theme.tsx 的 handleThemeNotification）。
+ * 单次完整应答理论上已足够，但 PTY 写入可能偶发丢失（尤其 pane 尚未 attach
+ * 时），隔开一段时间补推一次作为兜底。补推幂等：opencode 重查后 scheme 未变
+ * 就不会重渲染。
+ */
+export const OSC_COLOR_PUSH_RETRY_DELAYS = [60, 200] as const;
+
+/**
+ * 构造一条「997 颜色方案报告 + OSC 10 前景 + OSC 11 背景」的完整应答。
+ *
+ * 关键点：三者必须拼成**一个**字节串、一次性写回 PTY。opencode 收到 997 后
+ * 用 queueMicrotask 延迟重查调色板；若 997 与两条颜色应答分属不同的 PTY 写
+ * （不同 read chunk），微任务会在颜色到达前先跑完，getPalette 拿到的仍是
+ * 旧色，主题就不翻转。拼成单条写保证它们落在同一 chunk、被同步解析完，
+ * 微任务重查时读到的就是新色。
+ *
+ * Windows 上 OSC 必须用 `ESC NUL ]` 绕过 ConPTY 的 OSC 过滤器（见
+ * writeOscToPty 的说明）；997 是 CSI，直接写标准形式。
+ *
+ * 导出纯函数供测试直接验证字节格式。
+ */
+export function buildThemeResponse(
+  scheme: ColorScheme,
+  foreground: string,
+  background: string,
+  windows: boolean,
+): string {
+  const osc = windows ? '\x1b\x00]' : '\x1b]';
+  return (
+    `\x1b[?997;${scheme}n` +
+    `${osc}10;${hexToRgbColon(foreground)}\x07` +
+    `${osc}11;${hexToRgbColon(background)}\x07`
+  );
+}
+
+/**
  * 注册主题颜色查询的响应处理。
  *
- * 1. opencode/opentui 发送 `CSI ? 2031 h`（启用颜色方案报告）；
- *    终端收到后主动回 `CSI ? 997 ; 1 n`（深色）或 `CSI ? 997 ; 2 n`（浅色）。
- * 2. TUI 收到 997 后调用原生 `queryThemeColors()`，写出 `OSC 10;?`（前景）
- *    与 `OSC 11;?`（背景）查询；终端回 `rgb:RRRR/GGGG/BBBB` 格式的实际颜色。
- * 3. TUI 必须**同时**拿到 10 和 11 两条响应才会重算 light/dark
- *    （opentui `RendererThemeMode.handleSequence` 要求两个字段都非空）。
+ * opencode（opentui）启动时发送 `CSI ? 2031 h` 启用颜色方案报告，之后依赖
+ * 终端主动推送的 `CSI ? 997 ; 1 n`（深色）/ `CSI ? 997 ; 2 n`（浅色）触发
+ * 配色重查，重查用 `getPalette` 读 OSC 11 应答里的背景色判断 light/dark。
  *
- * `onQueryResponse` 负责把序列写回 PTY；OSC 序列一律经 `writeOscToPty`
- * 以兼容 ConPTY。`schemeState` 与 applyTheme 共享同一个 lastScheme 记账，
- * 避免两处各自推送 997 时互相看不见对方的状态。
+ * `pushTheme` 把 997 + OSC 10/11 三条拼成一条写回 PTY（见 buildThemeResponse）。
+ * OSC 10/11 也单独注册 handler，用于非 Windows 下 opencode 真实发出的
+ * `OSC 10;?` / `OSC 11;?` 查询（Windows 上这些查询被 ConPTY 丢弃，到不了这里）。
  */
 function registerThemeQueries(
   terminal: Terminal,
   onQueryResponse: (data: string) => void,
-  schemeState: { lastScheme: 1 | 2 },
+  pushTheme: (scheme: ColorScheme) => void,
 ): void {
   // OSC 10：前景色查询
   terminal.parser.registerOscHandler(10, (data) => {
@@ -203,33 +286,20 @@ function registerThemeQueries(
   });
 
   /*
-   * CSI ? 2031 h：启用颜色方案报告。
+   * CSI ? 2031 h：opencode 启用颜色方案报告。
    *
-   * 回 997 之后**必须紧接着补上 OSC 10/11 两条应答**，不能只回 997 就完事。
-   *
-   * 原因：TUI 收到 997 后是「自己去查」——它往 stdout 写 `OSC 10;?` / `OSC 11;?`。
-   * 而在 Windows 上这条查询会经 ConPTY 被整条丢弃（见 applyTheme 里的详细说明），
-   * 终端的 OSC handler 永远不会被触发，于是永远不会有应答回来；opentui 的
-   * themeOscForeground / themeOscBackground 双双保持 null，主题就此定格在启动时的
-   * 取值——这正是「同一个主题下有的 opencode 对、有的 opencode 错」的成因
-   * （对的那个只是恰好在之后赶上了某次主题切换的主动推送）。
-   *
-   * 而 TUI 会发这个序列，本身就证明它已经就绪并在监听颜色报告。所以这里是唯一
-   * 可靠的应答时机：收到就主动把两条颜色一起推回去，绕开那条注定被吞掉的重查询。
-   *
-   * 实现上复用 applyTheme 的那条路径——把 OSC 查询喂给本地 parser，让已注册的
-   * 10/11 handler 触发后自行写回。这样「颜色怎么算、怎么写回」只有一份实现。
+   * 收到后**无条件**回当前颜色方案 + 颜色应答，不做去重：
+   * - 这是 opencode 的显式请求，回 997 幂等（opencode 重查后 scheme 未变就不重渲染）；
+   * - 历史上这里与 applyTheme 共享一个 lastScheme 记账去重，而 applyTheme 在
+   *   pane 尚未 attach PTY 时也会推一次 997（那一次被静默丢弃却已把记账推进），
+   *   导致随后这次真正能送达的握手 997 被去重吞掉 —— opencode 一条 997 都收不到，
+   *   主题定格在默认深色。去掉去重后，每次握手都保证送达。
    */
   terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
     if (params.length === 1 && params[0] === 2031) {
       const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
-      const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
-      // 与 applyTheme 共享记账：997 是我们主动发的，不记账会让 applyTheme 重复推送
-      if (scheme !== schemeState.lastScheme) {
-        schemeState.lastScheme = scheme;
-        onQueryResponse(`\x1b[?997;${scheme}n`);
-      }
-      terminal.write('\x1b]10;?\x07\x1b]11;?\x07');
+      const scheme: ColorScheme = isDarkBackground(bg) ? 1 : 2;
+      pushTheme(scheme);
       return true;
     }
     return false;
@@ -322,14 +392,31 @@ export function createTerminal(
   }
 
   /*
-   * 记录上次上报给 TUI 的颜色方案（997 报告）。初值取创建时的主题，
-   * 这样首次挂载时 applyTheme 不会向尚未就绪的 PTY 写入噪声序列。
-   *
-   * 用对象持有是为了让 registerThemeQueries 里的 2031 handler 共享同一份记账
-   * （它是模块级函数，拿不到这里的局部变量）。
+   * 把「997 + OSC 10/11」拼成一条写回 PTY，并在稍后重推几次兜底。
+   * 见 buildThemeResponse 的说明：三者必须一次写回，避免 997 与颜色应答分属
+   * 不同 chunk 导致 opencode 的微任务重查在颜色到达前先跑完。
    */
-  const schemeState: { lastScheme: 1 | 2 } = {
-    lastScheme: (options?.theme ?? 'dark') === 'dark' ? 1 : 2,
+  const respond = options?.onQueryResponse;
+  let disposed = false;
+  const pendingColorPushes = new Set<ReturnType<typeof setTimeout>>();
+  const clearPendingColorPushes = (): void => {
+    for (const id of pendingColorPushes) clearTimeout(id);
+    pendingColorPushes.clear();
+  };
+  const pushTheme = (scheme: ColorScheme): void => {
+    if (!respond) return;
+    const fg = terminal.options.theme?.foreground ?? FALLBACK_FG.dark;
+    const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
+    const seq = buildThemeResponse(scheme, fg, bg, isWindows);
+    respond(seq);
+    clearPendingColorPushes();
+    for (const delay of OSC_COLOR_PUSH_RETRY_DELAYS) {
+      const id = setTimeout(() => {
+        pendingColorPushes.delete(id);
+        if (!disposed) respond(seq);
+      }, delay);
+      pendingColorPushes.add(id);
+    }
   };
 
   /*
@@ -338,18 +425,89 @@ export function createTerminal(
    * 其余 agent 与普通 shell 并不理解 `OSC 10;?` / `CSI ? 2031 h`，收到代答
    * 序列后行编辑器会把它当用户输入回显，在提示符后留下一串乱码。
    * 门控放在注册处而非处理器内部，非 opencode 的 pane 干脆不挂这些 handler。
+   *
+   * **门控必须可在运行期重算，不能只在创建时判一次。**
+   * 创建 xterm 的那一刻 `pane.command` 未必已经就绪，若把判定固化成常量，
+   * 这些 pane 会被永久判为非 opencode —— 不注册 handler、applyTheme 也不再推 997。
+   * 这里只登记「是否已挂载 handler」，判定推迟到每次调用时现算；command 后到
+   * 由 ensureOscQueries() 补挂。
    */
-  const respond = options?.onQueryResponse;
-  const oscTheme = !!respond && isOscThemeCommand(options?.command);
-  if (respond && oscTheme) {
-    registerThemeQueries(terminal, respond, schemeState);
-  }
+  const gate = createOscGate(options?.command);
+
+  const ensureOscQueries = (): boolean => {
+    if (!respond || !gate.enabled()) return false;
+    if (gate.markRegistered()) {
+      registerThemeQueries(terminal, respond, pushTheme);
+    }
+    return true;
+  };
+
+  ensureOscQueries();
 
   try {
     fit.fit();
   } catch {
     // 容器尺寸未就绪
   }
+
+  /** 最近一次应用的主题，供 setCommand 补协商时复用。 */
+  let currentTheme: ResolvedTheme = options?.theme ?? 'dark';
+
+  /**
+   * 应用主题配色，并把颜色方案变更推送给 PTY 里的 TUI。
+   *
+   * 单独抽成具名函数（而不是直接写在返回的对象字面量里），
+   * 是为了让 setCommand 也能调用它 —— command 后到时需要补一次协商。
+   */
+  const applyThemeTo = (theme: ResolvedTheme): void => {
+    currentTheme = theme;
+    terminal.options.theme = terminalTheme(theme);
+
+    /*
+     * 主题切换时主动把颜色方案变更推送给 PTY 里的 TUI。
+     *
+     * opencode/opentui 在启动时发送 `CSI ? 2031 h` 开启颜色方案报告，
+     * 之后依赖终端推送的 `CSI ? 997 ; 1 n`（深色）/ `CSI ? 997 ; 2 n`（浅色）
+     * 触发配色重探。997 触发重查，真正决定 light/dark 的是随后 OSC 10/11 的
+     * 响应颜色，所以两者必须一起推（pushTheme 已拼成一条写回）。
+     *
+     * 整段只在 ensureOscQueries() 为真时执行——非 opencode 的 pane 收到 997
+     * 会把它当用户输入回显，在提示符后显示为乱码。
+     */
+    if (ensureOscQueries()) {
+      const bg = terminal.options.theme?.background ?? FALLBACK_BG[theme];
+      const scheme: ColorScheme = isDarkBackground(bg) ? 1 : 2;
+      pushTheme(scheme);
+    }
+
+    /*
+     * WebGL 渲染器会在首次渲染时缓存清屏色，仅改 options.theme + clearTextureAtlas
+     * 不会让它用新背景重绘（表现为浅色主题下终端仍是黑底）。
+     *
+     * 可靠做法是重建 WebGL 上下文：dispose 后重新 loadAddon，
+     * 新实例会以当前 theme 重新初始化。失败时退化为 DOM 渲染器。
+     */
+    if (webgl) {
+      try {
+        webgl.dispose();
+      } catch {
+        // 已释放
+      }
+      webgl = null;
+    }
+    try {
+      const next = new WebglAddon();
+      next.onContextLoss(() => {
+        next.dispose();
+        if (webgl === next) webgl = null;
+      });
+      terminal.loadAddon(next);
+      webgl = next;
+    } catch {
+      webgl = null;
+    }
+    terminal.refresh(0, Math.max(0, terminal.rows - 1));
+  };
 
   return {
     terminal,
@@ -381,79 +539,23 @@ export function createTerminal(
       }
     },
     search,
-    applyTheme: (theme: ResolvedTheme) => {
-      terminal.options.theme = terminalTheme(theme);
-
-      /*
-       * 主题切换时主动把颜色方案变更推送给 PTY 里的 TUI。
-       *
-       * opencode/opentui 在启动时发送 `CSI ? 2031 h` 开启颜色方案报告，
-       * 之后依赖终端推送的 `CSI ? 997 ; 1 n`（深色）/ `CSI ? 997 ; 2 n`（浅色）
-       * 触发配色重探。若只改 xterm 自身配色而不推送 997，TUI 会沿用旧主题色。
-       *
-       * 注意：997 只让 opentui 去重探，真正决定 light/dark 的是随后
-       * OSC 10/11 的响应颜色，所以推送后必须补上响应（见下）。
-       *
-       * 整段只在 oscTheme 为真时执行——非 opencode 的 pane 收到 997 会把它
-       * 当用户输入回显，在提示符后显示为乱码。
-       */
-      if (oscTheme) {
-        const bg = terminal.options.theme?.background ?? FALLBACK_BG[theme];
-        const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
-        if (scheme !== schemeState.lastScheme) {
-          schemeState.lastScheme = scheme;
-          respond(`\x1b[?997;${scheme}n`);
-        }
-
-        /*
-         * Windows 上必须由宿主代答 OSC 10/11。
-         *
-         * opentui 的原生核心（`lib.queryThemeColors`）把 `OSC 10;?` / `OSC 11;?`
-         * 写到 stdout，但 ConPTY 会把 OSC 序列整条丢弃 —— 实测子进程输出的
-         * `\x1b]10;?\x07` 与 `\x1b]11;?\x07` 都不会出现在 PTY 的 onData 里
-         * （`CSI ? 2031 h`、`CSI ? 997;N n` 等 CSI 序列则正常透传）。
-         *
-         * 于是 registerOscHandler(10/11) 永远不会被触发，opentui 的
-         * `themeOscForeground` / `themeOscBackground` 始终为 null，
-         * `handleSequence` 因「两者必须都有值」而不改变 themeMode，
-         * `theme_mode` 事件永不触发 —— opencode 的主题就此定格在启动时的值。
-         *
-         * 因此这里主动把 OSC 查询喂给本地 parser（经 `terminal.write`，
-         * 它只做解析，不产生可见输出），让已注册的 10/11 handler 触发，
-         * 再经 `writeOscToPty` 把真实颜色拆写回 PTY。
-         */
-        terminal.write('\x1b]10;?\x07\x1b]11;?\x07');
+    /*
+     * command 后到时补挂 OSC handler，并补一次主题协商。
+     *
+     * 已经跑起来的 opencode 不会再发 `CSI ? 2031 h`，所以补挂 handler 本身
+     * 不会触发任何东西；必须紧接着主动跑一遍 997 + OSC 10/11 那条路径，
+     * 否则该 pane 仍会停在启动时的配色上。
+     */
+    setCommand: (next: string | null) => {
+      const { gained } = gate.setCommand(next);
+      if (ensureOscQueries() && gained) {
+        applyThemeTo(currentTheme);
       }
-
-      /*
-       * WebGL 渲染器会在首次渲染时缓存清屏色，仅改 options.theme + clearTextureAtlas
-       * 不会让它用新背景重绘（表现为浅色主题下终端仍是黑底）。
-       *
-       * 可靠做法是重建 WebGL 上下文：dispose 后重新 loadAddon，
-       * 新实例会以当前 theme 重新初始化。失败时退化为 DOM 渲染器。
-       */
-      if (webgl) {
-        try {
-          webgl.dispose();
-        } catch {
-          // 已释放
-        }
-        webgl = null;
-      }
-      try {
-        const next = new WebglAddon();
-        next.onContextLoss(() => {
-          next.dispose();
-          if (webgl === next) webgl = null;
-        });
-        terminal.loadAddon(next);
-        webgl = next;
-      } catch {
-        webgl = null;
-      }
-      terminal.refresh(0, Math.max(0, terminal.rows - 1));
     },
+    applyTheme: applyThemeTo,
     dispose: () => {
+      disposed = true;
+      clearPendingColorPushes();
       try {
         webgl?.dispose();
       } catch {

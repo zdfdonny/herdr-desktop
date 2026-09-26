@@ -278,6 +278,26 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
   }, [resolvedTheme]);
 
   /*
+   * command 后到时补挂 OSC 主题查询 handler。
+   *
+   * 创建 xterm 的那次 effect 只依赖 [pane.paneId, fontSize, running, restartSeq]，
+   * 刻意不含 pane.command —— 把 command 加进去会在快照刷新时重建整个终端
+   * （丢滚动缓冲、重连 PTY）。但 createTerminal 需要 command 才能判断是否
+   * 启用 OSC 适配，而挂载那一刻 command 未必已经到达：Renderer 按 SessionState
+   * 快照投影，布局里先出现 pane、随后快照才带上 command 是可能的，
+   * 旧版 session.json 恢复出的 pane 更是直接缺这个字段。
+   *
+   * 漏判的后果是永久性的：该 pane 不注册 handler、applyTheme 也不再推送 997，
+   * 表现为"分屏下有的 opencode 跟得上主题、有的永远停在启动时的配色"。
+   *
+   * 所以这里单独补一条轻量 effect：command 变化时把它交给 handle，
+   * 由 handle 决定是否需要补挂 handler 并补一次主题协商（不重建终端）。
+   */
+  useEffect(() => {
+    handleRef.current?.setCommand(pane.command ?? null);
+  }, [pane.command, pane.paneId]);
+
+  /*
    * 停止态（恢复出的 pane，进程未运行）不再显示「智能体已停止」整页提示：
    * 主区域直接呈现一个空终端，重启入口移到侧栏该 agent 行的按钮上。
    *

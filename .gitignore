@@ -10,5 +10,6 @@ out/
 .tmp-layout.mjs
 .tmp-agentsort.mjs
 .tmp-agentpresets.mjs
+.tmp-terminal.mjs
 
 .tmp-msg*.txt
