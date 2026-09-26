@@ -147,6 +147,26 @@ function writeOscToPty(write: (data: string) => void, body: string): void {
 }
 
 /**
+ * 判断该命令是否需要 OSC 主题色适配。
+ *
+ * 目前只有 opencode（opentui）实现了 VSCode 终端那套颜色协商。
+ *
+ * 判定取**命令的第一个 token**（可执行名），而不是在整条命令里做词边界搜索：
+ * - 后者会把 `echo opencode`、`vim ~/notes/opencode.md`、`less opencode.log`
+ *   这类「参数里恰好含 opencode」的命令误判为真，从而给普通 shell 挂上
+ *   OSC 代答，重新引入命令行乱码；
+ * - 也需要处理路径与 Windows 垫片：`/usr/local/bin/opencode`、`opencode.cmd`。
+ *
+ * 大小写不敏感，因为 Windows 上命令名不区分大小写。
+ */
+function isOscThemeCommand(command: string | null | undefined): boolean {
+  if (!command) return false;
+  const token = command.trim().split(/\s+/)[0] ?? '';
+  const base = token.replace(/^.*[\\/]/, '').replace(/\.(cmd|bat|exe|ps1)$/i, '');
+  return base.toLowerCase() === 'opencode';
+}
+
+/**
  * 注册主题颜色查询的响应处理。
  *
  * 对照 VSCode 终端（Ghostty 约定）：
@@ -224,6 +244,14 @@ export function createTerminal(
      * 由 TerminalPane 注入为 writeTerminal(paneId, data)。
      */
     onQueryResponse?: (data: string) => void;
+    /**
+     * 该 pane 启动的命令，用于判定是否启用 OSC 主题查询适配。
+     *
+     * 只有 opencode（opentui）会发 `CSI ? 2031 h` 并期待终端代答 OSC 10/11。
+     * 其余 agent 与普通 shell 收到这些序列时，行编辑器会把它们当成用户输入
+     * 直接回显，在提示符后显示成一串乱码（历史 bug）。
+     */
+    command?: string | null;
   },
 ): TerminalHandle {
   const terminal = new Terminal({
@@ -270,10 +298,17 @@ export function createTerminal(
     webgl = null;
   }
 
-  // 注册主题颜色查询响应，让 opencode 等 TUI 跟随宿主终端主题（对照 VSCode 终端）。
-  const onQueryResponse = options?.onQueryResponse;
-  if (onQueryResponse) {
-    registerThemeQueries(terminal, onQueryResponse);
+  /*
+   * 是否启用 OSC 主题色适配。按 command 门控：只有 opencode 走这套协商。
+   *
+   * 其余 agent 与普通 shell 并不理解 `OSC 10;?` / `CSI ? 2031 h`，收到代答
+   * 序列后行编辑器会把它当用户输入回显，在提示符后留下一串乱码。
+   * 门控放在注册处而非处理器内部，非 opencode 的 pane 干脆不挂这些 handler。
+   */
+  const respond = options?.onQueryResponse;
+  const oscTheme = !!respond && isOscThemeCommand(options?.command);
+  if (respond && oscTheme) {
+    registerThemeQueries(terminal, respond);
   }
 
   // 记录上次上报给 TUI 的颜色方案（997 报告）。初值取创建时的主题，
@@ -328,32 +363,37 @@ export function createTerminal(
        *
        * 注意：997 只让 opentui 去重探，真正决定 light/dark 的是随后
        * OSC 10/11 的响应颜色，所以推送后必须补上响应（见下）。
+       *
+       * 整段只在 oscTheme 为真时执行——非 opencode 的 pane 收到 997 会把它
+       * 当用户输入回显，在提示符后显示为乱码。
        */
-      const bg = terminal.options.theme?.background ?? (theme === 'dark' ? '#0d0d0d' : '#ffffff');
-      const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
-      if (scheme !== lastScheme) {
-        lastScheme = scheme;
-        onQueryResponse?.(`\x1b[?997;${scheme}n`);
-      }
+      if (oscTheme) {
+        const bg = terminal.options.theme?.background ?? (theme === 'dark' ? '#0d0d0d' : '#ffffff');
+        const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
+        if (scheme !== lastScheme) {
+          lastScheme = scheme;
+          respond(`\x1b[?997;${scheme}n`);
+        }
 
-      /*
-       * Windows 上必须由宿主代答 OSC 10/11。
-       *
-       * opentui 的原生核心（`lib.queryThemeColors`）把 `OSC 10;?` / `OSC 11;?`
-       * 写到 stdout，但 ConPTY 会把 OSC 序列整条丢弃 —— 实测子进程输出的
-       * `\x1b]10;?\x07` 与 `\x1b]11;?\x07` 都不会出现在 PTY 的 onData 里
-       * （`CSI ? 2031 h`、`CSI ? 997;N n` 等 CSI 序列则正常透传）。
-       *
-       * 于是 registerOscHandler(10/11) 永远不会被触发，opentui 的
-       * `themeOscForeground` / `themeOscBackground` 始终为 null，
-       * `handleSequence` 因「两者必须都有值」而不改变 themeMode，
-       * `theme_mode` 事件永不触发 —— opencode 的主题就此定格在启动时的值。
-       *
-       * 因此这里主动把 OSC 查询喂给本地 parser（经 `terminal.write`，
-       * 它只做解析，不产生可见输出），让已注册的 10/11 handler 触发，
-       * 再经 `writeOscToPty` 把真实颜色拆写回 PTY。
-       */
-      terminal.write('\x1b]10;?\x07\x1b]11;?\x07');
+        /*
+         * Windows 上必须由宿主代答 OSC 10/11。
+         *
+         * opentui 的原生核心（`lib.queryThemeColors`）把 `OSC 10;?` / `OSC 11;?`
+         * 写到 stdout，但 ConPTY 会把 OSC 序列整条丢弃 —— 实测子进程输出的
+         * `\x1b]10;?\x07` 与 `\x1b]11;?\x07` 都不会出现在 PTY 的 onData 里
+         * （`CSI ? 2031 h`、`CSI ? 997;N n` 等 CSI 序列则正常透传）。
+         *
+         * 于是 registerOscHandler(10/11) 永远不会被触发，opentui 的
+         * `themeOscForeground` / `themeOscBackground` 始终为 null，
+         * `handleSequence` 因「两者必须都有值」而不改变 themeMode，
+         * `theme_mode` 事件永不触发 —— opencode 的主题就此定格在启动时的值。
+         *
+         * 因此这里主动把 OSC 查询喂给本地 parser（经 `terminal.write`，
+         * 它只做解析，不产生可见输出），让已注册的 10/11 handler 触发，
+         * 再经 `writeOscToPty` 把真实颜色拆写回 PTY。
+         */
+        terminal.write('\x1b]10;?\x07\x1b]11;?\x07');
+      }
 
       /*
        * WebGL 渲染器会在首次渲染时缓存清屏色，仅改 options.theme + clearTextureAtlas

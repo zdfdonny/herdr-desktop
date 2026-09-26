@@ -80,8 +80,9 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     const handle = createTerminal(container, {
       fontSize,
       theme: resolvedTheme,
-      // 主题颜色查询（opencode 等 TUI）的响应回写到 PTY
+      // 主题颜色查询（仅 opencode）的响应回写到 PTY；是否启用由 command 判定
       onQueryResponse: (data) => writeTerminal(pane.paneId, data),
+      command: pane.command ?? null,
     });
     handleRef.current = handle;
 
