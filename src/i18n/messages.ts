@@ -42,6 +42,8 @@ export interface Messages {
     stopped: string;
     /** 侧栏中已停止 agent 的重启按钮。 */
     restart: string;
+    /** 运行中 agent 的重启确认文案。 */
+    restartConfirm: string;
     /** 可用性探测进行中。 */
     probing: string;
     /** 没有探测到任何可用智能体。 */
@@ -180,6 +182,7 @@ const zhCN: Messages = {
     close: '关闭',
     stopped: '已停止 — 点击启动',
     restart: '重新启动',
+    restartConfirm: '将结束「{name}」当前进程并重新启动，未保存的会话内容会丢失。确定继续吗？',
     probing: '正在检测…',
     noneInstalled: '没有可用的智能体',
     notifyBlocked: '「{name}」等待输入',
@@ -298,6 +301,8 @@ const en: Messages = {
     close: 'Close',
     stopped: 'Stopped — click to start',
     restart: 'Restart',
+    restartConfirm:
+      'This will stop "{name}" and start it again. Unsaved session content will be lost. Continue?',
     probing: 'Detecting…',
     noneInstalled: 'No available agents',
     notifyBlocked: '"{name}" needs your input',

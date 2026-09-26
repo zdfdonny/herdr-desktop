@@ -272,6 +272,12 @@ export class Session {
         ...pane,
         args: pane.args ?? [],
         running: false,
+        /*
+         * 重启计数按「本次会话内」计，恢复时归零。
+         * 不归零也不会出错（渲染端只比较前后值是否变化），
+         * 但归零让语义保持单纯：它数的是这次运行期间重启了几次。
+         */
+        restartSeq: 0,
         focused: false,
         // 旧版本快照缺 kind/webUrl：按 PTY 处理，webUrl 归 null
         kind: pane.kind === 'web' ? 'web' : 'pty',
@@ -300,6 +306,19 @@ export class Session {
     const pane = this.panes.get(paneId);
     if (!pane) return;
     pane.running = running;
+    this.bump();
+  }
+
+  /**
+   * 递增 pane 的重启计数（运行中强制重启使用）。
+   *
+   * 渲染端据此重建终端并重新走两阶段启动的 attach 步骤——
+   * 见 shared/state.ts 中 restartSeq 的说明。
+   */
+  bumpPaneRestart(paneId: string): void {
+    const pane = this.panes.get(paneId);
+    if (!pane) return;
+    pane.restartSeq = (pane.restartSeq ?? 0) + 1;
     this.bump();
   }
 

@@ -29,7 +29,13 @@ export const IPC = {
   /** 创建内嵌 DeepSeek Harness Web GUI 的 agent。 */
   SPAWN_WEB_AGENT: 'control:spawn-web-agent',
   ATTACH_PANE: 'control:attach-pane',
-  /** 重启一个恢复出的（已停止的）pane：走与 spawn 相同的两阶段流程。 */
+  /**
+   * 重启 pane：走与 spawn 相同的两阶段流程。
+   *
+   * `force` 为 true 时用于**运行中**的 pane——先杀掉现有进程再拉起，
+   * 会丢失该 agent 的当前会话与滚动缓冲，所以渲染端必须先弹确认框。
+   * 为 false/缺省时只恢复停止态的 pane（运行中则 no-op）。
+   */
   RESPAWN_PANE: 'control:respawn-pane',
   CLOSE_PANE: 'control:close-pane',
   FOCUS_PANE: 'control:focus-pane',

@@ -72,6 +72,17 @@ export interface PaneState {
    */
   running?: boolean;
   /**
+   * 重启计数：每次「运行中强制重启」递增。
+   *
+   * 渲染端把它作为终端挂载 effect 的依赖。运行中重启时 `running` 全程为 true，
+   * 光靠 running 无法让 effect 重跑，旧 xterm 实例会继续挂在已死的 PTY 上，
+   * 且 attachPane 永远不会被调用（两阶段启动的第二步没人触发）。
+   * 递增这个值强制重建终端，从而走完 attach 流程。
+   *
+   * 旧版本快照中缺失，读取方按 0 处理。
+   */
+  restartSeq?: number;
+  /**
    * pane 类型：终端进程（默认）或内嵌 Web GUI。
    * 旧版本快照中缺失，读取方按 'pty' 处理。
    */

@@ -683,10 +683,11 @@
 }
 
 /*
- * 停止态的重启按钮：与关闭按钮同尺寸同风格，但**常驻可见**。
+ * 重启按钮：与关闭按钮同尺寸同风格，同样 hover 才显形。
  *
- * 与 .agent-row__close 的 hover 才显形不同——这是停止态唯一的恢复入口，
- * 藏起来会让用户找不到；而且停止的行本身已压暗，再隐藏按钮就更不明显了。
+ * 停止态的行整行压暗（opacity .55），会让按钮跟着变淡。
+ * 但停止态时它需要更醒目——那是唯一的恢复入口，所以单独还原不透明度；
+ * 运行中则维持与关闭按钮一致的静默表现（此时它只是个可选操作）。
  */
 .agent-row__restart {
   width: 18px;
@@ -698,14 +699,32 @@
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
+  opacity: 0;
   flex-shrink: 0;
+}
+
+.agent-row:hover .agent-row__restart {
+  opacity: 1;
 }
 
 .agent-row__restart:hover {
   background: var(--bg-active);
   color: var(--text-primary);
+}
+
+/*
+ * 停止态：唯一的恢复入口，抵消整行压暗并常驻可见。
+ *
+ * 特异性必须够高：`.agent-row:hover .agent-row__restart` 是 (0,3,0)，
+ * 单写 `.agent-row--stopped .agent-row__restart`（(0,2,0)）会被它压过，
+ * 导致停止态的行一 hover 反而把按钮淡掉。所以这里把 :hover 也写进选择器。
+ */
+.agent-row--stopped .agent-row__restart,
+.agent-row--stopped:hover .agent-row__restart {
+  opacity: 1 / 0.55;
+  color: var(--text-secondary);
 }
 
 .agent-row:hover .agent-row__close {
@@ -727,17 +746,6 @@
 
 .agent-row--stopped .agent-row__name {
   color: var(--text-muted);
-}
-
-/*
- * 重启按钮抵消整行的压暗。
- *
- * opacity 会作用于整棵子树，若不管，这个唯一的恢复入口也会跟着变淡、
- * 看着像禁用态。这里用不透明度还原——注意只能补偿 opacity，
- * 父级压暗叠加上来的视觉效果无法完全消除，但足以让它显得可点。
- */
-.agent-row--stopped .agent-row__restart {
-  opacity: 1 / 0.55;
 }
 
 .agent-row__stopped-icon {

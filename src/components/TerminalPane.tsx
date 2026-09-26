@@ -247,9 +247,15 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
       handle.dispose();
       handleRef.current = null;
     };
-    // 仅在切换 pane、字号变化或运行状态翻转时重建终端；主题通过下面的 effect 单独更新
+    /*
+     * 仅在切换 pane、字号变化、运行状态翻转或强制重启时重建终端；
+     * 主题通过下面的 effect 单独更新。
+     *
+     * restartSeq 必须在这里：运行中重启时 running 全程为 true，
+     * 不加这一项 effect 不会重跑，attachPane 就永远等不到触发。
+     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pane.paneId, fontSize, running]);
+  }, [pane.paneId, fontSize, running, pane.restartSeq]);
 
   /*
    * 主题切换时同步终端配色。

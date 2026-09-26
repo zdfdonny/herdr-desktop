@@ -48,7 +48,14 @@ export type ControlMessage =
   | (IpcEnvelope<SpawnAgentParams> & { type: 'control:spawn-agent'; version: 1 })
   | (IpcEnvelope<SpawnWebAgentParams> & { type: 'control:spawn-web-agent'; version: 1 })
   | (IpcEnvelope<{ paneId: string }> & { type: 'control:attach-pane'; version: 1 })
-  | (IpcEnvelope<{ paneId: string }> & { type: 'control:respawn-pane'; version: 1 })
+  /*
+   * force：运行中强制重启（先杀进程再拉起）。
+   * 缺省/undefined 表示只恢复停止态的 pane，运行中则 no-op。
+   */
+  | (IpcEnvelope<{ paneId: string; force?: boolean }> & {
+      type: 'control:respawn-pane';
+      version: 1;
+    })
   | (IpcEnvelope<{ paneId: string }> & { type: 'control:close-pane'; version: 1 })
   | (IpcEnvelope<{ paneId: string }> & { type: 'control:focus-pane'; version: 1 })
   | (IpcEnvelope<{ theme: ThemePreference }> & { type: 'control:set-theme'; version: 1 })

@@ -14,6 +14,7 @@ import { IconPlay, IconClose, IconRestart } from './icons';
 import { useT } from '../i18n';
 import { focusPane, closePane, respawnPane } from '../ipc/client';
 import { useLayoutStore, viewOfPane } from '../stores/layoutStore';
+import { useUiStore } from '../stores/uiStore';
 import { activateAndReviveView } from './viewActivation';
 
 interface AgentRowProps {
@@ -43,6 +44,25 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
     }
   };
 
+  /**
+   * 重启该 agent。
+   *
+   * 运行中的 pane 需要确认：主进程会先杀掉现有进程再拉起，
+   * agent 当前会话与滚动缓冲会丢失。停止态的没有可丢的东西，直接重启。
+   */
+  const handleRestart = () => {
+    if (!running) {
+      respawnPane(agent.paneId);
+      return;
+    }
+    useUiStore.getState().openConfirm({
+      title: t('agent.restart'),
+      message: t('agent.restartConfirm', { name: displayName }),
+      confirmLabel: t('agent.restart'),
+      onConfirm: () => respawnPane(agent.paneId, true),
+    });
+  };
+
   return (
     <div
       className={`agent-row ${focused ? 'agent-row--focused' : ''} ${
@@ -70,26 +90,24 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
         <span className="agent-row__name">{displayName}</span>
       </div>
       {/*
-       * 停止态的重启入口。
+       * 重启入口。与关闭按钮一样只在 hover 时显形（见 .agent-row__restart）。
        *
-       * 原先这个动作在主区域的「智能体已停止」整页提示里，那个页面已去掉，
-       * 入口移到这里——侧栏本来就列出了所有 agent，是更自然的起点。
-       * 只在停止时出现，运行中的行不显示（没有可重启的东西）。
+       * 运行中点击需要二次确认：主进程会先杀进程再拉起，
+       * 该 agent 当前会话与滚动缓冲会丢失，误点代价太大。
+       * 停止态则没有可丢的东西，直接重启。
        */}
-      {!running && (
-        <button
-          type="button"
-          className="agent-row__restart"
-          onClick={(e) => {
-            e.stopPropagation();
-            respawnPane(agent.paneId);
-          }}
-          title={t('agent.restart')}
-          aria-label={t('agent.restart')}
-        >
-          <IconRestart size={12} />
-        </button>
-      )}
+      <button
+        type="button"
+        className="agent-row__restart"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleRestart();
+        }}
+        title={t('agent.restart')}
+        aria-label={t('agent.restart')}
+      >
+        <IconRestart size={12} />
+      </button>
       <button
         type="button"
         className="agent-row__close"

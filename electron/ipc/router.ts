@@ -161,8 +161,8 @@ export class IpcRouter {
     ipcMain.on(IPC.ATTACH_PANE, (_event, payload: { paneId: string }) => {
       this.attachPane(payload.paneId);
     });
-    ipcMain.on(IPC.RESPAWN_PANE, (_event, payload: { paneId: string }) => {
-      this.respawnPane(payload.paneId);
+    ipcMain.on(IPC.RESPAWN_PANE, (_event, payload: { paneId: string; force?: boolean }) => {
+      this.respawnPane(payload.paneId, payload.force === true);
     });
     ipcMain.on(IPC.CLOSE_PANE, (_event, payload: { paneId: string }) => {
       this.closePane(payload.paneId);
@@ -402,10 +402,10 @@ export class IpcRouter {
   }
 
   /** 尝试恢复一个停止态的 web pane（只改状态，不推送快照）。 */
-  private tryReviveWeb(paneId: string): boolean {
+  private tryReviveWeb(paneId: string, force = false): boolean {
     const pane = this.session.getPane(paneId);
     if (!pane || pane.kind !== 'web') return false;
-    if (pane.running || this.web.has(paneId)) return false;
+    if (!force && (pane.running || this.web.has(paneId))) return false;
 
     this.revivingPanes.add(paneId);
     this.session.setPaneRunning(paneId, true);
@@ -421,30 +421,76 @@ export class IpcRouter {
   }
 
   /**
-   * 重启一个停止态 pane（「重新启动」按钮入口）。
+   * 重启一个 pane（侧栏「重新启动」按钮入口）。
    *
    * 复用两阶段创建的机制：先把参数放回 pendingSpawns 并标记 running，
    * 渲染端随后挂载终端 → fit → 上报尺寸 → attach-pane，
    * 此时 attachPane 读取暂存的参数与尺寸拉起 PTY，首帧排版即正确。
+   *
+   * `force` 用于运行中的 pane：先杀掉现有进程再按同样流程拉起。
+   * 这**会**丢弃该 agent 的当前会话与滚动缓冲，因此调用方必须已经
+   * 向用户确认过（见 AgentRow 的确认框）——这里不再二次确认。
    */
-  private respawnPane(paneId: string): void {
+  private respawnPane(paneId: string, force: boolean): void {
     const pane = this.session.getPane(paneId);
-    const revived = pane?.kind === 'web' ? this.tryReviveWeb(paneId) : this.tryRevive(paneId);
+    if (!pane) return;
+
+    if (force) {
+      this.killForRestart(paneId, pane.kind === 'web');
+      /*
+       * 不在这里 setPaneRunning(false) 再走 revive 的普通分支：
+       * 那会推出一个「停止态」的中间快照，侧栏的 ▶ 图标和终端区域
+       * 会闪一下才恢复。下面直接按运行态重启，快照只推最终状态。
+       */
+    }
+
+    const revived =
+      pane.kind === 'web' ? this.tryReviveWeb(paneId, force) : this.tryRevive(paneId, force);
     if (revived) {
+      /*
+       * 顺序要紧：先让 tryRevive 把参数写进 pendingSpawns，再递增 restartSeq。
+       * 渲染端收到递增后的快照会重建终端，随后的 attachPane 才能取到参数；
+       * 反过来推的话，重建发生在参数入队之前，attachPane 会空手而归。
+       */
+      if (force) {
+        this.session.bumpPaneRestart(paneId);
+      }
       this.pushSnapshot();
     }
+  }
+
+  /**
+   * 杀掉 pane 的现有进程，为「运行中重启」做准备。
+   *
+   * 只做 kill，不碰 session 状态——由调用方紧接着走 revive 路径重新拉起。
+   * 必须先 kill 再 revive：tryRevive 会检查 `pty.has()` / `web.has()`，
+   * 残留的运行时会让它判定「已在运行」而直接返回。
+   */
+  private killForRestart(paneId: string, isWeb: boolean): void {
+    if (isWeb) {
+      this.web.kill(paneId);
+    } else {
+      this.pty.kill(paneId);
+    }
+    // 两阶段创建的中间态一并清掉，避免旧参数被 attachPane 复用
+    this.pendingSpawns.delete(paneId);
+    this.pendingSizes.delete(paneId);
+    this.revivingPanes.delete(paneId);
   }
 
   /**
    * 尝试恢复一个停止态 pane（只改状态，不推送快照）。
    *
    * 返回是否触发了恢复；调用方决定何时推送快照。
-   * 已在运行 / 已在等待启动 / 无启动命令（旧格式）时为 no-op。
+   * 已在运行 / 已在等待启动 / 无启动命令（旧格式）时为 no-op——
+   * 除非 `force`（运行中重启），此时这些检查已被 killForRestart 处理过。
    */
-  private tryRevive(paneId: string): boolean {
+  private tryRevive(paneId: string, force = false): boolean {
     const pane = this.session.getPane(paneId);
     if (!pane?.command) return false;
-    if (pane.running || this.pty.has(paneId) || this.pendingSpawns.has(paneId)) return false;
+    if (!force && (pane.running || this.pty.has(paneId) || this.pendingSpawns.has(paneId))) {
+      return false;
+    }
 
     const params: SpawnAgentParams = {
       projectId: pane.projectId,

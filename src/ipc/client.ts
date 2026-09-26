@@ -124,13 +124,17 @@ export function attachPane(paneId: string): void {
 }
 
 /**
- * 重启一个恢复出的（stopped）pane。
+ * 重启一个 pane。
  *
  * 主进程把 pane 记录的命令放回两阶段队列并标记 running，
  * 渲染端挂载终端后走与新建 agent 完全相同的 attach 流程。
+ *
+ * `force` 为 true 时用于**运行中**的 pane：主进程会先杀掉现有进程再拉起，
+ * 该 agent 的当前会话与滚动缓冲会丢失——调用方必须先向用户确认。
+ * 缺省时只恢复停止态的 pane（运行中则 no-op）。
  */
-export function respawnPane(paneId: string): void {
-  sendControl({ type: 'control:respawn-pane', version: 1, payload: { paneId } });
+export function respawnPane(paneId: string, force = false): void {
+  sendControl({ type: 'control:respawn-pane', version: 1, payload: { paneId, force } });
 }
 
 /** 聚焦 pane。 */
