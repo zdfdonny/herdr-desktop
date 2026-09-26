@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '发布 tag（留空则用 package.json 里的 version，格式 v0.1.0）'
+        description: '发布 tag（可空，格式 v0.1.0）'
         required: false
         type: string
       draft:
