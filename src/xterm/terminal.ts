@@ -174,9 +174,14 @@ function isOscThemeCommand(command: string | null | undefined): boolean {
  *    （opentui `RendererThemeMode.handleSequence` 要求两个字段都非空）。
  *
  * `onQueryResponse` 负责把序列写回 PTY；OSC 序列一律经 `writeOscToPty`
- * 以兼容 ConPTY。
+ * 以兼容 ConPTY。`schemeState` 与 applyTheme 共享同一个 lastScheme 记账，
+ * 避免两处各自推送 997 时互相看不见对方的状态。
  */
-function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string) => void): void {
+function registerThemeQueries(
+  terminal: Terminal,
+  onQueryResponse: (data: string) => void,
+  schemeState: { lastScheme: 1 | 2 },
+): void {
   // OSC 10：前景色查询
   terminal.parser.registerOscHandler(10, (data) => {
     if (data === '?' || data === '') {
@@ -197,12 +202,34 @@ function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string
     return false;
   });
 
-  // CSI ? 2031 h：启用颜色方案报告 → 主动上报 997
+  /*
+   * CSI ? 2031 h：启用颜色方案报告。
+   *
+   * 回 997 之后**必须紧接着补上 OSC 10/11 两条应答**，不能只回 997 就完事。
+   *
+   * 原因：TUI 收到 997 后是「自己去查」——它往 stdout 写 `OSC 10;?` / `OSC 11;?`。
+   * 而在 Windows 上这条查询会经 ConPTY 被整条丢弃（见 applyTheme 里的详细说明），
+   * 终端的 OSC handler 永远不会被触发，于是永远不会有应答回来；opentui 的
+   * themeOscForeground / themeOscBackground 双双保持 null，主题就此定格在启动时的
+   * 取值——这正是「同一个主题下有的 opencode 对、有的 opencode 错」的成因
+   * （对的那个只是恰好在之后赶上了某次主题切换的主动推送）。
+   *
+   * 而 TUI 会发这个序列，本身就证明它已经就绪并在监听颜色报告。所以这里是唯一
+   * 可靠的应答时机：收到就主动把两条颜色一起推回去，绕开那条注定被吞掉的重查询。
+   *
+   * 实现上复用 applyTheme 的那条路径——把 OSC 查询喂给本地 parser，让已注册的
+   * 10/11 handler 触发后自行写回。这样「颜色怎么算、怎么写回」只有一份实现。
+   */
   terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
     if (params.length === 1 && params[0] === 2031) {
       const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
-      const scheme = isDarkBackground(bg) ? 1 : 2;
-      onQueryResponse(`\x1b[?997;${scheme}n`);
+      const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
+      // 与 applyTheme 共享记账：997 是我们主动发的，不记账会让 applyTheme 重复推送
+      if (scheme !== schemeState.lastScheme) {
+        schemeState.lastScheme = scheme;
+        onQueryResponse(`\x1b[?997;${scheme}n`);
+      }
+      terminal.write('\x1b]10;?\x07\x1b]11;?\x07');
       return true;
     }
     return false;
@@ -295,6 +322,17 @@ export function createTerminal(
   }
 
   /*
+   * 记录上次上报给 TUI 的颜色方案（997 报告）。初值取创建时的主题，
+   * 这样首次挂载时 applyTheme 不会向尚未就绪的 PTY 写入噪声序列。
+   *
+   * 用对象持有是为了让 registerThemeQueries 里的 2031 handler 共享同一份记账
+   * （它是模块级函数，拿不到这里的局部变量）。
+   */
+  const schemeState: { lastScheme: 1 | 2 } = {
+    lastScheme: (options?.theme ?? 'dark') === 'dark' ? 1 : 2,
+  };
+
+  /*
    * 是否启用 OSC 主题色适配。按 command 门控：只有 opencode 走这套协商。
    *
    * 其余 agent 与普通 shell 并不理解 `OSC 10;?` / `CSI ? 2031 h`，收到代答
@@ -304,12 +342,8 @@ export function createTerminal(
   const respond = options?.onQueryResponse;
   const oscTheme = !!respond && isOscThemeCommand(options?.command);
   if (respond && oscTheme) {
-    registerThemeQueries(terminal, respond);
+    registerThemeQueries(terminal, respond, schemeState);
   }
-
-  // 记录上次上报给 TUI 的颜色方案（997 报告）。初值取创建时的主题，
-  // 这样首次挂载时 applyTheme 不会向尚未就绪的 PTY 写入噪声序列。
-  let lastScheme: 1 | 2 = (options?.theme ?? 'dark') === 'dark' ? 1 : 2;
 
   try {
     fit.fit();
@@ -366,8 +400,8 @@ export function createTerminal(
       if (oscTheme) {
         const bg = terminal.options.theme?.background ?? FALLBACK_BG[theme];
         const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
-        if (scheme !== lastScheme) {
-          lastScheme = scheme;
+        if (scheme !== schemeState.lastScheme) {
+          schemeState.lastScheme = scheme;
           respond(`\x1b[?997;${scheme}n`);
         }
 

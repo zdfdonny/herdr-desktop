@@ -36,6 +36,7 @@
     "icon": "node scripts/gen-icon.js",
     "test:unix": "esbuild electron/platform/unix.ts --bundle --platform=node --format=esm --outfile=.tmp-unix.mjs && node scripts/test-unix-platform.mjs",
     "test:layout": "esbuild src/stores/layoutStore.ts --bundle --platform=node --format=esm --outfile=.tmp-layout.mjs && node scripts/test-layout-store.mjs",
+    "test:osc": "node scripts/test-osc-handshake.mjs",
     "check:artifacts": "node scripts/check-artifacts.js",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:mac": "electron-vite build && electron-builder --mac",

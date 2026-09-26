@@ -39,6 +39,14 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
   const resolvedTheme = useResolvedTheme();
+  /*
+   * 始终持有最新主题值，供「终端重建」的 effect 读取。
+   *
+   * 那个 effect 的依赖里不能出现 resolvedTheme（否则切主题会重建终端），
+   * 但它又必须在重建后拿到**当前**主题，所以用 ref 传递。
+   */
+  const resolvedThemeRef = useRef(resolvedTheme);
+  resolvedThemeRef.current = resolvedTheme;
   const fontSize = useSettingsStore((s) => s.settings.fontSize);
   const t = useT();
   // 旧快照可能缺 running 字段，按运行中处理
@@ -91,6 +99,18 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
       command: pane.command ?? null,
     });
     handleRef.current = handle;
+
+    /*
+     * 终端重建后补一次主题应用。
+     *
+     * 这里必须主动补：重建（换 pane、改字号、respawn）后新实例注册的是全新的
+     * OSC handler，而已经跑起来的 opencode **不会**再发一次 `CSI ? 2031 h`，
+     * 所以没有任何东西会去触发那次握手，主题就停在旧值上。
+     *
+     * 用 ref 取最新主题而非把 resolvedTheme 加进依赖：加进去会让切主题重建
+     * 整个终端（丢滚动缓冲、重连 PTY），代价远大于收益。
+     */
+    handle.applyTheme(resolvedThemeRef.current);
 
     // 搜索匹配计数
     const resultsSub = handle.search.onDidChangeResults((e) => {
