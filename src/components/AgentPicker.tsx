@@ -25,6 +25,7 @@ export function AgentPicker({ projectId, onPick }: AgentPickerProps) {
   const probed = useAgentsStore((s) => s.probed);
 
   // 只保留本机已安装的智能体；终端预设按平台解析默认 shell，通常恒可用。
+  // 顺序由 AGENT_PRESETS 保证（已在源头按字母序排好）。
   const installed = AGENT_PRESETS.filter(
     (preset) => probed && availability[preset.command] === true,
   );

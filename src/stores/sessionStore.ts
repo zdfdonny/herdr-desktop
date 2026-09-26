@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import type { SessionState, Project, AgentState } from '@shared/state';
+import { compareAgents } from './agentSort';
 
 interface SessionStore {
   state: SessionState;
@@ -59,7 +60,9 @@ export function useProjectGroups(): ProjectGroup[] {
         ...a,
         // 旧快照可能缺 running 字段，按运行中处理（向后兼容）
         running: state.panes.find((p) => p.paneId === a.paneId)?.running ?? true,
-      }));
+      }))
+      // 按显示名字母序（排序键与 AgentRow 的渲染名共用，见 agentSort.ts）
+      .sort(compareAgents);
     return {
       project,
       agents,

@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import { getAgentAvailability } from '../ipc/client';
 import { isMac, isWindows } from '../platform';
+import { compareAgentNames } from './agentSort';
 
 export interface AgentPreset {
   /** 稳定标识。 */
@@ -39,13 +40,17 @@ const TERMINAL_COMMAND = isWindows ? 'powershell.exe' : isMac ? '/bin/zsh' : '/b
 const CURSOR_COMMAND = isWindows ? 'cursor-agent.cmd' : 'cursor-agent';
 
 /**
- * 内置 agent 预设。
+ * 内置 agent 预设（按显示名字母序）。
  *
  * 对照 herdr `src/detect/mod.rs` 的 `Agent::ALL`（24 个智能体），
  * 启动命令取 `interactive_agent_executable` 的对应平台值。
  * `terminal`（普通终端）为桌面端自有预设，保留不动。
+ *
+ * 声明顺序按上游对照表书写，导出前统一排序——三个消费方（AgentPicker、
+ * 设置里的安装状态列表、代理开关列表）都直接 map 这个数组，在这里排一次
+ * 即可保证各处顺序一致，不必每个组件各排一遍。
  */
-export const AGENT_PRESETS: AgentPreset[] = [
+const AGENT_PRESETS_UNSORTED: AgentPreset[] = [
   { id: 'pi', label: 'Pi', command: 'pi' },
   { id: 'claude', label: 'Claude Code', command: 'claude' },
   { id: 'codex', label: 'Codex', command: 'codex' },
@@ -77,6 +82,15 @@ export const AGENT_PRESETS: AgentPreset[] = [
    */
   { id: 'dsh-web', label: 'DeepSeek Harness', command: 'dsh', kind: 'web' },
 ];
+
+/*
+ * 按 label 排序。用 localeCompare（与侧栏 agent 列表同一规则）而非 `<`：
+ * 直接比码点会把大写全排在小写前，且数字段无法自然排序。
+ * 同名时回退 id 保证稳定。
+ */
+export const AGENT_PRESETS: AgentPreset[] = [...AGENT_PRESETS_UNSORTED].sort(
+  (a, b) => compareAgentNames(a.label, b.label) || a.id.localeCompare(b.id),
+);
 
 interface AgentsStore {
   /** 命令 → 是否可用。 */

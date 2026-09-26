@@ -8,5 +8,7 @@ out/
 .DS_Store
 .tmp-unix.mjs
 .tmp-layout.mjs
+.tmp-agentsort.mjs
+.tmp-agentpresets.mjs
 
 .tmp-msg*.txt

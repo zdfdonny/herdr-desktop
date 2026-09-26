@@ -8,6 +8,7 @@
  */
 
 import type { ProjectGroupAgent } from '../stores/sessionStore';
+import { agentDisplayName } from '../stores/agentSort';
 import { StatusDot } from './StatusDot';
 import { IconPlay, IconClose } from './icons';
 import { useT } from '../i18n';
@@ -22,7 +23,8 @@ interface AgentRowProps {
 
 export function AgentRow({ agent, focused }: AgentRowProps) {
   const t = useT();
-  const displayName = agent.label ?? agent.name ?? 'agent';
+  // 显示名与侧栏排序键共用同一个函数，避免两处漂移导致列表看着乱序
+  const displayName = agentDisplayName(agent);
   const subtitle = agent.title ?? agent.paneId;
   const running = agent.running;
 
