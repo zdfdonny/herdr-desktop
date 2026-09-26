@@ -13,8 +13,8 @@ import { useUiStore } from '../stores/uiStore';
 import { useT } from '../i18n';
 import { LANGUAGES, LANGUAGE_LABELS, type MessageKey } from '../i18n/messages';
 import { AGENT_PRESETS, useAgentsStore, isAvailable } from '../stores/agentsStore';
-import { getAppInfo, testProxy } from '../ipc/client';
-import type { ProxyTestResult } from '@shared/protocol';
+import { getAppInfo, testProxy, getHookStatuses, installHook, uninstallHook } from '../ipc/client';
+import type { ProxyTestResult, HookStatus } from '@shared/protocol';
 import {
   IconSliders,
   IconGlobe,
@@ -135,6 +135,10 @@ export function SettingsDialog() {
   /** 代理检测状态：null 表示尚未检测。 */
   const [proxyTest, setProxyTest] = useState<ProxyTestResult | null>(null);
   const [proxyTesting, setProxyTesting] = useState(false);
+  /** 官方集成 hook 安装状态：agentId → installed/not-installed/unsupported。 */
+  const [hookStatuses, setHookStatuses] = useState<Record<string, HookStatus>>({});
+  const [hookBusy, setHookBusy] = useState<string | null>(null);
+  const [hookBusyAll, setHookBusyAll] = useState(false);
 
   /*
    * 检测代理：先提交当前输入值（用户可能还没失焦），再发起检测。
@@ -157,6 +161,46 @@ export function SettingsDialog() {
       .then(setAppInfo)
       .catch(() => setAppInfo(null));
   }, []);
+
+  // 加载 hook 安装状态
+  useEffect(() => {
+    void getHookStatuses()
+      .then(setHookStatuses)
+      .catch(() => setHookStatuses({}));
+  }, []);
+
+  const handleHookInstall = (agentId: string) => {
+    setHookBusy(agentId);
+    void installHook(agentId)
+      .then((status) => setHookStatuses((prev) => ({ ...prev, [agentId]: status })))
+      .catch(() => undefined)
+      .finally(() => setHookBusy(null));
+  };
+
+  const handleHookUninstall = (agentId: string) => {
+    setHookBusy(agentId);
+    void uninstallHook(agentId)
+      .then((status) => setHookStatuses((prev) => ({ ...prev, [agentId]: status })))
+      .catch(() => undefined)
+      .finally(() => setHookBusy(null));
+  };
+
+  const handleInstallAll = () => {
+    setHookBusyAll(true);
+    const agents = Object.keys(hookStatuses);
+    void Promise.all(
+      agents.map((agentId) => installHook(agentId).then((status) => ({ agentId, status }))),
+    )
+      .then((results) => {
+        setHookStatuses((prev) => {
+          const next = { ...prev };
+          for (const { agentId, status } of results) next[agentId] = status;
+          return next;
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => setHookBusyAll(false));
+  };
 
   // Esc 关闭
   useEffect(() => {
@@ -302,17 +346,66 @@ export function SettingsDialog() {
 
             {active === 'agents' && (
               <Section title={t('settings.agents')}>
+                <div className="hooks-toolbar">
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={handleInstallAll}
+                    disabled={hookBusyAll || Object.keys(hookStatuses).length === 0}
+                  >
+                    {hookBusyAll ? '…' : t('settings.installAllHooks')}
+                  </button>
+                </div>
+
                 <ul className="agent-status-list">
+                  <li className="agent-list-header" role="row">
+                    <span className="agent-list-header__agent" role="columnheader">
+                      {t('settings.agentColumn')}
+                    </span>
+                    <span className="agent-list-header__hook" role="columnheader">
+                      {t('settings.hookColumn')}
+                    </span>
+                    <span className="agent-list-header__install" role="columnheader">
+                      {t('settings.installColumn')}
+                    </span>
+                  </li>
                   {AGENT_PRESETS.map((preset) => {
                     const isOk = isAvailable(availability, probed, preset.command);
+                    const hookStatus = hookStatuses[preset.id];
+                    const busy = hookBusy === preset.id;
+                    const hookInstalled = hookStatus === 'installed';
                     return (
                       <li key={preset.id} className="agent-status">
-                        <span
-                          className={`agent-status__dot ${isOk ? 'is-ok' : 'is-missing'}`}
-                          aria-hidden="true"
-                        />
-                        <span className="agent-status__name">{preset.label}</span>
-                        <span className={`agent-status__state ${isOk ? 'is-ok' : 'is-missing'}`}>
+                        <span className="agent-status__agent">
+                          <span
+                            className={`agent-status__dot ${isOk ? 'is-ok' : 'is-missing'}`}
+                            aria-hidden="true"
+                          />
+                          <span className="agent-status__name">{preset.label}</span>
+                        </span>
+                        <span className="agent-status__hook">
+                          {hookStatus !== undefined && isOk ? (
+                            <button
+                              type="button"
+                              className="button button--small"
+                              disabled={busy || hookStatus === 'unsupported'}
+                              onClick={() =>
+                                hookInstalled
+                                  ? handleHookUninstall(preset.id)
+                                  : handleHookInstall(preset.id)
+                              }
+                            >
+                              {busy
+                                ? '…'
+                                : hookInstalled
+                                  ? t('settings.uninstallHook')
+                                  : t('settings.installHook')}
+                            </button>
+                          ) : (
+                            <span className="agent-status__hook-state is-missing">—</span>
+                          )}
+                        </span>
+                        <span className={`agent-status__install ${isOk ? 'is-ok' : 'is-missing'}`}>
                           {isOk ? t('settings.installed') : t('settings.notInstalled')}
                         </span>
                       </li>

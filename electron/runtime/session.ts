@@ -14,6 +14,7 @@ import type {
   Project,
   PaneState,
   AgentState,
+  PaneAgentSession,
   AddProjectParams,
   SpawnAgentParams,
   SpawnWebAgentParams,
@@ -131,6 +132,7 @@ export class Session {
       args: params.args ?? [],
       running: true,
       kind: 'pty',
+      agentSession: null,
     };
     this.panes.set(paneId, pane);
 
@@ -186,6 +188,7 @@ export class Session {
       running: true,
       kind: 'web',
       webUrl: null,
+      agentSession: null,
     };
     this.panes.set(paneId, pane);
 
@@ -221,6 +224,31 @@ export class Session {
     if (!pane || pane.kind !== 'web') return;
     if (pane.webUrl === webUrl) return;
     pane.webUrl = webUrl;
+    this.bump();
+  }
+
+  /**
+   * 记录 pane 的 agent 会话引用（官方集成上报，对应 herdr 的 hook 上报）。
+   *
+   * 调用方（router）负责校验来源与会话值，这里只做幂等落库：
+   * 相同引用不重复触发结构变更，避免上报洪峰反复刷快照。
+   */
+  setPaneAgentSession(paneId: string, session: PaneAgentSession | null): void {
+    const pane = this.panes.get(paneId);
+    if (!pane) return;
+    const current = pane.agentSession ?? null;
+    if (current === session) return;
+    if (
+      current &&
+      session &&
+      current.source === session.source &&
+      current.agent === session.agent &&
+      current.kind === session.kind &&
+      current.value === session.value
+    ) {
+      return;
+    }
+    pane.agentSession = session;
     this.bump();
   }
 
@@ -282,6 +310,7 @@ export class Session {
         // 旧版本快照缺 kind/webUrl：按 PTY 处理，webUrl 归 null
         kind: pane.kind === 'web' ? 'web' : 'pty',
         webUrl: typeof pane.webUrl === 'string' ? pane.webUrl : null,
+        agentSession: normalizePaneAgentSession(pane.agentSession),
       });
     }
 
@@ -382,4 +411,24 @@ export class Session {
   private bump(): void {
     this.revision++;
   }
+}
+
+/**
+ * 防御性归一化持久化的 agent 会话引用。
+ *
+ * 旧版本 / 手改过的 session.json 可能缺字段或 kind 非法；
+ * 恢复时只保留结构合法的引用，来源合法性留到恢复计划生成时再判。
+ */
+function normalizePaneAgentSession(
+  session: PaneAgentSession | null | undefined,
+): PaneAgentSession | null {
+  if (!session) return null;
+  if (session.kind !== 'id' && session.kind !== 'path') return null;
+  if (typeof session.value !== 'string' || session.value.length === 0) return null;
+  return {
+    source: typeof session.source === 'string' ? session.source : '',
+    agent: typeof session.agent === 'string' ? session.agent : '',
+    kind: session.kind,
+    value: session.value,
+  };
 }

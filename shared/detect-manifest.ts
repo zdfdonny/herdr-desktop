@@ -92,3 +92,32 @@ export function detectAgentName(snapshot: string): string | null {
   }
   return null;
 }
+
+/**
+ * 会话 id 识别模式（采集端 fallback）。
+ *
+ * 权威来源是官方 hook 上报（`agent:report-session`）；这里只兜底识别那些
+ * 会在终端输出里显式打印会话标识的形态。为降低误报，只接受：
+ * - `session[:= ]? <uuid>` 这种带明确关键词的形态；
+ * - DSH 式自描述 token `session-<id>`。
+ * 不接受裸 UUID（在日志里太常见，容易把随机内容误当成会话 id）。
+ */
+const SESSION_ID_PATTERNS: RegExp[] = [
+  /\bsession(?:\s+id)?\s*[:=]\s*['"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})['"]?/i,
+  /\bsession\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i,
+  /\b(session-[a-z0-9_-]{8,})\b/i,
+];
+
+/**
+ * 尽力而为地从终端快照中提取会话 id。
+ *
+ * @param snapshot 已去 ANSI 的完整终端缓冲（不限于底部，因为会话 id 通常在
+ *                 会话启动时打印一次，随后会滚出可视区）。
+ */
+export function detectSessionId(snapshot: string): string | null {
+  for (const pattern of SESSION_ID_PATTERNS) {
+    const match = snapshot.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}

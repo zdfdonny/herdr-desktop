@@ -148,6 +148,9 @@ export interface AgentStatusPayload {
   status: 'blocked' | 'done';
 }
 
+/** 官方集成 hook 的安装状态。 */
+export type HookStatus = 'installed' | 'not-installed' | 'unsupported';
+
 /** Renderer → Main 的全部消息联合。 */
 export type RendererToMainMessage = ControlMessage;
 
@@ -167,6 +170,12 @@ export interface HerdrDesktopApi {
   getAgentAvailability(commands: string[]): Promise<Record<string, boolean>>;
   /** 检测代理地址是否可用（经该代理发起一次真实请求）。 */
   testProxy(url: string): Promise<ProxyTestResult>;
+  /** 获取各 agent 的官方集成 hook 安装状态。 */
+  getHookStatuses(): Promise<Record<string, HookStatus>>;
+  /** 安装某 agent 的官方集成 hook。 */
+  installHook(agentId: string): Promise<HookStatus>;
+  /** 卸载某 agent 的官方集成 hook。 */
+  uninstallHook(agentId: string): Promise<HookStatus>;
 }
 
 export type {

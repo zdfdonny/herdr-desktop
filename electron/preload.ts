@@ -60,6 +60,15 @@ const api: HerdrDesktopApi = {
   testProxy(url: string): Promise<ProxyTestResult> {
     return ipcRenderer.invoke('herdr:test-proxy', url);
   },
+  getHookStatuses(): Promise<Record<string, import('../shared/protocol').HookStatus>> {
+    return ipcRenderer.invoke('herdr:hook-statuses');
+  },
+  installHook(agentId: string): Promise<import('../shared/protocol').HookStatus> {
+    return ipcRenderer.invoke('herdr:hook-install', agentId);
+  },
+  uninstallHook(agentId: string): Promise<import('../shared/protocol').HookStatus> {
+    return ipcRenderer.invoke('herdr:hook-uninstall', agentId);
+  },
 };
 
 contextBridge.exposeInMainWorld('herdrDesktop', api);

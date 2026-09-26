@@ -5,13 +5,15 @@
  * 使用 shared/detect-manifest 的声明式规则。
  */
 
-import { detectStatus, detectAgentName } from '../../shared/detect-manifest';
+import { detectStatus, detectAgentName, detectSessionId } from '../../shared/detect-manifest';
 import type { AgentState } from '../../shared/state';
 
 export interface DetectionResult {
   name: string | null;
   title: string | null;
   status: AgentState['status'];
+  /** 尽力而为的会话 id（见 detect-manifest 的 detectSessionId）。 */
+  sessionId: string | null;
 }
 
 /** shell 启动横幅与提示符，不作为 agent 标题展示。 */
@@ -60,7 +62,9 @@ export function detectFromSnapshot(snapshot: string): DetectionResult {
   const name = detectAgentName(bottom);
   const status = detectStatus(name, bottom);
   const title = extractTitle(clean);
-  return { name, title, status };
+  // 会话 id 用完整缓冲识别：它通常在会话启动时打印一次，随后滚出底部窗口。
+  const sessionId = detectSessionId(clean);
+  return { name, title, status, sessionId };
 }
 
 /** 只保留底部最近的若干行，用于检测（避免历史关键词残留）。 */

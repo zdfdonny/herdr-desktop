@@ -142,6 +142,12 @@ export interface Messages {
     reset: string;
     resetHint: string;
     resetConfirm: string;
+    installHook: string;
+    uninstallHook: string;
+    installAllHooks: string;
+    agentColumn: string;
+    hookColumn: string;
+    installColumn: string;
   };
   error: {
     commandNotFound: string;
@@ -261,6 +267,12 @@ const zhCN: Messages = {
     reset: '重新扫描',
     resetHint: '重新检测本机已安装的智能体',
     resetConfirm: '确定重新扫描本机的智能体命令？',
+    installHook: '安装',
+    uninstallHook: '卸载',
+    installAllHooks: '一键安装Hook',
+    agentColumn: '智能体',
+    hookColumn: 'Hook 状态',
+    installColumn: '安装状态',
   },
   error: {
     commandNotFound: '命令不存在',
@@ -381,6 +393,12 @@ const en: Messages = {
     reset: 'Rescan',
     resetHint: 'Re-detect agents installed on this machine',
     resetConfirm: 'Rescan for agent commands on this machine?',
+    installHook: 'Install',
+    uninstallHook: 'Uninstall',
+    installAllHooks: 'Install all hooks',
+    agentColumn: 'Agent',
+    hookColumn: 'Hook',
+    installColumn: 'Installed',
   },
   error: {
     commandNotFound: 'Command not found',

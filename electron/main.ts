@@ -249,11 +249,16 @@ app.whenReady().then(async () => {
   // 这样 did-finish-load 推送的首个快照就包含恢复结果，渲染端无需二次同步。
   await router.restoreSession();
   router.register();
+  // hook 上报端点在创建窗口/spawn agent 之前启动，保证环境变量注入时有地址。
+  await router.startHookServer();
   ipcMain.handle('herdr:app-info', () => ({
     version: app.getVersion(),
     platform: process.platform,
   }));
   ipcMain.handle('herdr:settings', () => router.getSettings());
+  ipcMain.handle('herdr:hook-statuses', () => router.getHookStatuses());
+  ipcMain.handle('herdr:hook-install', (_event, agentId: string) => router.installHook(agentId));
+  ipcMain.handle('herdr:hook-uninstall', (_event, agentId: string) => router.uninstallHook(agentId));
   buildMenu();
   createMainWindow();
 
@@ -276,8 +281,9 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
-  // 先结束 dsh web 子进程树，再排空持久化写入
+  // 先结束 dsh web 子进程树与 hook 上报端点，再排空持久化写入
   router.disposeWebAgents();
+  router.disposeHookServer();
   void router.flush().finally(() => {
     app.quit();
   });

@@ -8,6 +8,7 @@ import type {
   HerdrDesktopApi,
   AppSettings,
   ProxyTestResult,
+  HookStatus,
 } from '@shared/protocol';
 import type { ThemePreference, Language } from '@shared/state';
 
@@ -52,6 +53,21 @@ export function getAgentAvailability(commands: string[]): Promise<Record<string,
 /** 检测代理地址是否可用。 */
 export function testProxy(url: string): Promise<ProxyTestResult> {
   return api().testProxy(url);
+}
+
+/** 获取各 agent 的官方集成 hook 安装状态。 */
+export function getHookStatuses(): Promise<Record<string, HookStatus>> {
+  return api().getHookStatuses();
+}
+
+/** 安装某 agent 的官方集成 hook。 */
+export function installHook(agentId: string): Promise<HookStatus> {
+  return api().installHook(agentId);
+}
+
+/** 卸载某 agent 的官方集成 hook。 */
+export function uninstallHook(agentId: string): Promise<HookStatus> {
+  return api().uninstallHook(agentId);
 }
 
 /** 添加项目。 */
@@ -211,5 +227,28 @@ export function resizeTerminal(paneId: string, cols: number, rows: number): void
     type: 'control:named',
     version: 1,
     payload: { kind: 'pty:resize', data: JSON.stringify({ paneId, cols, rows }) },
+  });
+}
+
+/**
+ * 上报 agent 会话引用（对应 herdr 的 `pane/report-agent-session` hook）。
+ *
+ * 官方集成/hook 在 agent 启动会话后调用，把会话 id 或会话文件路径交给 Main
+ * 持久化；之后重启该 pane 时会用它重建 `--resume`/`--session` 恢复命令。
+ * `source` 约定为 `herdr:<agent>`（如 `herdr:claude`），非官方来源会被忽略。
+ */
+export function reportAgentSession(
+  paneId: string,
+  report: {
+    source: string;
+    agent: string;
+    sessionId?: string | null;
+    sessionPath?: string | null;
+  },
+): void {
+  sendControl({
+    type: 'control:named',
+    version: 1,
+    payload: { kind: 'agent:report-session', data: JSON.stringify({ paneId, ...report }) },
   });
 }

@@ -6,10 +6,4 @@ out/
 .npm-cache/
 *.log
 .DS_Store
-.tmp-unix.mjs
-.tmp-layout.mjs
-.tmp-agentsort.mjs
-.tmp-agentpresets.mjs
-.tmp-terminal.mjs
-
-.tmp-msg*.txt
+.tmp-*

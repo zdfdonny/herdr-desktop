@@ -11,6 +11,24 @@ export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 /** pane 类型：终端进程（默认）或内嵌 Web GUI。 */
 export type PaneKind = 'pty' | 'web';
 
+/** agent 会话引用的种类：id（如 claude 会话 uuid）或 path（如 pi/omp 的 session 文件）。 */
+export type AgentSessionRefKind = 'id' | 'path';
+
+/**
+ * 持久化的 agent 会话引用（对应 herdr 的 PaneAgentSessionSnapshot）。
+ *
+ * 恢复 pane 时据此重建该 agent 的恢复命令（如 `claude --resume <value>`）。
+ * source 约定为 `herdr:<agent>`，恢复侧只接受官方来源。
+ */
+export interface PaneAgentSession {
+  /** 上报来源，形如 "herdr:claude"。 */
+  source: string;
+  /** agent 识别名（与启动命令对应，如 claude / codex / opencode）。 */
+  agent: string;
+  kind: AgentSessionRefKind;
+  value: string;
+}
+
 /**
  * 项目 —— agent 的归属单位。
  *
@@ -94,6 +112,13 @@ export interface PaneState {
    * 由 Main 运行时通过 `web:ready` 下发给渲染端，绝不落盘。
    */
   webUrl?: string | null;
+  /**
+   * agent 自身的会话引用（持久化，重启/恢复时据此重建 --resume/--session 参数）。
+   *
+   * 对应 herdr `PaneSnapshot.agent_session`。由官方集成上报（`agent:report-session`）
+   * 或从启动参数反推（如 `codex resume <id>`）写入；旧版本快照中缺失按 null 处理。
+   */
+  agentSession?: PaneAgentSession | null;
 }
 
 /** 完整会话状态（Renderer 端投影的权威结构）。 */

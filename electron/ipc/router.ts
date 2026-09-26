@@ -15,13 +15,17 @@ import { SettingsStore } from '../runtime/settings';
 import { detectFromSnapshot } from '../runtime/agent-detector';
 import { detectGitBranch } from '../runtime/git';
 import { saveState, loadState, flushState } from '../runtime/persist';
+import * as agentResume from '../runtime/agent-resume';
+import { ReportServer } from '../runtime/report-server';
+import { hookStatuses, installHook, uninstallHook } from '../runtime/integration';
 import { resolveLaunchEnv, isCommandAvailable } from '../platform';
 import { IPC } from './protocol';
-import type { MainToRendererMessage, ProxyTestResult } from '../../shared/protocol';
+import type { MainToRendererMessage, ProxyTestResult, HookStatus } from '../../shared/protocol';
 import type {
   AddProjectParams,
   SpawnAgentParams,
   SpawnWebAgentParams,
+  PaneState,
   ThemePreference,
   Language,
 } from '../../shared/state';
@@ -52,6 +56,8 @@ export class IpcRouter {
    * `null` 表示尚未解析。见 `detectionPath()`。
    */
   private detectionPathCache: string | null = null;
+  /** hook 上报端点（官方集成 hook 把会话引用报回 Main）。 */
+  private reportServer = new ReportServer();
 
   /**
    * 标题栏配色回调，由主进程在创建窗口后注入。
@@ -127,6 +133,38 @@ export class IpcRouter {
   /** 退出前结束所有 dsh web 子进程树（before-quit 调用）。 */
   disposeWebAgents(): void {
     this.web.disposeAll();
+  }
+
+  /** 启动 hook 上报端点（app ready 后、spawn 任何 agent 之前调用）。 */
+  async startHookServer(): Promise<void> {
+    await this.reportServer.start((report) => {
+      this.reportAgentSession(report.paneId, {
+        source: report.source,
+        agent: report.agent,
+        sessionId: report.sessionId,
+        sessionPath: report.sessionPath,
+      });
+    });
+  }
+
+  /** 退出前关闭 hook 上报端点（before-quit 调用）。 */
+  disposeHookServer(): void {
+    this.reportServer.stop();
+  }
+
+  /** 各 agent 的 hook 安装状态（设置页使用）。 */
+  getHookStatuses(): Record<string, HookStatus> {
+    return hookStatuses();
+  }
+
+  /** 安装某 agent 的官方集成 hook。 */
+  async installHook(agentId: string): Promise<HookStatus> {
+    return installHook(agentId, this.reportServer.reportUrl);
+  }
+
+  /** 卸载某 agent 的官方集成 hook。 */
+  async uninstallHook(agentId: string): Promise<HookStatus> {
+    return uninstallHook(agentId);
   }
 
   getSettings() {
@@ -267,6 +305,17 @@ export class IpcRouter {
           this.pty.resize(paneId, cols, rows);
           break;
         }
+        case 'agent:report-session': {
+          const { paneId, source, agent, sessionId, sessionPath } = JSON.parse(payload.data) as {
+            paneId: string;
+            source: string;
+            agent: string;
+            sessionId?: string | null;
+            sessionPath?: string | null;
+          };
+          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath });
+          break;
+        }
         default:
           break;
       }
@@ -333,6 +382,22 @@ export class IpcRouter {
       return;
     }
 
+    /*
+     * codex `resume <id>` 启动形态：从参数反推会话引用并持久化，
+     * 之后即使进程死掉，重启该 pane 也能带着 `codex resume <id>` 恢复。
+     * （对应 herdr 的 persisted_session_from_launch_args。）
+     */
+    const commandName = params.command.trim().split(/\s+/)[0];
+    const inferred = agentResume.persistedSessionFromLaunchArgs(commandName, params.args ?? []);
+    if (inferred) {
+      this.session.setPaneAgentSession(pane.paneId, {
+        source: inferred.source,
+        agent: inferred.agent,
+        kind: inferred.sessionRef.kind,
+        value: inferred.sessionRef.value,
+      });
+    }
+
     this.pendingSpawns.set(pane.paneId, params);
     this.pushSnapshot();
   }
@@ -369,6 +434,17 @@ export class IpcRouter {
     if (!pane || pane.kind !== 'web') return;
 
     const env = this.launchEnvFor('dsh');
+    /*
+     * DSH 会话恢复 seam：把持久化的会话 id 通过环境变量带给 `dsh web`。
+     *
+     * 现状：DSH 0.1.7 的 `dsh web` 还没有 `--session-id` flag（只有 headless 有），
+     * 所以这里先用一个 DSH web 忽略的环境变量承载，不破坏现有启动流程。
+     * 等 DSH web 支持 `--session-id`（或暴露 session API 供 web:ready 后调用）后，
+     * 改回把该 id 作为启动参数传入即可，改动只在这一处。
+     */
+    if (agentResume.RESUME_AGENTS_ON_RESTORE && pane.agentSession) {
+      env.DSH_WEB_SESSION_ID = pane.agentSession.value;
+    }
     void this.web.spawn(paneId, env, pane.cwd ?? undefined).then((result) => {
       if (result.ok) {
         this.revivingPanes.delete(paneId);
@@ -417,6 +493,37 @@ export class IpcRouter {
   private onWebExit(paneId: string, _exitCode: number): void {
     this.web.kill(paneId);
     this.session.closePane(paneId);
+    this.pushSnapshot();
+  }
+
+  /**
+   * 记录官方集成上报的 agent 会话引用（对应 herdr `handle_pane_report_agent_session`）。
+   *
+   * 由 `agent:report-session` named 消息进入；来源与会话值经 agent-resume
+   * 校验，非官方来源直接忽略。上报后立即落盘，保证重启后仍可恢复。
+   */
+  private reportAgentSession(
+    paneId: string,
+    report: {
+      source: string;
+      agent: string;
+      sessionId?: string | null;
+      sessionPath?: string | null;
+    },
+  ): void {
+    const ref = agentResume.sessionRefFromReport(
+      report.source,
+      report.agent,
+      report.sessionId ?? null,
+      report.sessionPath ?? null,
+    );
+    if (!ref) return;
+    this.session.setPaneAgentSession(paneId, {
+      source: report.source,
+      agent: report.agent,
+      kind: ref.kind,
+      value: ref.value,
+    });
     this.pushSnapshot();
   }
 
@@ -492,7 +599,7 @@ export class IpcRouter {
       return false;
     }
 
-    const params: SpawnAgentParams = {
+    const params = this.resumeParamsFor(pane) ?? {
       projectId: pane.projectId,
       command: pane.command,
       args: pane.args ?? [],
@@ -503,6 +610,32 @@ export class IpcRouter {
     this.revivingPanes.add(paneId);
     this.session.setPaneRunning(paneId, true);
     return true;
+  }
+
+  /**
+   * 从 pane 的持久化 agent 会话引用生成恢复参数。
+   *
+   * 对应 herdr 的 restore_plan_for_snapshot：有官方来源的会话引用且恢复
+   * 开关打开时，用该 agent 的恢复命令（如 `claude --resume <id>`）替换原始
+   * 启动命令；否则返回 null，走原来的「重放 command/args」路径。
+   */
+  private resumeParamsFor(pane: PaneState): SpawnAgentParams | null {
+    if (!agentResume.RESUME_AGENTS_ON_RESTORE) return null;
+    const session = pane.agentSession ?? null;
+    if (!session || !pane.command) return null;
+
+    // 命令首 token 是真实可执行文件，cursor 等平台差异由 pty-manager 处理。
+    const executable = pane.command.trim().split(/\s+/)[0];
+    const plan = agentResume.resumePlanForPane(executable, session);
+    if (!plan) return null;
+
+    return {
+      projectId: pane.projectId,
+      command: plan.argv[0],
+      args: plan.argv.slice(1),
+      cwd: pane.cwd ?? undefined,
+      label: pane.label ?? undefined,
+    };
   }
 
   /**
@@ -521,6 +654,7 @@ export class IpcRouter {
     this.pendingSizes.delete(paneId);
 
     const env = this.launchEnvFor(params.command);
+    this.injectHookEnv(env, paneId, params.command);
     const result = this.pty.spawn(paneId, params, env, pane.cwd ?? undefined, size);
 
     if (!result.ok) {
@@ -594,6 +728,22 @@ export class IpcRouter {
       NO_PROXY: noProxy,
       no_proxy: noProxy,
     };
+  }
+
+  /**
+   * 注入 hook 上报所需的环境变量（对应 herdr 的 apply_pane_base_env）。
+   *
+   * 官方集成 hook 脚本据此知道自己的 pane、agent 和上报地址：
+   * - HERDR_PANE_ID：pane 标识；
+   * - HERDR_AGENT：agent 命令首 token（用于构造 source `herdr:<agent>`）；
+   * - HERDR_REPORT_URL：本地上报端点（含一次性 token）。
+   */
+  private injectHookEnv(env: Record<string, string>, paneId: string, command: string): void {
+    const reportUrl = this.reportServer.reportUrl;
+    if (!reportUrl) return;
+    env.HERDR_PANE_ID = paneId;
+    env.HERDR_AGENT = command.trim().split(/\s+/)[0];
+    env.HERDR_REPORT_URL = reportUrl;
   }
 
   /**
@@ -692,6 +842,26 @@ export class IpcRouter {
     if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
       this.notifyAgentStatus(paneId, transition.to);
     }
+
+    /*
+     * 采集端 fallback：从终端输出识别出会话 id 时，把它持久化到 pane，
+     * 之后重启该 pane 就能带 `--resume`/`--session` 恢复。
+     * 权威来源仍是 hook 上报（agent:report-session）；这里只做兜底，
+     * 且经 sessionRefFromReport 校验官方来源，非白名单 agent 直接忽略。
+     */
+    if (result.name && result.sessionId) {
+      const source = `herdr:${result.name}`;
+      const ref = agentResume.sessionRefFromReport(source, result.name, result.sessionId, null);
+      if (ref) {
+        this.session.setPaneAgentSession(paneId, {
+          source,
+          agent: result.name,
+          kind: ref.kind,
+          value: ref.value,
+        });
+      }
+    }
+
     this.pushSnapshot();
   }
 
