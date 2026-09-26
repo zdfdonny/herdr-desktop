@@ -1,32 +1,43 @@
 /**
- * TitleBar —— 右栏顶部栏（完全自定义，不含任何标题文字）。
+ * TitleBar —— 窗口标题栏（横贯整个窗口宽度，位于所有面板之上）。
  *
- * 左右两栏完全独立，各自有顶部区，中间以分隔线切开。
- * 本组件只负责**右栏**，只保留：
- * - 整条拖拽区（-webkit-app-region: drag）
- * - 右侧主题切换控件
+ * 布局从左到右：
+ *   应用图标 + 应用名 → 折叠/展开按钮 → 弹性拖拽区 → 主题切换 → 原生窗口按钮占位
  *
- * 标题与副标题（会话名 / 项目路径）已移除，顶部不再展示任何标题文本。
- * 侧栏的收起/展开按钮在 Sidebar 内部，不在本栏。
+ * 这里是**唯一**放置应用标识与侧栏折叠按钮的地方。
+ * 侧栏/项目列表是独立的一块圆角卡片，不再承载品牌行——
+ * 图标、名字、折叠按钮都不属于项目列表。
  *
- * Windows 下右侧由 titleBarOverlay 提供原生窗口按钮，需预留其宽度。
+ * Windows 下右侧由 titleBarOverlay 提供原生窗口按钮，需预留其宽度；
+ * macOS 交通灯在左侧，由 --mac-traffic-light-inset 让位。
  */
 
 import { useEffect } from 'react';
-import { useResolvedTheme } from '../stores/settingsStore';
+import { useResolvedTheme, useSettingsStore } from '../stores/settingsStore';
 import { useSettingsOpen } from '../stores/uiStore';
 import { setTitleBarTheme } from '../ipc/client';
+import { useT } from '../i18n';
 import { ThemeSwitch } from './ThemeSwitch';
+import { IconLogo, IconPanelLeft } from './icons';
 
-/** 主题切换配色，与 global.css 的 --bg-app / --text-secondary 对应。 */
+/**
+ * 原生窗口按钮配色，必须与 global.css 的 --bg-app 完全一致。
+ *
+ * titleBarOverlay 由主进程用不透明色绘制在窗口最上层，CSS 完全覆盖不到。
+ * 标题栏与窗口底色同为 --bg-app，若这里取别的颜色，
+ * 右上角会多出一条色差明显的按钮条，破坏"标题栏与 app 背景同色"。
+ */
 const OVERLAY_COLORS = {
-  light: { color: '#ffffff', symbolColor: '#1a1a1a' },
-  dark: { color: '#0d0d0d', symbolColor: '#d4d4d4' },
+  light: { color: '#fafafd', symbolColor: '#3b3b3b' },
+  dark: { color: '#0d0d0d', symbolColor: '#cccccc' },
 } as const;
 
 export function TitleBar() {
+  const t = useT();
   const resolvedTheme = useResolvedTheme();
   const settingsOpen = useSettingsOpen();
+  const collapsed = useSettingsStore((s) => s.settings.sidebarCollapsed);
+  const setSidebarCollapsed = useSettingsStore((s) => s.setSidebarCollapsed);
 
   /*
    * 同步原生窗口按钮配色。
@@ -36,12 +47,12 @@ export function TitleBar() {
    * 因此弹窗打开时把按钮条同步成遮罩压暗后的近似色，关闭时恢复，
    * 否则弹窗四周都变暗、唯独右上角按钮条仍是亮色，视觉上"没有全覆盖"。
    * 原生 overlay 的 color 不支持透明度，只能用不透明近似色：
-   * 浅色 = 45% 黑压白（≈#8c8c8c），深色 = 60% 黑压 #0d0d0d（≈#050505）。
+   * 浅色 = 45% 黑压 #fafafd（≈#8a8a8c），深色 = 60% 黑压 #0d0d0d（≈#050505）。
    */
   useEffect(() => {
     const base = OVERLAY_COLORS[resolvedTheme];
     if (settingsOpen) {
-      const dimmedColor = resolvedTheme === 'dark' ? '#050505' : '#8c8c8c';
+      const dimmedColor = resolvedTheme === 'dark' ? '#050505' : '#8a8a8c';
       setTitleBarTheme(dimmedColor, base.symbolColor);
     } else {
       setTitleBarTheme(base.color, base.symbolColor);
@@ -50,7 +61,30 @@ export function TitleBar() {
 
   return (
     <header className="topbar">
-      {/* 空白拖拽区：占满左侧空间，拖动窗口 */}
+      {/* 品牌区：应用图标 + 应用名，让出 macOS 交通灯位置 */}
+      <div className="topbar__brand">
+        <span className="topbar__brand-mark" aria-hidden="true">
+          <IconLogo size={18} />
+        </span>
+        <span className="topbar__brand-name">{t('app.name')}</span>
+      </div>
+
+      {/*
+       * 折叠/展开按钮：紧跟在应用名之后。
+       * 父级 .topbar 是 drag 区，按钮必须显式 no-drag，否则点击会被吞掉。
+       * 图标始终朝左，收起/展开两态用同一个按钮，位置不跳动。
+       */}
+      <button
+        type="button"
+        className="icon-button topbar__toggle"
+        onClick={() => setSidebarCollapsed(!collapsed)}
+        title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+        aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+      >
+        <IconPanelLeft size={15} />
+      </button>
+
+      {/* 弹性拖拽区：占满中间剩余空间，拖动窗口 */}
       <div className="topbar__drag-region" />
 
       <div className="topbar__actions">

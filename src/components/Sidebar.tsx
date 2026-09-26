@@ -1,11 +1,12 @@
 /**
- * Sidebar —— 左侧项目/agent 列表。
+ * Sidebar —— 左侧项目/agent 列表（一块独立卡片）。
  *
- * 支持收起为窄图标栏（VSCode 活动栏风格）：
+ * 支持收起为窄图标栏：
  * - 展开：完整项目分组 + agent 列表
  * - 收起：约 48px 宽，显示项目首字母 + 状态点，悬停有 tooltip
  *
- * 收起/展开按钮位于「项目」标题行，紧挨在新建项目加号右侧。
+ * 本组件**不含品牌行**：应用图标、应用名与折叠/展开按钮都在 TitleBar 上，
+ * 侧栏只负责项目列表本身。
  * 左下角为设置入口（常驻，不随滚动）。
  */
 
@@ -17,7 +18,7 @@ import { AGENT_PRESETS, useAgentsStore, isAvailable } from '../stores/agentsStor
 import { addProject, pickDirectory, spawnAgent } from '../ipc/client';
 import { ProjectGroup } from './ProjectGroup';
 import { CollapsedSidebar } from './CollapsedSidebar';
-import { IconPlus, IconSettings, IconLogo, IconPanelLeft } from './icons';
+import { IconPlus, IconSettings } from './icons';
 
 export function Sidebar() {
   const t = useT();
@@ -54,7 +55,6 @@ export function Sidebar() {
       <CollapsedSidebar
         groups={groups}
         focusedPaneId={focusedPaneId}
-        onExpand={() => setSidebarCollapsed(false)}
         onSelectProject={() => setSidebarCollapsed(false)}
         onQuickSpawn={handleQuickSpawn}
         settingsActive={settingsOpen}
@@ -65,16 +65,6 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      {/* 品牌区：左侧应用图标，右侧应用名（无副标题） */}
-      <div className="sidebar__brand">
-        <span className="sidebar__brand-mark" aria-hidden="true">
-          <IconLogo size={20} />
-        </span>
-        <div className="sidebar__brand-text">
-          <span className="sidebar__brand-name">{t('app.name')}</span>
-        </div>
-      </div>
-
       <div className="sidebar__header">
         <span className="sidebar__title">{t('sidebar.projects')}</span>
         <div className="sidebar__header-actions">
@@ -86,16 +76,6 @@ export function Sidebar() {
             aria-label={t('sidebar.addProject')}
           >
             <IconPlus size={15} />
-          </button>
-          {/* 收起按钮：紧挨在新建项目加号右侧 */}
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setSidebarCollapsed(true)}
-            title={t('sidebar.collapse')}
-            aria-label={t('sidebar.collapse')}
-          >
-            <IconPanelLeft size={15} />
           </button>
         </div>
       </div>

@@ -37,7 +37,14 @@ export class SettingsStore {
         theme: normalizeTheme(parsed.theme),
         language: normalizeLanguage(parsed.language),
         fontSize: typeof parsed.fontSize === 'number' ? parsed.fontSize : DEFAULTS.fontSize,
-        sidebarCollapsed: parsed.sidebarCollapsed === true,
+        /*
+         * 侧栏折叠状态**不持久化**：每次启动都从展开态开始。
+         *
+         * 折叠是一个"临时腾地方"的动作，不是一项偏好设置；
+         * 上次为了看宽一点的终端把侧栏收起来，下次启动却看不到项目列表，
+         * 会让人以为是数据丢了。故这里恒取默认值，忽略磁盘上的旧值。
+         */
+        sidebarCollapsed: DEFAULTS.sidebarCollapsed,
         proxyUrl: normalizeProxyUrl(parsed.proxyUrl),
         proxyAgents: normalizeProxyAgents(parsed.proxyAgents),
       };
@@ -71,9 +78,12 @@ export class SettingsStore {
     return this.get();
   }
 
+  /*
+   * 侧栏折叠状态只存在内存里，**不落盘**（详见 loadSync 的说明）。
+   * 仍然返回完整设置，让 Renderer 侧的乐观更新拿到回推确认。
+   */
   async setSidebarCollapsed(collapsed: boolean): Promise<AppSettings> {
     this.settings.sidebarCollapsed = collapsed === true;
-    await this.save();
     return this.get();
   }
 

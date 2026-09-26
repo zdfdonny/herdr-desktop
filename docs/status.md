@@ -37,7 +37,7 @@
 - ✅ **xterm.js 6 + WebGL 渲染器**：闪烁问题已修（5 秒 92 块数据下 DOM mutation 9,993 → 161）
 - ✅ **node-pty + ConPTY**：Windows 原生支持
 - ✅ **两阶段 pane 创建**：`spawn-agent` 只建 pane → 渲染端 mount xterm 并 fit → `attach-pane` 用精确 cols/rows 启动 PTY。彻底解决 TUI（opencode 等）首帧排版错位
-- ✅ **终端背景随主题**：`--terminal-bg: var(--bg-app)`，VSCode `terminal.background` 风格
+- ✅ **终端背景随主题**：`--terminal-bg` 独立取值（深色 `#0d0d0d`、浅色 `#ffffff`），贴近 TUI 自绘底色，避免字符网格外露出异色边条
 - ✅ **主题切换时重建 WebGL addon**：修复切浅色主题终端仍黑底的问题
 - ✅ **字号设置**（9–24px），fit 联动
 - ✅ **PTY 输出 buffer**（200k chars）：供 agent 检测 + 挂载时一次性回放

@@ -59,7 +59,7 @@ Herdr Desktop 不走这条捷径：它**不依赖 herdr 二进制**，而是自�
 - **node-pty**：Windows 走 ConPTY，macOS / Linux 走 forkpty
 - **两阶段 pane 创建**：先建 pane → 终端挂载并 fit → 用精确 `cols/rows` 启动 PTY。
   彻底解决 opencode 等 TUI 应用首帧排版错位
-- **终端背景随主题**（VSCode `terminal.background` 风格），切换主题时重建 WebGL addon
+- **终端背景随主题**，切换主题时重建 WebGL addon
 - **字号可调**（9–24px），滚动缓冲搜索
 
 ### Agent 管理

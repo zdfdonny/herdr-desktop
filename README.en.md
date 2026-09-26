@@ -65,8 +65,7 @@ manages the agent processes directly.
 - **Two-phase pane creation** — create pane → mount terminal and fit → spawn PTY
   with exact `cols/rows`. Fully resolves first-frame layout corruption in TUI apps
   like opencode
-- **Terminal background follows the theme** (VSCode `terminal.background` style);
-  the WebGL addon is rebuilt on theme switch
+- **Terminal background follows the theme** the WebGL addon is rebuilt on theme switch
 - **Adjustable font size** (9–24px) and scrollback search
 
 ### Agent management

@@ -1,20 +1,21 @@
 /**
- * CollapsedSidebar —— 收起态的图标栏（VSCode 活动栏风格）。
+ * CollapsedSidebar —— 收起态的图标栏。
  *
  * 约 48px 宽，只保留：
- * - 顶部：展开按钮（IconPanelLeft，与展开态「项目」行的收起按钮呼应）
  * - 中部：每个项目一个首字母徽标 + agent 数状态点
  * - 底部：设置入口
+ *
+ * 展开按钮**不在这里**：它常驻 TitleBar，收起/展开两态位置不变，
+ * 避免按钮在两种状态下跳到不同位置。
  */
 
 import type { ProjectGroup as ProjectGroupData } from '../stores/sessionStore';
 import { useT } from '../i18n';
-import { IconSettings, IconPanelLeft } from './icons';
+import { IconSettings } from './icons';
 
 interface CollapsedSidebarProps {
   groups: ProjectGroupData[];
   focusedPaneId: string | null;
-  onExpand: () => void;
   onSelectProject: (projectId: string) => void;
   onQuickSpawn: (projectId: string) => void;
   settingsActive: boolean;
@@ -29,7 +30,6 @@ function initial(name: string): string {
 export function CollapsedSidebar({
   groups,
   focusedPaneId,
-  onExpand,
   onSelectProject,
   onQuickSpawn,
   settingsActive,
@@ -39,23 +39,6 @@ export function CollapsedSidebar({
 
   return (
     <aside className="sidebar sidebar--collapsed">
-      {/*
-       * 顶部条：与右栏顶部栏等高的拖拽区，内嵌展开按钮。
-       * 按钮必须显式 no-drag——拖拽区会吞掉鼠标事件，否则点击无法展开。
-       * 图标用 IconPanelLeft，与展开态「项目」行的收起按钮互为镜像，一眼可辨。
-       */}
-      <div className="sidebar__rail-top">
-        <button
-          type="button"
-          className="icon-button sidebar__rail-toggle"
-          onClick={onExpand}
-          title={t('sidebar.expand')}
-          aria-label={t('sidebar.expand')}
-        >
-          <IconPanelLeft size={16} />
-        </button>
-      </div>
-
       <div className="sidebar__rail-list">
         {groups.map((group) => {
           const { project, agents, blockedCount, workingCount } = group;

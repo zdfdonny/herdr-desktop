@@ -111,7 +111,7 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
                   title={t('view.close')}
                   aria-label={t('view.close')}
                 >
-                  <IconClose size={11} />
+                  <IconClose size={14} />
                 </button>
               </>
             )}

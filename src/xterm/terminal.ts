@@ -1,7 +1,6 @@
 /**
  * xterm.js 封装 —— 每个 agent pane 一个终端实例。
  *
- * 主题策略参考 VSCode 的终端：
  * - 终端背景不是写死的，而是从当前主题的 CSS 变量实时读取（--terminal-bg），
  *   因此永远与主区域背景保持一致，切换主题时同步更新，不会出现配色错位。
  * - 语义色（ANSI 16 色）按 light/dark 两套给出，保证对比度。
@@ -80,14 +79,15 @@ const LIGHT_ANSI: Omit<ITheme, 'background' | 'foreground' | 'cursor' | 'cursorA
   brightWhite: '#fafafa',
 };
 
+/** 兜底配色：仅在读不到 CSS 变量时使用，需与 global.css 的主题令牌保持一致。 */
 const FALLBACK_BG: Record<ResolvedTheme, string> = {
   dark: '#0d0d0d',
   light: '#ffffff',
 };
 
 const FALLBACK_FG: Record<ResolvedTheme, string> = {
-  dark: '#d4d4d4',
-  light: '#18181b',
+  dark: '#cccccc',
+  light: '#3b3b3b',
 };
 
 /** 读取当前主题下的一个 CSS 变量值。 */
@@ -100,8 +100,7 @@ function readCssVar(name: string): string | null {
 /**
  * 把 `#RRGGBB` 转成 OSC 颜色报告的 `rgb:RRRR/GGGG/BBBB` 格式。
  *
- * 8 位分量按 `cc * 0x101` 扩展到 16 位（即重复两次），
- * 与 VSCode / Ghostty 的 OSC 10/11 响应格式一致。
+ * 8 位分量按 `cc * 0x101` 扩展到 16 位（即重复两次）
  */
 function hexToRgbColon(hex: string): string {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
@@ -149,8 +148,6 @@ function writeOscToPty(write: (data: string) => void, body: string): void {
 /**
  * 判断该命令是否需要 OSC 主题色适配。
  *
- * 目前只有 opencode（opentui）实现了 VSCode 终端那套颜色协商。
- *
  * 判定取**命令的第一个 token**（可执行名），而不是在整条命令里做词边界搜索：
  * - 后者会把 `echo opencode`、`vim ~/notes/opencode.md`、`less opencode.log`
  *   这类「参数里恰好含 opencode」的命令误判为真，从而给普通 shell 挂上
@@ -169,7 +166,6 @@ function isOscThemeCommand(command: string | null | undefined): boolean {
 /**
  * 注册主题颜色查询的响应处理。
  *
- * 对照 VSCode 终端（Ghostty 约定）：
  * 1. opencode/opentui 发送 `CSI ? 2031 h`（启用颜色方案报告）；
  *    终端收到后主动回 `CSI ? 997 ; 1 n`（深色）或 `CSI ? 997 ; 2 n`（浅色）。
  * 2. TUI 收到 997 后调用原生 `queryThemeColors()`，写出 `OSC 10;?`（前景）
@@ -184,7 +180,7 @@ function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string
   // OSC 10：前景色查询
   terminal.parser.registerOscHandler(10, (data) => {
     if (data === '?' || data === '') {
-      const fg = terminal.options.theme?.foreground ?? '#d4d4d4';
+      const fg = terminal.options.theme?.foreground ?? FALLBACK_FG.dark;
       writeOscToPty(onQueryResponse, `10;${hexToRgbColon(fg)}\x07`);
       return true;
     }
@@ -194,7 +190,7 @@ function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string
   // OSC 11：背景色查询
   terminal.parser.registerOscHandler(11, (data) => {
     if (data === '?' || data === '') {
-      const bg = terminal.options.theme?.background ?? '#0d0d0d';
+      const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
       writeOscToPty(onQueryResponse, `11;${hexToRgbColon(bg)}\x07`);
       return true;
     }
@@ -204,7 +200,7 @@ function registerThemeQueries(terminal: Terminal, onQueryResponse: (data: string
   // CSI ? 2031 h：启用颜色方案报告 → 主动上报 997
   terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
     if (params.length === 1 && params[0] === 2031) {
-      const bg = terminal.options.theme?.background ?? '#0d0d0d';
+      const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
       const scheme = isDarkBackground(bg) ? 1 : 2;
       onQueryResponse(`\x1b[?997;${scheme}n`);
       return true;
@@ -368,7 +364,7 @@ export function createTerminal(
        * 当用户输入回显，在提示符后显示为乱码。
        */
       if (oscTheme) {
-        const bg = terminal.options.theme?.background ?? (theme === 'dark' ? '#0d0d0d' : '#ffffff');
+        const bg = terminal.options.theme?.background ?? FALLBACK_BG[theme];
         const scheme: 1 | 2 = isDarkBackground(bg) ? 1 : 2;
         if (scheme !== lastScheme) {
           lastScheme = scheme;

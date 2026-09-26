@@ -9,6 +9,13 @@ import { join } from 'node:path';
 import { IpcRouter } from './ipc/router';
 import { IPC } from './ipc/protocol';
 
+/**
+ * 窗口底色，需与渲染侧深色主题的 --bg-app 一致。
+ * 渲染进程首次绘制前会先露出这层底色，不一致会闪一下旧配色。
+ *
+ * 浮动面板布局下 --bg-app 是"面板之间的缝隙色"，也是标题栏底色，
+ * 因此这个值同时决定了原生窗口按钮条的颜色是否与标题栏齐平。
+ */
 const APP_BACKGROUND = '#0d0d0d';
 const DEFAULT_WINDOW = { width: 1280, height: 800, minWidth: 720, minHeight: 480 };
 
@@ -22,8 +29,11 @@ const TITLEBAR_HEIGHT = 36;
  */
 const APP_ICON = join(__dirname, '../../build/icon.png');
 
-/** 标题栏叠加层配色：跟随应用主题，由渲染侧通过 IPC 更新。 */
-let overlayColors = { color: '#8a8a8a', symbolColor: '#1a1a1a' };
+/**
+ * 标题栏叠加层配色：跟随应用主题，由渲染侧通过 IPC 更新。
+ * 初值与渲染侧浅色主题的 --bg-app 一致（深色主题会在渲染后立刻同步覆盖）。
+ */
+let overlayColors = { color: '#fafafd', symbolColor: '#3b3b3b' };
 
 let router: IpcRouter;
 /** 主窗口引用，供标题栏配色更新使用。 */

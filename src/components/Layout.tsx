@@ -1,8 +1,10 @@
 /**
- * Layout —— 主布局：左侧栏 + 右主区（各自有顶部栏）+ 设置弹窗 + 通知浮层。
+ * Layout —— 主布局：窗口标题栏 + 左侧栏卡片 + 主区卡片 + 设置弹窗 + 通知浮层。
  *
- * 左右两栏完全独立，中间由侧栏的右边框分隔，
- * 没有横跨整宽的标题栏。侧栏顶部是品牌区，主区顶部是主题切换。
+ * 采用浮动面板布局：
+ * - 最上方是一条横贯整个窗口宽度的 TitleBar，承载应用图标/名字/折叠按钮/主题切换；
+ * - 下方 .layout__body 里，侧栏与主区各自是一块带圆角的独立卡片，
+ *   卡片之间以及与窗口边缘之间留出 --panel-gap 的间隙，露出窗口底色。
  *
  * 主区内容由 layoutStore 的**视图**驱动：
  * - 未选中任何智能体（focusedPaneId 为 null）→ 初始引导，不自动展示布局；
@@ -98,10 +100,11 @@ export function Layout() {
 
   return (
     <div className={`layout ${isMac ? 'layout--mac' : ''}`}>
+      {/* 窗口标题栏：横贯整宽，位于所有面板之上 */}
+      <TitleBar />
       <div className="layout__body">
         <Sidebar />
         <main className="layout__main">
-          <TitleBar />
           {showingViews && views.length > 1 && (
             <ViewTabs views={views} activeViewId={activeView?.id ?? null} />
           )}

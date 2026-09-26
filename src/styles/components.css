@@ -80,6 +80,16 @@
 }
 
 /* ===== Layout ===== */
+/*
+ * 浮动面板布局。
+ *
+ * 整个窗口是一块统一的底色（--bg-app），它只在**面板之间的缝隙**和窗口
+ * 四周出现，不直接承载内容。侧栏与主区各自是一块带圆角的独立卡片，
+ * 浮在这层底色上，彼此之间留出 --panel-gap 的间隙。
+ *
+ * 因此这里给 .layout__body 加内边距（形成窗口四周的缝），
+ * 并用 gap 形成两栏之间的缝；卡片圆角与底色由各自的子元素负责。
+ */
 .layout {
   display: flex;
   flex-direction: column;
@@ -92,30 +102,50 @@
   flex: 1;
   display: flex;
   min-height: 0;
+  gap: var(--panel-gap);
+  padding: var(--panel-gap);
 }
 
+/*
+ * 主区卡片：顶部栏 + 标签栏 + 内容区合成**一整块**圆角面板。
+ *
+ * 关键是三者同属一个卡片、共享同一个圆角与裁剪边界，
+ * 而不是各自独立成块——这样顶栏、标签栏、终端才读作"同一个编辑器"，
+ * 与侧栏卡片形成清晰的两块结构。
+ */
 .layout__main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-app);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+  /* 让顶栏/标签栏的方角被卡片圆角裁掉 */
+  overflow: hidden;
 }
 
-/* 主区内容（终端/空状态），占满顶部栏以下的剩余空间 */
+/*
+ * 主区内容（终端/空状态），占满顶部栏以下的剩余空间。
+ * 底色比卡片再亮一档，形成"标题条 / 内容区"的层次。
+ */
 .layout__content {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
+  background: var(--bg-surface-2);
+  overflow: hidden;
 }
 
-/* ===== 主区域顶部栏（右栏专用）===== */
+/* ===== 窗口标题栏（横贯整宽，位于所有面板之上）===== */
 /*
  * 完全自定义的顶部栏：不使用系统默认标题栏样式，也不展示任何标题文字。
- * 左右两栏完全独立、各自有顶部区。
- * 本栏只覆盖右栏，左侧品牌区在 Sidebar 内，二者由侧栏右边框分隔。
+ * 它是**唯一**承载应用标识与侧栏折叠按钮的地方——
+ * 侧栏/项目列表是下方一块独立卡片，不包含品牌行。
+ *
+ * 整条可拖拽窗口，内部交互控件需显式 no-drag。
  * 高度需与主进程 TITLEBAR_HEIGHT 一致。
  */
 .topbar {
@@ -123,12 +153,66 @@
   align-items: center;
   height: var(--titlebar-height);
   flex-shrink: 0;
+  /*
+   * 标题栏与窗口底色同色（--bg-app）：它本身就是"面板之间的缝隙"那条带，
+   * 卡片浮在它下方，因此标题栏读作背景的一部分，而不是又一块面板。
+   */
   background: var(--bg-app);
+  /*
+   * 左内边距与下方卡片的左边缘对齐（.layout__body 的 padding + 卡片内边距），
+   * 让品牌图标与侧栏卡片的左缘处在同一条竖线上。
+   * macOS 另需为交通灯让位，故叠加 --mac-traffic-light-inset。
+   */
+  padding-left: calc(var(--panel-gap) + 8px + var(--mac-traffic-light-inset));
   -webkit-app-region: drag;
   user-select: none;
 }
 
-/* 空白拖拽区：撑满左侧，供拖动窗口使用 */
+/* 品牌区：应用图标 + 应用名 */
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.topbar__brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.topbar__brand-mark svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.topbar__brand-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * 折叠/展开按钮：紧跟在应用名之后，收起/展开两态共用同一个按钮，
+ * 因此位置恒定、不随状态跳动。
+ * 父级是 drag 区，必须显式 no-drag，否则点击会被吞掉。
+ */
+.topbar__toggle {
+  width: 26px;
+  height: 26px;
+  margin-left: 4px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+/* 空白拖拽区：撑满中间剩余空间，供拖动窗口使用 */
 .topbar__drag-region {
   flex: 1;
   min-width: 0;
@@ -147,7 +231,7 @@
 /*
  * macOS 右侧没有原生窗口按钮，占位块被隐藏（见下），
  * 只剩 4px 内边距会让主题切换贴着窗口右边缘。
- * 这里补到与左栏品牌区对称的 12px。
+ * 这里补到与左侧对称的 12px。
  */
 .layout--mac .topbar__actions {
   padding-right: 12px;
@@ -205,74 +289,44 @@
 .settings-nav__icon svg,
 .settings-nav__search-icon svg,
 .settings-content__close svg,
-.sidebar__brand-mark svg {
+.topbar__brand-mark svg {
   display: block;
   flex-shrink: 0;
 }
 
 /* ===== Sidebar ===== */
+/*
+ * 侧栏 = 浮动面板布局里的**左卡片**。
+ *
+ * 与主区卡片并列，二者之间由 .layout__body 的 gap 形成缝隙，
+ * 因此这里不再需要右边框/分隔线——缝隙本身就是分隔。
+ *
+ * 注意：侧栏不含品牌行。应用图标/名字/折叠按钮都在 TitleBar 上，
+ * 这里从「项目」分区标题开始。
+ */
 .sidebar {
   width: 260px;
   min-width: 220px;
   background: var(--bg-surface);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+  /* 裁掉分区标题与列表的方角，保证卡片圆角干净 */
   overflow: hidden;
 }
 
 /*
- * 品牌区：高度与右栏 .topbar 一致，整块可拖拽窗口（无交互控件）。
- * 侧栏内部不使用分割线，分区靠留白与背景层次区分。
- */
-.sidebar__brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: var(--titlebar-height);
-  /* 左侧额外留出 macOS 交通灯按钮的位置（非 mac 时为 0） */
-  padding: 0 12px 0 calc(12px + var(--mac-traffic-light-inset));
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-  user-select: none;
-}
-
-/*
- * 品牌标记：与应用图标同造型（黑底圆角 + 绿箭头）。
+ * 应用图标：与应用图标同造型（黑底圆角 + 绿箭头）。
  *
- * 图标底色 #171717 恰好等于深色主题的 --bg-surface，直接贴上去会「隐形」，
+ * 图标底色 #171717 与深色主题的卡片色接近，直接贴上去容易「隐形」，
  * 看不出是个图标、只像浮着的绿色箭头。这里加一圈极淡描边勾出圆角轮廓，
  * 让它在浅色/深色背景下都读得出「一块图标」。
- * 描边用 currentColor 的透明度，因此两种主题下都能自适应。
+ * 描边用固定半透明灰，两种主题下都能自适应。
  */
-.sidebar__brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.sidebar__brand-mark svg {
+.topbar__brand-mark svg {
   border-radius: 4px;
   box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
-}
-
-.sidebar__brand-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  line-height: 1.15;
-}
-
-.sidebar__brand-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .sidebar__header {
@@ -679,45 +733,74 @@
   }
 }
 
-/* ===== TerminalPane ===== */
 /* ===== 视图标签栏（侧栏新建 agent 会新开一个独立视图） ===== */
+/*
+ * 视图标签栏。
+ *
+ *   标签栏底      #fafafd   ← 标签带**上方**那条
+ *   标签带        #eaeaea   ← 标签所在的一整条连续色带
+ *   选中标签      #ffffff   ← 比色带亮，圆角块
+ *   未选中标签    #eaeaea   ← **与色带完全同色**，因此看不出块，只看到文字
+ *   内容区        #ffffff
+ *
+ * 三个要点：
+ * 1. 标签之间**没有间隙**（gap: 0），标签带是一条连续色带；
+ * 2. 未选中标签的底色 = 标签带底色，所以它们"融"进带子里，
+ * 3. 选中标签是圆角块，且圆角在带子内部，不破坏带的连续性。
+ *
+ * 标签按数量等分可用宽度，**永不横向滚动**（见 .view-tab 的 flex 规则）。
+ */
 .view-tabs {
   display: flex;
-  align-items: stretch;
-  gap: 2px;
+  align-items: flex-end;
+  /* 无间隙：标签带必须连续，选中标签靠底色而非间距区分 */
+  gap: 0;
   flex-shrink: 0;
-  padding: 4px 8px 0;
+  /* 防止标签内容把整条栏顶宽（column flex 下的默认 min-width: auto） */
+  min-width: 0;
+  /* 无左右内边距：标签带要顶到主区卡片两侧，与内容区同宽 */
+  padding: 0;
+  height: calc(var(--titlebar-height) + 1px);
   /*
-   * 横向可滚动；纵向必须显式 hidden——只写 overflow-x: auto 时
-   * 另一轴会变成 auto，选中标签顶部那 2px 强调线会被裁掉。
+   * 横向必须 hidden：标签靠 flex 收缩适配宽度，不需要滚动条。
+   * 纵向一并 hidden，避免圆角被另一轴的 auto 影响。
    */
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-app);
+  overflow: hidden;
+  /* 标签带底色：与未选中标签同色，两者融为一体 */
+  background: var(--view-tab-inactive-bg);
 }
 
+/*
+ * 标签：自适应收窄的关键。
+ *
+ * flex: 1 1 0 —— 所有标签**等分**可用宽度，数量越多每个越窄，
+ * 因此无论开多少标签都能一屏显示完，不需要横向滚动。
+ * 用 basis 0（而不是 auto）才能让它们真正等宽：按内容定基准的话，
+ * 名字长的标签会明显更宽，视觉上参差不齐。
+ *
+ * min-width: 0 是必须的，否则 flex 项的默认 min-width: auto 会以内容
+ * 宽度为下限，标签无法压到基准宽度以下，数量一多就溢出。
+ * max-width 限制单个标签不至于过宽（只开一两个时不会拉满整条栏）。
+ */
 .view-tab {
   display: flex;
   align-items: center;
-  /* ::after 的定位基准 */
-  position: relative;
-  /*
-   * 固定最小宽度：默认名是纯数字（"1"、"2"），
-   * 按内容自适应会让标签窄得像个小方块，既难点中也不好看。
-   */
-  min-width: 140px;
+  flex: 1 1 0;
+  min-width: 0;
   max-width: 220px;
+  /* 与标签带等高：无间隙时标签要填满带子 */
+  height: 100%;
+  border: none;
+  /* 未选中标签 = 标签带底色，视觉上"消失"成带子的一部分 */
+  background: transparent;
+  color: var(--text-muted);
   /*
-   * 未选中态也要有实体感：只靠文字颜色区分时，
-   * 标签会跟标签栏背景糊在一起，看不出是「可点的标签」。
-   * 用浅一档的底色 + 完整描边勾出形状，选中态再抬到更亮的层次。
+   * 只有顶部两角圆角。
+   * 标签带底边就是内容区的上边界，底部圆角会在带子下缘切出缺口，
+   * 破坏"带子连续、选中块浮起"的观感。
    */
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  background: var(--bg-surface-2);
-  color: var(--text-secondary);
+  border-radius: 6px 6px 0 0;
+  transition: background-color 0.1s ease, color 0.1s ease;
 }
 
 .view-tab:hover {
@@ -726,23 +809,9 @@
 }
 
 .view-tab.is-active {
+  /* 比标签带亮一档的圆角块 —— 与下方内容区同色，读作"与内容连成一体" */
   background: var(--view-tab-active-bg);
-  border-color: var(--border-strong);
   color: var(--text-primary);
-}
-
-/*
- * 选中标签与下方内容区连成一体：用与标签同色的 1px 覆盖层盖住
- * 标签栏的分隔线。贴在标签底边内侧，避免被 overflow-y 裁掉。
- */
-.view-tab.is-active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: var(--view-tab-active-bg);
 }
 
 .view-tab__label {
@@ -752,12 +821,12 @@
   /* 撑满标签宽度，让整块区域都可点击（而不是只有文字那么宽） */
   flex: 1;
   min-width: 0;
-  height: 32px;
-  padding: 0 4px 0 12px;
+  height: 100%;
+  padding: 0 4px 0 10px;
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-family: inherit;
   cursor: pointer;
 }
@@ -774,13 +843,26 @@
   flex-shrink: 0;
   padding: 0 5px;
   border-radius: 8px;
-  /* 未选中标签底色已是 --bg-surface-2，这里要再深一档才看得出来 */
+  /*
+   * 标签底已是一层实色（未选中 = 带色，选中 = 更亮一档），
+   * 徽标要比标签底再深一档才看得出，故取 --bg-active。
+   */
   background: var(--bg-active);
   color: var(--text-secondary);
   font-size: 10px;
-  line-height: 14px;
+  line-height: 15px;
 }
 
+/*
+ * 关闭按钮—— **只有选中标签常驻显示**，
+ * 未选中标签平时不显示（悬停时才浮出），避免一排标签挂满 × 显得嘈杂。
+ * 用 opacity 而非 display：显隐时标签宽度不变，不会引起整条栏跳动。
+ *
+ * 尺寸从 20x20 提到 24x24（图标 11px → 14px）：
+ * 标签栏高度是 36px，20px 的按钮配 11px 的 × 显得又小又难点，
+ * 尤其是标签按数量自适应收窄后，关闭按钮反而成了最费眼的元素。
+ * 24px 仍在 36px 标签内留有上下各 6px 余量，不会顶满。
+ */
 .view-tab__close {
   display: inline-flex;
   align-items: center;
@@ -788,12 +870,19 @@
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  margin-right: 6px;
+  margin-right: 4px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, background-color 0.1s ease;
+}
+
+.view-tab.is-active .view-tab__close,
+.view-tab:hover .view-tab__close {
+  opacity: 1;
 }
 
 .view-tab__close:hover {
@@ -801,17 +890,17 @@
   color: var(--text-primary);
 }
 
-/* 就地重命名输入框：宽度贴近标签本身，避免切换时标签栏跳动 */
+/* 就地重命名输入框：高度与标签一致，避免切换时标签栏跳动 */
 .view-tab__rename {
-  width: 140px;
-  height: 24px;
-  margin: 0 6px;
+  width: 120px;
+  height: 22px;
+  margin: 0 4px;
   padding: 0 6px;
-  border: 1px solid var(--accent, var(--status-working));
+  border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  background: var(--bg-app);
+  background: var(--bg-surface-2);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 13px;
   font-family: inherit;
   outline: none;
 }
@@ -834,23 +923,69 @@
   overflow: hidden;
 }
 
+/*
+ * 分屏分隔条。
+ *
+ * 这里**不能**用 --bg-app（面板缝隙色）：终端 pane 的底色是 --terminal-bg，
+ * 而深色下 --terminal-bg 就是 --bg-app（#0d0d0d），两者同色 →
+ * 分隔条与两侧终端完全融在一起，看起来"分屏中间没有分隔"。
+ *
+ * 结构上分两层：
+ * - 元素本身宽/高 4px（DIVIDER_SIZE），是**拖拽热区**，背景透明；
+ * - ::before 在热区正中画一条 1px 的 --border 细线，才是**可见的分隔**。
+ *
+ * 不直接把 4px 整块涂成 --border：那会变成一条粗色带，
+ * 在浅色主题（#e5e5e5 vs 白底）下尤其笨重。
+ */
 .split-divider {
+  position: absolute;
+  background: transparent;
+  z-index: 5;
+}
+
+/* 热区正中的细线：横向分隔条画竖线，纵向分隔条画横线 */
+.split-divider::before {
+  content: '';
   position: absolute;
   background: var(--border);
   transition: background-color 0.12s ease;
-  z-index: 5;
 }
 
 .split-divider--row {
   cursor: col-resize;
 }
 
+.split-divider--row::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
 .split-divider--column {
   cursor: row-resize;
 }
 
-.split-divider:hover {
+.split-divider--column::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+/* 悬停：细线变强调色并加粗到 2px，明确提示可拖拽 */
+.split-divider:hover::before {
   background: var(--accent);
+}
+
+.split-divider--row:hover::before {
+  width: 2px;
+}
+
+.split-divider--column:hover::before {
+  height: 2px;
 }
 
 .pane-cell {
@@ -863,22 +998,47 @@
   overflow: hidden;
 }
 
-.pane-cell--focused {
-  /* 聚焦列顶部加一条高亮，弱化但可辨识 */
-  box-shadow: inset 0 2px 0 var(--accent, var(--status-working));
+/*
+ * 聚焦格：**标题栏底色与分割线都不变**，只把标题文字提亮一档。
+ *
+ * 这段样式换过几版，记录一下被否掉的原因：
+ *
+ * 1) --accent 勾一整圈聚焦框 —— 终端 pane 面积很大，一整圈饱和蓝
+ *    绕在四周非常抢眼，读起来像"报错/警告"。且用 inset box-shadow 时，
+ *    子元素 .pane-cell__header 是 position: relative 且带不透明底色，
+ *    会盖住阴影顶边，只剩三条边的断头 U 形。
+ * 2) 标题栏下边框换成 --border-strong —— 那条线横跨整个 pane，
+ *    加深后视觉上变成"这条分割线更粗"，而不是"这个 pane 被聚焦"。
+ *    分割线的粗细深浅应当全局一致，不该承载聚焦语义。
+ * 3) 标题栏底色换成 --bg-hover —— 一整条 35px 高的色带横在终端上方，
+ *    比 2) 更抢眼，直接改变了 pane 的观感。
+ *
+ * 结论：pane 标题栏是承载"身份信息"的固定部件，底色和边框都应当
+ * 稳定不变；焦点只用**文字颜色**这一处最小改动来表达。
+ */
+.pane-cell--focused > .pane-cell__header .pane-cell__label {
+  color: var(--text-primary);
 }
 
+/*
+ * pane 标题栏
+ *
+ * 底色取 --terminal-bg（终端底色）而非面板色：
+ * 标题栏与它下方的终端同属一个 pane，必须同色才不会在
+ * 「标题 / 内容」交界处露出一条色带；两层的区分交给下边框和字色。
+ * 标题用小字号大写字距，与侧栏分区标题保持同一套排版语言。
+ */
 .pane-cell__header {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 34px;
+  height: 35px;
   flex-shrink: 0;
-  padding: 0 8px 0 12px;
+  padding: 0 6px 0 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-surface-2);
+  background: var(--terminal-bg);
   cursor: pointer;
   user-select: none;
 }
@@ -886,9 +1046,11 @@
 .pane-cell__label {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
-  color: var(--text-primary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -990,7 +1152,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-app);
+  /* 空位在内容区之内，用内容底色；靠虚线/提示文字表达"待填充" */
+  background: var(--bg-surface-2);
 }
 
 .empty-slot__header {
@@ -1059,7 +1222,8 @@
   width: 100%;
   height: 100%;
   border: 0;
-  background: var(--bg-app);
+  /* webview 占据内容区，底色与内容区一致，避免加载瞬间闪出深色缝隙 */
+  background: var(--bg-surface-2);
 }
 
 .web-pane__loading {
@@ -1192,7 +1356,7 @@
   background-color: var(--terminal-bg);
 }
 
-/* 滚动条在浅色/深色下都保持低对比，符合 VSCode 的克制风格 */
+/* 滚动条在浅色/深色下都保持低对比 */
 .terminal-pane__body .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
@@ -1296,66 +1460,18 @@
   flex-shrink: 0;
 }
 
-/* ===== 侧栏：收起态（VSCode 活动栏风格的图标栏）===== */
+/* ===== 侧栏：收起态===== */
+/*
+ * 收起态仍是**左卡片**，只是变窄。圆角/描边/底色沿用 .sidebar，
+ * 保持收起前后是同一块面板在变宽变窄，而不是换了个控件。
+ *
+ * 展开按钮不在这里——它常驻 TitleBar，收起/展开两态位置恒定，
+ * 因此不再需要让按钮脱离 48px 宽度的绝对定位技巧。
+ */
 .sidebar--collapsed {
   width: 48px;
   min-width: 48px;
   align-items: center;
-}
-
-/*
- * macOS 收起态必须放开裁剪：展开按钮被绝对定位到交通灯右侧（见下），
- * 已越出 48px 的图标栏。而 .sidebar 是 overflow: hidden，不放开的话
- * 按钮会被直接裁掉、完全看不见。
- *
- * 两轴一起用 visible：只写 overflow-x: visible 时，与 overflow-y: hidden
- * 组合会被浏览器强制转成 auto（规范要求另一轴不能是 visible），
- * 结果多出一条滚动条。收起态内容本身不滚动，整体放开即可。
- */
-.layout--mac .sidebar--collapsed {
-  overflow: visible;
-}
-
-/*
- * 顶部条：与右栏顶部栏等高的拖拽区，内嵌展开按钮。
- * 父级 drag / 子级 no-drag 是自绘标题栏放交互控件的标准模式
- * （同 .topbar → .topbar__actions）：拖拽区会吞掉点击，按钮必须显式 no-drag。
- */
-.sidebar__rail-top {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: var(--titlebar-height);
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-  user-select: none;
-}
-
-/*
- * macOS：交通灯约占 78px，而图标栏只有 48px 宽——按钮若留在栏内，
- * 无论居中还是右对齐都必然压在红黄绿下面。
- *
- * 因此这里让按钮**脱离图标栏的宽度限制**，用绝对定位把它摆到交通灯
- * 右侧的空白处。图标栏本身保持 48px 不变，不因让位而变宽。
- */
-.layout--mac .sidebar__rail-top {
-  justify-content: flex-start;
-}
-
-.layout--mac .sidebar__rail-toggle {
-  position: absolute;
-  left: calc(var(--mac-traffic-light-inset) + 9px);
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-/* 展开按钮：明确的图标入口（IconPanelLeft），可交互，不参与拖拽 */
-.sidebar__rail-toggle {
-  width: 30px;
-  height: 30px;
-  -webkit-app-region: no-drag;
 }
 
 .sidebar__rail-list {
@@ -1366,8 +1482,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 0;
+  gap: 2px;
+  padding: 6px 0;
 }
 
 .sidebar__rail-footer {
@@ -1375,18 +1491,40 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  padding: 8px 0;
+  padding: 6px 0;
   flex-shrink: 0;
 }
 
+/*
+ * 活动栏选中态：用圆角底色块表示，不再画左边缘的竖线。
+ *
+ * 竖线（--accent）在浅色下是一条饱和蓝，贴在卡片左边缘非常扎眼，
+ * 而且栏宽只有 48px，一条 2px 蓝线几乎顶满图标左侧的留白，
+ * 看起来像"边框没画干净"而不是选中指示。
+ *
+ * 项目图标三档圆角底色：
+ *   未选中 --bg-subtle（极浅，给图标一点承托）
+ *   悬停   --bg-hover
+ *   选中   --bg-active（最深）
+ * 选中态再叠加字色提亮，双重表达且不引入额外颜色。
+ *
+ * 底部的设置按钮**不加**未选中底色：它是一枚功能性图标按钮，
+ * 与项目列表不是一类东西，常驻底色会让它读起来像"已选中"。
+ */
 .sidebar__rail-button {
-  width: 30px;
-  height: 30px;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  transition: background-color 0.12s ease;
+}
+
+.sidebar__rail-button:hover {
+  background: var(--bg-hover);
 }
 
 .sidebar__rail-button.is-active {
   background: var(--bg-active);
-  color: var(--text-primary);
 }
 
 .rail-project {
@@ -1398,7 +1536,7 @@
   justify-content: center;
   border: none;
   border-radius: var(--radius-md);
-  background: transparent;
+  background: var(--bg-subtle);
   cursor: pointer;
   flex-shrink: 0;
   transition: background-color 0.12s ease;
@@ -1408,6 +1546,7 @@
   background: var(--bg-hover);
 }
 
+/* 选中：最深一档的圆角底色块，字色同步提亮 */
 .rail-project.is-active {
   background: var(--bg-active);
 }
@@ -1423,7 +1562,11 @@
   color: var(--text-primary);
 }
 
-/* 状态点贴在徽标右下角，收起态下仍能一眼看出是否有 agent 在等待输入 */
+/*
+ * 状态点贴在徽标右下角，收起态下仍能一眼看出是否有 agent 在等待输入。
+ * 描边取 --bg-subtle（即图标块自身的底色）作为"挖空"环，
+ * 把圆点从徽标笔画上分离出来；取 --bg-app 会与块内底色对不上。
+ */
 .rail-project__dot {
   position: absolute;
   right: 3px;
@@ -1431,7 +1574,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  border: 1.5px solid var(--bg-surface);
+  border: 1.5px solid var(--bg-subtle);
 }
 
 .rail-project__dot.is-idle {
@@ -1864,7 +2007,8 @@
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-app);
+  /* 输入框用"内嵌"底色：比所在面板更深，与浮起的卡片形成反向层次 */
+  background: var(--bg-inset);
   color: var(--text-primary);
   font-size: 12.5px;
   font-family: var(--font-mono);

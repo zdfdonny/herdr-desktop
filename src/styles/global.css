@@ -11,89 +11,157 @@
  */
 
 /* ===== 深色主题（默认） ===== */
+/*
+ *   editor.background        #1f1f1f
+ *   sideBar.background       #181818
+ *   activityBar.background    #181818
+ *   titleBar.activeBackground #181818
+ *   editorGroupHeader.tabsBackground #181818
+ *   tab.activeBackground     #1f1f1f（与编辑器同色，故选中标签与内容连成一体）
+ *   tab.inactiveBackground   #181818
+ *   panel.border / contrastBorder #2b2b2b
+ *   focusBorder              #0078d4
+ */
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  /* 背景层次 */
+  /*
+   * 背景层次
+   *
+   * 整个窗口是一块**统一的深色底**（--bg-app），它只作为面板之间的缝隙
+   * 与页面背景出现，不直接承载内容。侧栏、编辑区、面板各自是一块
+   * 带圆角的独立卡片，浮在这层底色之上，彼此留出间隙。
+   *
+   * 因此 --bg-app 要**比面板更深**，卡片才能"浮"起来；
+   * --bg-surface 才是面板本体（侧栏 / 标题栏 / 标签栏），
+   * --bg-surface-2 是内容区（编辑器 / 终端），比面板再亮一档。
+   */
   --bg-app: #0d0d0d;
-  --bg-surface: #171717;
+  --bg-surface: #181818;
   --bg-surface-2: #1f1f1f;
-  --bg-elevated: #232323;
-  --bg-hover: #262626;
-  --bg-active: #2f2f2f;
-  --bg-inset: #0a0a0a;
+  --bg-elevated: #252526;
+  --bg-hover: #2a2d2e;
+  --bg-active: #37373d;
+  --bg-inset: #1f1f1f;
+  /*
+   * 未选中项的极浅底色，用于活动栏图标这类"需要一点存在感、
+   * 但又不该抢注意力"的常驻小控件。
+   * 比 --bg-surface(#181818) 亮 10 级、比 --bg-hover 暗 20 级，
+   * 形成 未选中 < 悬停 < 选中 的清晰三档。
+   */
+  --bg-subtle: #222222;
 
   /*
-   * 终端背景 —— 参考 VSCode 的 terminal.background：
-   * 默认跟随编辑器（此处即主区域）背景，保证终端与 shell 区域浑然一体。
+   * 终端背景。
+   *
+   * **不能**简单跟随 --bg-app 或 --bg-surface-2：
+   * 全屏 TUI（opencode / claude 等）会自己铺一层底色，且只覆盖字符网格
+   * 所占的矩形——右侧不足一列的余量、底部不足一行的余量由容器底色露出。
+   * 因此终端底色必须**贴近 TUI 自绘的那个色**，否则网格外会露出异色边条。
+   *
+   * 深色下 TUI 普遍铺接近纯黑，故取 #0d0d0d（= --bg-app）。
+   * 浅色下 TUI 普遍铺纯白，故取 #ffffff（= --bg-surface-2，而非发灰的 --bg-app）。
+   * 两边各自取「TUI 实际会画的颜色」，而不是机械地跟随某一个令牌。
    */
-  --terminal-bg: var(--bg-app);
-  --terminal-fg: #d4d4d4;
+  --terminal-bg: #0d0d0d;
+  --terminal-fg: #cccccc;
 
-  /* 边框 */
-  --border: #2a2a2a;
-  --border-subtle: #1f1f1f;
-  --border-strong: #3d3d3d;
+  /* 边框：比原来更含蓄 */
+  --border: #2b2b2b;
+  --border-subtle: #232323;
+  --border-strong: #3c3c3c;
 
-  /* 文本 */
-  --text-primary: #ececec;
-  --text-secondary: #a3a3a3;
-  --text-muted: #737373;
-  --text-inverse: #0d0d0d;
+  /* 文本：次要 #9d9d9d */
+  --text-primary: #cccccc;
+  --text-secondary: #9d9d9d;
+  --text-muted: #6e7681;
+  --text-inverse: #1f1f1f;
 
   /* 状态色（低饱和） */
   --status-working: #eab308;
   --status-blocked: #f87171;
-  --status-idle: #a3a3a3;
+  --status-idle: #9d9d9d;
   --status-done: #4ade80;
-  --status-unknown: #737373;
+  --status-unknown: #6e7681;
 
-  /* 强调 */
-  --accent: #ffffff;
-  --accent-hover: #d4d4d4;
-  --accent-subtle: rgba(255, 255, 255, 0.08);
+  /* 强调按钮/焦点统一用它 */
+  --accent: #0078d4;
+  --accent-hover: #026ec1;
+  --accent-subtle: rgba(0, 120, 212, 0.15);
 
   /* 阴影 */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
 
   /*
-   * 选中视图标签的底色。
+   * 视图标签配色 —— 结构同浅色：未选中 = 标签带同色；选中 = 浮起的圆角块。
    *
-   * 深色主题下不能直接复用 --bg-elevated（#232323）：它与未选中的
-   * --bg-surface-2（#1f1f1f）只差 4 级，在深色背景上几乎看不出区别。
-   * 这里特意用比未选中**明显更亮**的一档，让选中标签跳出来。
+   * 深色下人眼对暗部差异不敏感，明暗差必须比浅色拉得更大。
+   *
+   * 选中标签取 --terminal-bg 的 #0d0d0d，与下方智能体背景完全一致：
+   * 浅色那边同样是"选中标签 == 内容区"（都是 #ffffff），
+   * 两个主题的映射关系才对称 —— 选中标签读作"与内容连成一体"，
+   * 而不是一块悬在带子上的深色补丁。
+   *
+   * 曾取过 #3a3a3a，虽然比带子亮 34 级、足够醒目，
+   * 但与智能体背景 #0d0d0d 差了 45 级，在标签与内容之间
+   * 切出一条突兀的深色横块，实测反馈要求"和智能体背景一致"。
+   *
+   * 带子取 #181818（比内容区亮 11 级，读作一条独立的横带），
+   * 选中标签比带子暗 11 级 —— 靠"与内容同色"而非"更亮"来突出。
+   * 未选中标签仍与带子同色，保持"只有选中那块浮起"的观感。
    */
-  --view-tab-active-bg: #3d3d3d;
+  --view-tab-active-bg: #0d0d0d;
+  --view-tab-inactive-bg: #181818;
 }
 
 /* ===== 浅色主题 ===== */
+/*
+ * 色值取自截图实测：
+ *   titleBar/activityBar/sideBar 背景 #fafafd
+ *   editor.background            #ffffff
+ *   tab strip band               #eaeaea
+ *   tab.activeBackground         #ffffff
+ *   分隔线                        #e4e5e6
+ *   focusBorder                  #005fb8
+ *
+ * "窗口底色"是带一点冷调的 #fafafd，不是纯灰 #f8f8f8，
+ * 也不是更深的 #efefef —— 这是浅色主题观感的关键。
+ */
 :root[data-theme='light'] {
   color-scheme: light;
 
-  /* 背景层次 */
-  --bg-app: #ffffff;
-  --bg-surface: #fafafa;
-  --bg-surface-2: #f4f4f5;
+  /*
+   * 背景层次 —— 同深色：--bg-app 是面板之间的缝隙底色（比面板更深），
+   * 侧栏/编辑区各自是浮在其上的圆角卡片。
+   *
+   * 共用的窗口底色。面板本体 --bg-surface 用纯白 #ffffff，
+   * 于是"白卡片浮在冷白底布上"，层次靠明度差 + 圆角 + 边框建立。
+   */
+  --bg-app: #fafafd;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #ffffff;
   --bg-elevated: #ffffff;
-  --bg-hover: #f0f0f0;
-  --bg-active: #e8e8e8;
-  --bg-inset: #f7f7f7;
+  --bg-hover: #e8e8ea;
+  --bg-active: #d6d6d8;
+  --bg-inset: #ffffff;
+  /* 未选中项的极浅底色（详见深色块注释）：比卡片 #ffffff 深 11 级 */
+  --bg-subtle: #f4f4f6;
 
-  /* 终端背景跟随主区域背景（VSCode terminal.background 行为） */
-  --terminal-bg: var(--bg-app);
-  --terminal-fg: #18181b;
+  /* 终端背景：浅色下 TUI 铺纯白，取 #ffffff（详见深色块注释） */
+  --terminal-bg: #ffffff;
+  --terminal-fg: #3b3b3b;
 
-  /* 边框 */
-  --border: #e4e4e7;
-  --border-subtle: #f0f0f0;
-  --border-strong: #d4d4d8;
+  /* 边框：分隔线#e4e5e6 */
+  --border: #e4e5e6;
+  --border-subtle: #ececec;
+  --border-strong: #cecece;
 
   /* 文本 */
-  --text-primary: #18181b;
-  --text-secondary: #52525b;
-  --text-muted: #a1a1aa;
+  --text-primary: #3b3b3b;
+  --text-secondary: #616161;
+  --text-muted: #8b8b8b;
   --text-inverse: #ffffff;
 
   /* 状态色（浅色下加深以保证对比度） */
@@ -103,17 +171,27 @@
   --status-done: #16a34a;
   --status-unknown: #a1a1aa;
 
-  /* 强调 */
-  --accent: #18181b;
-  --accent-hover: #3f3f46;
-  --accent-subtle: rgba(0, 0, 0, 0.05);
+  /* 浅色 focusBorder */
+  --accent: #005fb8;
+  --accent-hover: #0258a8;
+  --accent-subtle: rgba(0, 95, 184, 0.12);
 
   /* 阴影 */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
 
-  /* 选中视图标签底色：浅色下用纯白即可与 #f4f4f5 拉开 */
+  /*
+   * 视图标签配色
+   *
+   * 结构：未选中标签与"标签带"同色（#eaeaea），所以未选中标签
+   * 看不出块、只有文字；选中标签是 #ffffff 的圆角块，浮在带子上，
+   * 并与下方同为 #ffffff 的内容区连成一体。
+   *
+   * 因此 inactive 这个令牌同时承担两个角色：
+   *   1) 未选中标签的底色   2) 整条标签带的底色
+   */
   --view-tab-active-bg: #ffffff;
+  --view-tab-inactive-bg: #eaeaea;
 }
 
 /* ===== system 模式下按系统外观分配 ===== */
@@ -121,24 +199,26 @@
   :root[data-theme='system'] {
     color-scheme: light;
 
-    --bg-app: #ffffff;
-    --bg-surface: #fafafa;
-    --bg-surface-2: #f4f4f5;
+    /* 同 :root[data-theme='light']：窗口底色#fafafd，面板本体纯白 */
+    --bg-app: #fafafd;
+    --bg-surface: #ffffff;
+    --bg-surface-2: #ffffff;
     --bg-elevated: #ffffff;
-    --bg-hover: #f0f0f0;
-    --bg-active: #e8e8e8;
-    --bg-inset: #f7f7f7;
+    --bg-hover: #e8e8ea;
+    --bg-active: #d6d6d8;
+    --bg-inset: #ffffff;
+    --bg-subtle: #f4f4f6;
 
-    --terminal-bg: var(--bg-app);
-    --terminal-fg: #18181b;
+    --terminal-bg: #ffffff;
+    --terminal-fg: #3b3b3b;
 
-    --border: #e4e4e7;
-    --border-subtle: #f0f0f0;
-    --border-strong: #d4d4d8;
+    --border: #e4e5e6;
+    --border-subtle: #ececec;
+    --border-strong: #cecece;
 
-    --text-primary: #18181b;
-    --text-secondary: #52525b;
-    --text-muted: #a1a1aa;
+    --text-primary: #3b3b3b;
+    --text-secondary: #616161;
+    --text-muted: #8b8b8b;
     --text-inverse: #ffffff;
 
     --status-working: #ca8a04;
@@ -147,14 +227,15 @@
     --status-done: #16a34a;
     --status-unknown: #a1a1aa;
 
-    --accent: #18181b;
-    --accent-hover: #3f3f46;
-    --accent-subtle: rgba(0, 0, 0, 0.05);
+    --accent: #005fb8;
+    --accent-hover: #0258a8;
+    --accent-subtle: rgba(0, 95, 184, 0.12);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
 
     --view-tab-active-bg: #ffffff;
+    --view-tab-inactive-bg: #eaeaea;
   }
 }
 
@@ -162,40 +243,43 @@
   :root[data-theme='system'] {
     color-scheme: dark;
 
+    /* --bg-app 是面板缝隙底色，比面板更深；面板本体是 --bg-surface */
     --bg-app: #0d0d0d;
-    --bg-surface: #171717;
+    --bg-surface: #181818;
     --bg-surface-2: #1f1f1f;
-    --bg-elevated: #232323;
-    --bg-hover: #262626;
-    --bg-active: #2f2f2f;
-    --bg-inset: #0a0a0a;
+    --bg-elevated: #252526;
+    --bg-hover: #2a2d2e;
+    --bg-active: #37373d;
+    --bg-inset: #1f1f1f;
+    --bg-subtle: #222222;
 
-    --terminal-bg: var(--bg-app);
-    --terminal-fg: #d4d4d4;
+    --terminal-bg: #0d0d0d;
+    --terminal-fg: #cccccc;
 
-    --border: #2a2a2a;
-    --border-subtle: #1f1f1f;
-    --border-strong: #3d3d3d;
+    --border: #2b2b2b;
+    --border-subtle: #232323;
+    --border-strong: #3c3c3c;
 
-    --text-primary: #ececec;
-    --text-secondary: #a3a3a3;
-    --text-muted: #737373;
-    --text-inverse: #0d0d0d;
+    --text-primary: #cccccc;
+    --text-secondary: #9d9d9d;
+    --text-muted: #6e7681;
+    --text-inverse: #1f1f1f;
 
     --status-working: #eab308;
     --status-blocked: #f87171;
-    --status-idle: #a3a3a3;
+    --status-idle: #9d9d9d;
     --status-done: #4ade80;
-    --status-unknown: #737373;
+    --status-unknown: #6e7681;
 
-    --accent: #ffffff;
-    --accent-hover: #d4d4d4;
-    --accent-subtle: rgba(255, 255, 255, 0.08);
+    --accent: #0078d4;
+    --accent-hover: #026ec1;
+    --accent-subtle: rgba(0, 120, 212, 0.15);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
 
-    --view-tab-active-bg: #3d3d3d;
+    --view-tab-active-bg: #0d0d0d;
+    --view-tab-inactive-bg: #181818;
   }
 }
 
@@ -208,6 +292,16 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
+
+  /*
+   * 浮动面板布局的间隙。
+   *
+   * 侧栏、编辑区、下方面板做成彼此分离的圆角卡片，
+   * 卡片之间留一条露出窗口底色的缝。这个值同时用作：
+   * 卡片外边距、窗口四周内边距。
+   */
+  --panel-gap: 6px;
+  --panel-radius: 8px;
 
   /*
    * 自绘标题栏。
