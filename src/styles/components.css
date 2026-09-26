@@ -682,6 +682,32 @@
   flex-shrink: 0;
 }
 
+/*
+ * 停止态的重启按钮：与关闭按钮同尺寸同风格，但**常驻可见**。
+ *
+ * 与 .agent-row__close 的 hover 才显形不同——这是停止态唯一的恢复入口，
+ * 藏起来会让用户找不到；而且停止的行本身已压暗，再隐藏按钮就更不明显了。
+ */
+.agent-row__restart {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.agent-row__restart:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
 .agent-row:hover .agent-row__close {
   opacity: 1;
 }
@@ -701,6 +727,17 @@
 
 .agent-row--stopped .agent-row__name {
   color: var(--text-muted);
+}
+
+/*
+ * 重启按钮抵消整行的压暗。
+ *
+ * opacity 会作用于整棵子树，若不管，这个唯一的恢复入口也会跟着变淡、
+ * 看着像禁用态。这里用不透明度还原——注意只能补偿 opacity，
+ * 父级压暗叠加上来的视觉效果无法完全消除，但足以让它显得可点。
+ */
+.agent-row--stopped .agent-row__restart {
+  opacity: 1 / 0.55;
 }
 
 .agent-row__stopped-icon {
@@ -1407,20 +1444,6 @@
   color: var(--text-muted);
   margin-bottom: 10px;
   opacity: 0.6;
-}
-
-/* 图标版（如「重新启动」提示的播放符号）：对齐 SVG 而非文字字形 */
-.empty-state__logo--icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--bg-surface-2);
-  border: 1px solid var(--border);
-  font-size: 0;
-  opacity: 0.9;
 }
 
 .empty-state__title {

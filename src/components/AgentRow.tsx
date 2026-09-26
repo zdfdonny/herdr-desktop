@@ -10,9 +10,9 @@
 import type { ProjectGroupAgent } from '../stores/sessionStore';
 import { agentDisplayName } from '../stores/agentSort';
 import { StatusDot } from './StatusDot';
-import { IconPlay, IconClose } from './icons';
+import { IconPlay, IconClose, IconRestart } from './icons';
 import { useT } from '../i18n';
-import { focusPane, closePane } from '../ipc/client';
+import { focusPane, closePane, respawnPane } from '../ipc/client';
 import { useLayoutStore, viewOfPane } from '../stores/layoutStore';
 import { activateAndReviveView } from './viewActivation';
 
@@ -69,6 +69,27 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
       <div className="agent-row__body">
         <span className="agent-row__name">{displayName}</span>
       </div>
+      {/*
+       * 停止态的重启入口。
+       *
+       * 原先这个动作在主区域的「智能体已停止」整页提示里，那个页面已去掉，
+       * 入口移到这里——侧栏本来就列出了所有 agent，是更自然的起点。
+       * 只在停止时出现，运行中的行不显示（没有可重启的东西）。
+       */}
+      {!running && (
+        <button
+          type="button"
+          className="agent-row__restart"
+          onClick={(e) => {
+            e.stopPropagation();
+            respawnPane(agent.paneId);
+          }}
+          title={t('agent.restart')}
+          aria-label={t('agent.restart')}
+        >
+          <IconRestart size={12} />
+        </button>
+      )}
       <button
         type="button"
         className="agent-row__close"

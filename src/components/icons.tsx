@@ -371,6 +371,32 @@ export function IconPlay({ size = 16, className }: IconProps) {
 }
 
 /**
+ * 重启（顺时针箭头）。用于侧栏中已停止的 agent。
+ *
+ * 与 IconPlay 的分工：IconPlay 是「状态指示」（这个 agent 是停止的），
+ * 本图标是「动作按钮」（点击可重启），两者在侧栏里同时出现，需要区分。
+ */
+export function IconRestart({ size = 16, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+      <path d="M20 4v7h-7" />
+    </svg>
+  );
+}
+
+/**
  * 应用品牌标记 —— 与应用图标（build/icon.png）保持同一造型。
  *
  * 几何数据与 scripts/gen-icon.js 一一对应（同为 512 视口）：

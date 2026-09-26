@@ -40,6 +40,8 @@ export interface Messages {
     close: string;
     /** 恢复出的（进程已死的）agent 行的悬停提示。 */
     stopped: string;
+    /** 侧栏中已停止 agent 的重启按钮。 */
+    restart: string;
     /** 可用性探测进行中。 */
     probing: string;
     /** 没有探测到任何可用智能体。 */
@@ -50,12 +52,6 @@ export interface Messages {
     notifyDone: string;
   };
   pane: {
-    /** 停止态终端区域的主标题。 */
-    stoppedTitle: string;
-    /** 停止态终端区域的说明文字。 */
-    stoppedHint: string;
-    /** 重新启动按钮。 */
-    restart: string;
     /** Web pane 启动中的占位提示。 */
     webStarting: string;
     /** scrollback 搜索占位符。 */
@@ -183,16 +179,13 @@ const zhCN: Messages = {
     terminal: '终端',
     close: '关闭',
     stopped: '已停止 — 点击启动',
+    restart: '重新启动',
     probing: '正在检测…',
     noneInstalled: '没有可用的智能体',
     notifyBlocked: '「{name}」等待输入',
     notifyDone: '「{name}」已完成',
   },
   pane: {
-    stoppedTitle: '智能体已停止',
-    stoppedHint:
-      '应用重启后进程不会自动恢复。点击下方按钮，或在左侧列表中点击该智能体即可启动。',
-    restart: '重新启动',
     webStarting: '正在启动 DeepSeek Harness…',
     searchPlaceholder: '搜索终端历史',
     searchPrev: '上一个',
@@ -304,16 +297,13 @@ const en: Messages = {
     terminal: 'Terminal',
     close: 'Close',
     stopped: 'Stopped — click to start',
+    restart: 'Restart',
     probing: 'Detecting…',
     noneInstalled: 'No available agents',
     notifyBlocked: '"{name}" needs your input',
     notifyDone: '"{name}" finished',
   },
   pane: {
-    stoppedTitle: 'Agent stopped',
-    stoppedHint:
-      'Processes do not survive an app restart. Click the button below — or the agent in the sidebar — to start it.',
-    restart: 'Restart',
     webStarting: 'Starting DeepSeek Harness…',
     searchPlaceholder: 'Search terminal history',
     searchPrev: 'Previous',

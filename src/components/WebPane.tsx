@@ -15,9 +15,7 @@
 
 import type { PaneState } from '@shared/state';
 import { useWebStore } from '../stores/webStore';
-import { respawnPane } from '../ipc/client';
 import { useT } from '../i18n';
-import { IconPlay } from './icons';
 
 interface WebPaneProps {
   pane: PaneState;
@@ -29,28 +27,14 @@ export function WebPane({ pane }: WebPaneProps) {
   // 旧快照可能缺 running 字段，按运行中处理
   const running = pane.running ?? true;
 
-  // 停止态：与 TerminalPane 保持一致的「重新启动」提示
+  /*
+   * 停止态（恢复出的 pane，进程未运行）不再显示「智能体已停止」整页提示，
+   * 重启入口移到侧栏该 agent 行的按钮上（与 TerminalPane 保持一致）。
+   *
+   * 这里同样不自动拉起进程——重启哪些 agent 应由用户决定。
+   */
   if (!running) {
-    return (
-      <div className="terminal-pane">
-        <div className="empty-state">
-          <div className="empty-state__logo empty-state__logo--icon" aria-hidden="true">
-            <IconPlay size={22} />
-          </div>
-          <h1 className="empty-state__title">{t('pane.stoppedTitle')}</h1>
-          <p className="empty-state__hint">{t('pane.stoppedHint')}</p>
-          <div className="empty-state__actions">
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={() => respawnPane(pane.paneId)}
-            >
-              {t('pane.restart')}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    return <div className="web-pane" />;
   }
 
   // 运行中但认证链接尚未就绪（dsh web 启动中）

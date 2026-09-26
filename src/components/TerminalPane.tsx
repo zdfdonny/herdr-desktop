@@ -8,18 +8,18 @@
  * 造成屏幕反复清空重建（闪烁）。现在挂载时只回放一次历史，之后只做增量写入。
  *
  * 停止态：应用重启后恢复出的 pane 没有 PTY（进程不可能跨重启存活），
- * 此时显示「重新启动」提示而不是空终端——由用户显式点击才拉起进程。
+ * 此时显示一个空终端，重启入口在侧栏该 agent 行的按钮上。
  */
 
 import { useEffect, useRef, useState } from 'react';
 import type { PaneState } from '@shared/state';
 import { useTerminalStore, terminalBus } from '../stores/terminalStore';
 import { useSettingsStore, useResolvedTheme } from '../stores/settingsStore';
-import { writeTerminal, resizeTerminal, attachPane, respawnPane } from '../ipc/client';
+import { writeTerminal, resizeTerminal, attachPane } from '../ipc/client';
 import { createTerminal, type TerminalHandle } from '../xterm/terminal';
 import { useT } from '../i18n';
 import { isMac, searchShortcutLabel } from '../platform';
-import { IconPlay, IconSearch, IconChevronDown, IconChevronUp, IconClose } from './icons';
+import { IconSearch, IconChevronDown, IconChevronUp, IconClose } from './icons';
 
 /** 搜索高亮配色（深浅主题通用）。 */
 const SEARCH_DECORATIONS = {
@@ -272,34 +272,16 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
   }, [resolvedTheme]);
 
   /*
-   * 停止态：恢复出的 pane 显示重启提示。
+   * 停止态（恢复出的 pane，进程未运行）不再显示「智能体已停止」整页提示：
+   * 主区域直接呈现一个空终端，重启入口移到侧栏该 agent 行的按钮上。
    *
-   * 不自动拉起进程——重启哪些 agent 应由用户决定，
+   * 这里**不能**改成自动拉起进程——重启哪些 agent 应由用户决定，
    * 否则每次打开应用都会同时启动 N 个 CLI agent。
-   * 复用 empty-state 的样式保持主区域视觉一致。
+   *
+   * 之所以去掉整页提示后仍安全：恢复出的 pane 不在 Main 的 pendingSpawns 里，
+   * 挂载时触发的 attachPane 会直接返回、不启动任何进程（见 router.attachPane）。
+   * 真正的启动只发生在用户点「重新启动」后，那条路径会先把参数放回 pendingSpawns。
    */
-  if (!running) {
-    return (
-      <div className="terminal-pane">
-        <div className="empty-state">
-          <div className="empty-state__logo empty-state__logo--icon" aria-hidden="true">
-            <IconPlay size={22} />
-          </div>
-          <h1 className="empty-state__title">{t('pane.stoppedTitle')}</h1>
-          <p className="empty-state__hint">{t('pane.stoppedHint')}</p>
-          <div className="empty-state__actions">
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={() => respawnPane(pane.paneId)}
-            >
-              {t('pane.restart')}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="terminal-pane">
