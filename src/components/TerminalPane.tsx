@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PaneState } from '@shared/state';
 import { useTerminalStore, terminalBus } from '../stores/terminalStore';
 import { useSettingsStore, useResolvedTheme } from '../stores/settingsStore';
-import { writeTerminal, resizeTerminal, attachPane } from '../ipc/client';
+import { writeTerminal, resizeTerminal, attachPane, focusPane } from '../ipc/client';
 import { createTerminal, type TerminalHandle } from '../xterm/terminal';
 import { useT } from '../i18n';
 import { isMac, searchShortcutLabel } from '../platform';
@@ -99,6 +99,12 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
       command: pane.command ?? null,
     });
     handleRef.current = handle;
+
+    /*
+     * 聚焦的 pane 自动获取键盘焦点：新建、恢复（running 翻转重建终端）、
+     * 强制重启（restartSeq 递增重建终端）后，终端 panel 直接可输入。
+     */
+    if (pane.focused) handle.terminal.focus();
 
     /*
      * 终端重建后补一次主题应用。
@@ -258,6 +264,17 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
   }, [pane.paneId, fontSize, running, pane.restartSeq]);
 
   /*
+   * 仅焦点变化（终端未重建）时，把键盘焦点交给对应终端。
+   *
+   * 新建/恢复/重启的终端重建场景由上面的创建 effect 里的 focus 处理；
+   * 这里覆盖「侧栏点选已运行 agent」这类终端不重建、只有 focusedPaneId
+   * 变化的情况。
+   */
+  useEffect(() => {
+    if (pane.focused) handleRef.current?.terminal.focus();
+  }, [pane.focused]);
+
+  /*
    * 主题切换时同步终端配色。
    *
    * 必须等 <html data-theme> 更新、CSS 变量重算之后再读取变量值，
@@ -369,7 +386,18 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
         </div>
       )}
       <div className="terminal-pane__padding">
-        <div className="terminal-pane__body" ref={containerRef} />
+        <div
+          className="terminal-pane__body"
+          ref={containerRef}
+          /*
+           * 点击终端正文即聚焦该 pane：分屏里用户往往直接点终端打字，
+           * 不点标题栏，若不在这里补 focusPane，focusedPaneId 会停在旧 pane，
+           * 侧栏选中态与 done/seen 判定都会错。
+           */
+          onClick={() => {
+            if (!pane.focused) focusPane(pane.paneId);
+          }}
+        />
       </div>
     </div>
   );

@@ -56,10 +56,14 @@ function isNoise(line: string): boolean {
  * 早先出现过的 "done"/"working" 会一直残留，状态无法回落到 idle，
  * 也会触发错误的 blocked/done 通知。
  */
-export function detectFromSnapshot(snapshot: string): DetectionResult {
+export function detectFromSnapshot(
+  snapshot: string,
+  /** 终端检测不到 agent 名时的回退（通常取 pane 的启动命令首 token）。 */
+  fallbackName?: string | null,
+): DetectionResult {
   const clean = stripAnsi(snapshot).trim();
   const bottom = bottomBuffer(clean);
-  const name = detectAgentName(bottom);
+  const name = detectAgentName(bottom) ?? fallbackName ?? null;
   const status = detectStatus(name, bottom);
   const title = extractTitle(clean);
   // 会话 id 用完整缓冲识别：它通常在会话启动时打印一次，随后滚出底部窗口。

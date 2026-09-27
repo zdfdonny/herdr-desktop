@@ -262,6 +262,11 @@ export class Session {
     return this.agents.get(paneId)?.status ?? null;
   }
 
+  /** 该 pane 是否当前聚焦（用于 done/seen 判定）。 */
+  isFocusedPane(paneId: string): boolean {
+    return this.focusedPaneId === paneId;
+  }
+
   closePane(paneId: string): void {
     this.panes.delete(paneId);
     this.agents.delete(paneId);

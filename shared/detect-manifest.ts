@@ -60,21 +60,32 @@ export function detectStatus(
 ): 'idle' | 'working' | 'blocked' | 'done' | 'unknown' {
   const lower = snapshot.toLowerCase();
 
-  // blocked：需要人工输入/确认的强信号，比泛化的 "blocked" 更具体
+  // blocked：需要人工输入/确认的信号（含各 agent 的权限确认文案）
   if (
     /\b(?:blocked|waiting for (?:input|you|confirmation|approval)|needs (?:your )?(?:attention|input|confirmation)|press (?:enter|any key)|approve\b|permission (?:requested|required)|\[y\/n\]|\(y\/n\)|allow\?|deny\?)\b/.test(
+      lower,
+    ) ||
+    /\b(?:permission required|action required|enter to confirm|press enter to confirm|allow command\?|yes \(y\))\b/.test(
       lower,
     )
   ) {
     return 'blocked';
   }
 
-  if (/\b(?:working|thinking|generating|in progress|running)\b/.test(lower)) {
+  /*
+   * working：各 agent 的工作中信号。不只有英文关键词，还覆盖：
+   * - opencode 等：esc/ctrl+c/press esc to interrupt
+   * - codex 等：`(12s • … to interrupt)` 计时后缀
+   * - opencode 的进度条 ■■■■ / ⬝⬝⬝⬝
+   */
+  if (
+    /\b(?:working|thinking|generating|in progress|running)\b/.test(lower) ||
+    /(?:esc (?:again )?to interrupt|ctrl\+c to interrupt|press esc to interrupt|to interrupt\))/.test(
+      lower,
+    ) ||
+    /(?:■|⬝){4,}/.test(snapshot)
+  ) {
     return 'working';
-  }
-
-  if (/\b(?:done|finished|completed|succeeded)\b/.test(lower)) {
-    return 'done';
   }
 
   return agentName ? 'idle' : 'unknown';
