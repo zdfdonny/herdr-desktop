@@ -8,7 +8,7 @@
  */
 
 import { useEffect } from 'react';
-import { onMessage, getSettings } from './ipc/client';
+import { onMessage, getSettings, pickDirectory, addProject } from './ipc/client';
 import { useSessionStore } from './stores/sessionStore';
 import { useTerminalStore, terminalBus } from './stores/terminalStore';
 import { useSettingsStore, applyThemeToDom } from './stores/settingsStore';
@@ -97,7 +97,7 @@ export default function App() {
           break;
         }
         case 'ui:new-agent': {
-          // 新建 agent（菜单 File → New Agent Pane，Cmd/Ctrl+T）
+          // 新建 agent（菜单 File → New Agent，Cmd/Ctrl+T）
           const state = useSessionStore.getState().state;
           const focusedPane = state.panes.find((p) => p.paneId === state.focusedPaneId);
           const projectId =
@@ -109,6 +109,16 @@ export default function App() {
             }
             useUiStore.getState().requestOpenAgentPicker(projectId);
           }
+          break;
+        }
+        case 'ui:open-settings':
+          useUiStore.getState().openSettings();
+          break;
+        case 'ui:add-project': {
+          // 菜单 File → Add Project：与侧栏「添加项目」走同一流程
+          void pickDirectory(t('sidebar.addProject')).then((path) => {
+            if (path) addProject(path);
+          });
           break;
         }
         default:

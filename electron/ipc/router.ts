@@ -83,6 +83,10 @@ export class IpcRouter {
    * 原生 titleBarOverlay 的颜色不受渲染侧 CSS 控制，需要显式同步。
    */
   onTitleBarTheme?: (color: string, symbolColor: string) => void;
+  /**
+   * 语言切换后回调，由主进程注入，用于重建应用菜单（菜单文案随语言变化）。
+   */
+  onLanguageChange?: () => void;
 
   constructor() {
     this.pty = new PtyManager({
@@ -242,7 +246,10 @@ export class IpcRouter {
     ipcMain.on(IPC.SET_LANGUAGE, (_event, payload: { language: Language }) => {
       void this.settings
         .setLanguage(payload.language)
-        .then((settings) => this.pushSettings(settings));
+        .then((settings) => {
+          this.pushSettings(settings);
+          this.onLanguageChange?.();
+        });
     });
     ipcMain.on(IPC.SET_FONT_SIZE, (_event, payload: { fontSize: number }) => {
       void this.settings

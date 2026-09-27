@@ -8,6 +8,7 @@ import { app, BrowserWindow, Menu, shell, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { IpcRouter } from './ipc/router';
 import { IPC } from './ipc/protocol';
+import { translate, type MessageKey } from '../shared/i18n';
 
 /**
  * 窗口底色，需与渲染侧深色主题的 --bg-app 一致。
@@ -123,96 +124,115 @@ function setTitleBarOverlay(color: string, symbolColor: string): void {
 
 function buildMenu(): void {
   const isMac = process.platform === 'darwin';
+  const lang = router.getSettings().language;
+  const appName = app.name;
+  const t = (key: MessageKey, vars?: Record<string, string | number>) =>
+    translate(lang, key, vars);
+
   const template: Electron.MenuItemConstructorOptions[] = [
-    // macOS 必须有 App 菜单（含 About / Quit），否则首项菜单行为异常
+    // macOS 必须有 App 菜单（含 About / Settings / Quit），否则首项菜单行为异常
     ...(isMac
       ? [
           {
-            label: app.name,
+            label: appName,
             submenu: [
-              { role: 'about' as const },
+              { role: 'about' as const, label: t('menu.about', { name: appName }) },
               { type: 'separator' as const },
-              { role: 'services' as const },
+              {
+                label: t('menu.settings'),
+                accelerator: 'CmdOrCtrl+,',
+                click: () => sendUi(IPC.UI_OPEN_SETTINGS),
+              },
               { type: 'separator' as const },
-              { role: 'hide' as const },
-              { role: 'hideOthers' as const },
-              { role: 'unhide' as const },
+              { role: 'hide' as const, label: t('menu.hide', { name: appName }) },
+              { role: 'hideOthers' as const, label: t('menu.hideOthers') },
+              { role: 'unhide' as const, label: t('menu.showAll') },
               { type: 'separator' as const },
-              { role: 'quit' as const },
+              { role: 'quit' as const, label: t('menu.quit', { name: appName }) },
             ],
           },
         ]
       : []),
     {
-      label: 'File',
+      label: t('menu.file'),
       submenu: [
-        { label: 'New Agent Pane', accelerator: 'CmdOrCtrl+T', click: () => openNewPane() },
-        { type: 'separator' },
-        // macOS 的 close 语义是关窗口，Windows/Linux 用 quit 更符合习惯
-        isMac ? { role: 'close' as const, label: 'Close Window' } : { role: 'quit' as const },
+        { label: t('menu.newAgent'), accelerator: 'CmdOrCtrl+T', click: () => openNewPane() },
+        {
+          label: t('menu.addProject'),
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => sendUi(IPC.UI_ADD_PROJECT),
+        },
+        { type: 'separator' as const },
+        ...(isMac
+          ? [
+              // macOS 的 close 语义是关窗口；Settings 已放在 App 菜单（⌘,）
+              { role: 'close' as const, label: t('menu.closeWindow') },
+            ]
+          : [
+              {
+                label: t('menu.settings'),
+                accelerator: 'CmdOrCtrl+,',
+                click: () => sendUi(IPC.UI_OPEN_SETTINGS),
+              },
+              { type: 'separator' as const },
+              { role: 'quit' as const, label: t('menu.quit', { name: appName }) },
+            ]),
       ],
     },
     {
-      label: 'Edit',
+      label: t('menu.edit'),
       submenu: [
         /*
          * 复制/粘贴交给原生 role：
          * 终端内的文本复制粘贴走 xterm 自己的 Ctrl+Shift+C/V 处理，
          * 这里的菜单项服务于输入框（搜索栏、设置、项目名等）。
          */
-        { role: 'undo' as const },
-        { role: 'redo' as const },
+        { role: 'undo' as const, label: t('menu.undo') },
+        { role: 'redo' as const, label: t('menu.redo') },
         { type: 'separator' as const },
-        { role: 'cut' as const },
-        { role: 'copy' as const },
-        { role: 'paste' as const },
+        { role: 'cut' as const, label: t('menu.cut') },
+        { role: 'copy' as const, label: t('menu.copy') },
+        { role: 'paste' as const, label: t('menu.paste') },
         ...(isMac
           ? [
-              { role: 'pasteAndMatchStyle' as const },
-              { role: 'delete' as const },
-              { role: 'selectAll' as const },
+              { role: 'pasteAndMatchStyle' as const, label: t('menu.pasteAndMatchStyle') },
+              { role: 'delete' as const, label: t('menu.delete') },
+              { role: 'selectAll' as const, label: t('menu.selectAll') },
             ]
-          : [{ role: 'delete' as const }, { type: 'separator' as const }, { role: 'selectAll' as const }]),
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        {
-          label: 'Reset Font Size',
-          accelerator: 'CmdOrCtrl+0',
-          click: () => router.setFontSize(13),
-        },
-        {
-          label: 'Increase Font Size',
-          accelerator: 'CmdOrCtrl+=',
-          click: () => adjustFontSize(1),
-        },
-        {
-          label: 'Decrease Font Size',
-          accelerator: 'CmdOrCtrl+-',
-          click: () => adjustFontSize(-1),
-        },
-        { type: 'separator' },
-        { role: 'togglefullscreen' as const },
+          : [
+              { role: 'delete' as const, label: t('menu.delete') },
+              { type: 'separator' as const },
+              { role: 'selectAll' as const, label: t('menu.selectAll') },
+            ]),
       ],
     },
     // macOS 约定：必须有 Window 菜单（Cmd+M 最小化等）
     ...(isMac
       ? [
           {
-            label: 'Window',
+            label: t('menu.window'),
             submenu: [
-              { role: 'minimize' as const },
-              { role: 'zoom' as const },
+              { role: 'minimize' as const, label: t('menu.minimize') },
+              { role: 'zoom' as const, label: t('menu.zoom') },
               { type: 'separator' as const },
-              { role: 'front' as const },
+              { role: 'front' as const, label: t('menu.front') },
             ],
           },
         ]
       : []),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * 向渲染进程发送一条 UI 命令（菜单项触发，交由 Renderer 走既有 store 流程，
+ * 保证乐观更新与 DOM 副作用一致）。
+ */
+function sendUi(type: string, payload: Record<string, unknown> = {}): void {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    win.webContents.send(type, { type, version: 1, payload });
+  }
 }
 
 function openNewPane(): void {
@@ -224,12 +244,6 @@ function openNewPane(): void {
       payload: {},
     });
   }
-}
-
-/** 菜单调整终端字号：在主进程内改当前设置并回推（渲染端会自动 fit）。 */
-function adjustFontSize(delta: number): void {
-  const current = router.getSettings().fontSize;
-  router.setFontSize(current + delta);
 }
 
 app.whenReady().then(async () => {
@@ -252,6 +266,8 @@ app.whenReady().then(async () => {
   router = new IpcRouter();
   router.loadSettings();
   router.onTitleBarTheme = setTitleBarOverlay;
+  // 语言变化会改变菜单文案，交给 buildMenu 重建
+  router.onLanguageChange = buildMenu;
   // 恢复上次会话（项目/agent 元数据）。必须在创建窗口前完成，
   // 这样 did-finish-load 推送的首个快照就包含恢复结果，渲染端无需二次同步。
   await router.restoreSession();

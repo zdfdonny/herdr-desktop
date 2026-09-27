@@ -19,6 +19,10 @@ export const IPC = {
   AGENT_AVAILABILITY: 'agent:availability',
   /** 菜单/快捷键请求新建 agent（Ctrl+T）。 */
   NEW_AGENT: 'ui:new-agent',
+  /** 菜单请求打开设置弹窗。 */
+  UI_OPEN_SETTINGS: 'ui:open-settings',
+  /** 菜单请求添加项目（打开系统目录选择器）。 */
+  UI_ADD_PROJECT: 'ui:add-project',
   /** DeepSeek Harness Web pane 就绪（带认证链接）。 */
   WEB_READY: 'web:ready',
   // 控制命令（Renderer → Main）
