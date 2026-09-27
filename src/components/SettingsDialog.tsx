@@ -187,7 +187,11 @@ export function SettingsDialog() {
 
   const handleInstallAll = () => {
     setHookBusyAll(true);
-    const agents = Object.keys(hookStatuses);
+    // 只给「本机已安装」的智能体装 hook/插件，未安装的不碰
+    const agents = Object.keys(hookStatuses).filter((agentId) => {
+      const preset = AGENT_PRESETS.find((p) => p.id === agentId);
+      return preset ? isAvailable(availability, probed, preset.command) : false;
+    });
     void Promise.all(
       agents.map((agentId) => installHook(agentId).then((status) => ({ agentId, status }))),
     )
