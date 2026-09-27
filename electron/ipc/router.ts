@@ -30,6 +30,9 @@ import type {
   Language,
 } from '../../shared/state';
 
+/** agent 状态通知的冷却窗口：同一 pane+状态在此窗口内只通知一次。 */
+const AGENT_STATUS_NOTIFY_COOLDOWN_MS = 10_000;
+
 export class IpcRouter {
   private session = new Session();
   private settings = new SettingsStore();
@@ -65,6 +68,14 @@ export class IpcRouter {
    * 避免「hook 报 working、终端检测又报 idle」的抖动。关闭/respawn 时清除。
    */
   private hookAuthority = new Set<string>();
+  /**
+   * agent 状态通知冷却：同一 pane + 状态 在冷却窗口内只通知一次。
+   *
+   * 终端检测会因屏幕重绘抖动（blocked → working → blocked），每次重新进入
+   * blocked 都会触发一次 transition，若不去重，右下角会连续弹同一状态。
+   * 键为 `${paneId}:${status}`，值为最近一次通知的时间戳。
+   */
+  private agentStatusNotifyCooldown = new Map<string, number>();
 
   /**
    * 标题栏配色回调，由主进程在创建窗口后注入。
@@ -910,8 +921,18 @@ export class IpcRouter {
    * 转到 blocked / done 时推送一条 `agent:status` 给渲染端，
    * 由渲染端决定 toast 与系统通知；Main 只给结构化数据与文案 key，
    * 本地化仍留在渲染端。
+   *
+   * 同一 pane + 状态在冷却窗口内只通知一次，避免终端检测抖动导致重复弹。
    */
   private notifyAgentStatus(paneId: string, status: 'blocked' | 'done'): void {
+    const key = `${paneId}:${status}`;
+    const now = Date.now();
+    const last = this.agentStatusNotifyCooldown.get(key);
+    if (last !== undefined && now - last < AGENT_STATUS_NOTIFY_COOLDOWN_MS) {
+      return;
+    }
+    this.agentStatusNotifyCooldown.set(key, now);
+
     const pane = this.session.getPane(paneId);
     if (!pane) return;
     this.broadcast({
