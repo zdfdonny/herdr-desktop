@@ -58,6 +58,13 @@ export class IpcRouter {
   private detectionPathCache: string | null = null;
   /** hook 上报端点（官方集成 hook 把会话引用报回 Main）。 */
   private reportServer = new ReportServer();
+  /**
+   * 由官方集成 hook 持有状态权威的 pane（对应 herdr 的 hook_authority）。
+   *
+   * 一旦 hook 上报过状态，终端检测只更新 name/title，不再覆盖 status，
+   * 避免「hook 报 working、终端检测又报 idle」的抖动。关闭/respawn 时清除。
+   */
+  private hookAuthority = new Set<string>();
 
   /**
    * 标题栏配色回调，由主进程在创建窗口后注入。
@@ -143,6 +150,7 @@ export class IpcRouter {
         agent: report.agent,
         sessionId: report.sessionId,
         sessionPath: report.sessionPath,
+        state: report.state,
       });
     });
   }
@@ -306,14 +314,15 @@ export class IpcRouter {
           break;
         }
         case 'agent:report-session': {
-          const { paneId, source, agent, sessionId, sessionPath } = JSON.parse(payload.data) as {
+          const { paneId, source, agent, sessionId, sessionPath, state } = JSON.parse(payload.data) as {
             paneId: string;
             source: string;
             agent: string;
             sessionId?: string | null;
             sessionPath?: string | null;
+            state?: 'working' | 'blocked' | 'idle' | 'done' | null;
           };
-          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath });
+          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath, state });
           break;
         }
         default:
@@ -497,10 +506,12 @@ export class IpcRouter {
   }
 
   /**
-   * 记录官方集成上报的 agent 会话引用（对应 herdr `handle_pane_report_agent_session`）。
+   * 记录官方集成上报的会话引用与状态（对应 herdr 的
+   * `handle_pane_report_agent_session` + `HookStateReported`）。
    *
-   * 由 `agent:report-session` named 消息进入；来源与会话值经 agent-resume
-   * 校验，非官方来源直接忽略。上报后立即落盘，保证重启后仍可恢复。
+   * 由 `agent:report-session` named 消息与 ReportServer 进入；
+   * 来源与会话值经 agent-resume 校验，非官方来源直接忽略。
+   * 上报后立即落盘，保证重启后仍可恢复；状态上报标记 hook 权威。
    */
   private reportAgentSession(
     paneId: string,
@@ -509,6 +520,7 @@ export class IpcRouter {
       agent: string;
       sessionId?: string | null;
       sessionPath?: string | null;
+      state?: 'working' | 'blocked' | 'idle' | 'done' | null;
     },
   ): void {
     const ref = agentResume.sessionRefFromReport(
@@ -517,13 +529,24 @@ export class IpcRouter {
       report.sessionId ?? null,
       report.sessionPath ?? null,
     );
-    if (!ref) return;
-    this.session.setPaneAgentSession(paneId, {
-      source: report.source,
-      agent: report.agent,
-      kind: ref.kind,
-      value: ref.value,
-    });
+    if (ref) {
+      this.session.setPaneAgentSession(paneId, {
+        source: report.source,
+        agent: report.agent,
+        kind: ref.kind,
+        value: ref.value,
+      });
+      console.log(`[herdr-desktop] hook reported session for ${report.agent}: ${ref.value}`);
+    }
+
+    if (report.state) {
+      this.hookAuthority.add(paneId);
+      const transition = this.session.setAgentStatus(paneId, report.state);
+      if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
+        this.notifyAgentStatus(paneId, transition.to);
+      }
+    }
+
     this.pushSnapshot();
   }
 
@@ -583,6 +606,7 @@ export class IpcRouter {
     this.pendingSpawns.delete(paneId);
     this.pendingSizes.delete(paneId);
     this.revivingPanes.delete(paneId);
+    this.hookAuthority.delete(paneId);
   }
 
   /**
@@ -734,16 +758,16 @@ export class IpcRouter {
    * 注入 hook 上报所需的环境变量（对应 herdr 的 apply_pane_base_env）。
    *
    * 官方集成 hook 脚本据此知道自己的 pane、agent 和上报地址：
-   * - HERDR_PANE_ID：pane 标识；
-   * - HERDR_AGENT：agent 命令首 token（用于构造 source `herdr:<agent>`）；
-   * - HERDR_REPORT_URL：本地上报端点（含一次性 token）。
+   * - HERDR_DESKTOP_PANE_ID：pane 标识；
+   * - HERDR_DESKTOP_AGENT：agent 命令首 token（用于构造 source `herdr:<agent>`）；
+   * - HERDR_DESKTOP_REPORT_URL：本地上报端点（含一次性 token）。
    */
   private injectHookEnv(env: Record<string, string>, paneId: string, command: string): void {
     const reportUrl = this.reportServer.reportUrl;
     if (!reportUrl) return;
-    env.HERDR_PANE_ID = paneId;
-    env.HERDR_AGENT = command.trim().split(/\s+/)[0];
-    env.HERDR_REPORT_URL = reportUrl;
+    env.HERDR_DESKTOP_PANE_ID = paneId;
+    env.HERDR_DESKTOP_AGENT = command.trim().split(/\s+/)[0];
+    env.HERDR_DESKTOP_REPORT_URL = reportUrl;
   }
 
   /**
@@ -813,6 +837,7 @@ export class IpcRouter {
     this.pendingSpawns.delete(paneId);
     this.pendingSizes.delete(paneId);
     this.revivingPanes.delete(paneId);
+    this.hookAuthority.delete(paneId);
     this.session.closePane(paneId);
     this.pushSnapshot();
   }
@@ -838,7 +863,14 @@ export class IpcRouter {
   private refreshAgent(paneId: string): void {
     const snapshot = this.pty.snapshot(paneId);
     const result = detectFromSnapshot(snapshot);
-    const transition = this.session.updateAgent(paneId, result);
+    /*
+     * hook 权威：官方集成 hook 已上报状态时，终端检测只更新 name/title，
+     * 不再用屏幕关键词覆盖 status，避免两者打架（对应 herdr hook_authority）。
+     */
+    const patch = this.hookAuthority.has(paneId)
+      ? { name: result.name, title: result.title, status: this.session.getAgentStatus(paneId) ?? result.status }
+      : result;
+    const transition = this.session.updateAgent(paneId, patch);
     if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
       this.notifyAgentStatus(paneId, transition.to);
     }
@@ -848,17 +880,24 @@ export class IpcRouter {
      * 之后重启该 pane 就能带 `--resume`/`--session` 恢复。
      * 权威来源仍是 hook 上报（agent:report-session）；这里只做兜底，
      * 且经 sessionRefFromReport 校验官方来源，非白名单 agent 直接忽略。
+     *
+     * agent 身份优先用终端检测的 name；检测失败（如 opencode 的 TUI 底部
+     * 不出现 "opencode" 字样）时回退到 pane 记录的启动命令首 token。
      */
-    if (result.name && result.sessionId) {
-      const source = `herdr:${result.name}`;
-      const ref = agentResume.sessionRefFromReport(source, result.name, result.sessionId, null);
+    const pane = this.session.getPane(paneId);
+    const fallbackAgent = pane?.command?.trim().split(/\s+/)[0] ?? null;
+    const agentName = result.name ?? fallbackAgent;
+    if (agentName && result.sessionId) {
+      const source = `herdr:${agentName}`;
+      const ref = agentResume.sessionRefFromReport(source, agentName, result.sessionId, null);
       if (ref) {
         this.session.setPaneAgentSession(paneId, {
           source,
-          agent: result.name,
+          agent: agentName,
           kind: ref.kind,
           value: ref.value,
         });
+        console.log(`[herdr-desktop] captured session id for ${agentName}: ${ref.value}`);
       }
     }
 

@@ -257,6 +257,11 @@ export class Session {
     return this.panes.get(paneId);
   }
 
+  /** 读取单个 agent 的当前状态（不存在返回 null）。 */
+  getAgentStatus(paneId: string): AgentState['status'] | null {
+    return this.agents.get(paneId)?.status ?? null;
+  }
+
   closePane(paneId: string): void {
     this.panes.delete(paneId);
     this.agents.delete(paneId);
@@ -386,6 +391,26 @@ export class Session {
     agent.stateChangeSeq = ++stateChangeCounter;
     this.bump();
     return { from, to: patch.status };
+  }
+
+  /**
+   * 由官方集成 hook 直接设置 agent 状态（对应 herdr 的 HookStateReported）。
+   *
+   * 与 updateAgent（终端检测）不同：这里只改 status，不动 name/title，
+   * 来源是 hook 上报的权威状态。状态无变化时返回 null。
+   */
+  setAgentStatus(
+    paneId: string,
+    status: AgentState['status'],
+  ): { from: AgentState['status']; to: AgentState['status'] } | null {
+    const agent = this.agents.get(paneId);
+    if (!agent) return null;
+    if (agent.status === status) return null;
+    const from = agent.status;
+    agent.status = status;
+    agent.stateChangeSeq = ++stateChangeCounter;
+    this.bump();
+    return { from, to: status };
   }
 
   snapshot(): SessionState {

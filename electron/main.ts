@@ -242,6 +242,13 @@ app.whenReady().then(async () => {
     console.error('[herdr-desktop] unhandled rejection:', reason);
   });
 
+  /*
+   * 数据目录与真实 herdr 区分：app 名（菜单栏）仍是 "Herdr"，
+   * 但 userData（session.json / settings.json 等）落到 `herdr-desktop`，
+   * 避免同时安装 herdr 时读写冲突。
+   */
+  app.setPath('userData', join(app.getPath('appData'), 'herdr-desktop'));
+
   router = new IpcRouter();
   router.loadSettings();
   router.onTitleBarTheme = setTitleBarOverlay;

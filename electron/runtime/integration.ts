@@ -1,31 +1,44 @@
 /**
- * 官方集成 hook 安装器 —— 参考 herdr `src/integration/`。
+ * 官方集成安装器 —— 参考 herdr `src/integration/`。
  *
- * 把一个小型 hook 脚本写进各 agent 的配置目录，并把它注册到该 agent 的
- * SessionStart 事件上：会话启动时 hook 读取 agent 传入的 JSON 载荷，把
- * 会话 id 报回 Main（经 ReportServer），Main 持久化后即可在重启 pane 时
- * 用 `--resume`/`--session` 恢复。
+ * 覆盖两类集成：
+ * - hook（脚本 + agent 配置注册）：claude、codex、kimi、copilot、devin、droid、
+ *   qodercli、qwen、letta、cursor、mastracode、antigravity-cli、grok；
+ * - 非 hook（extension/plugin）：pi、omp（扩展）、opencode、kilo（JS 插件）、
+ *   hermes（Python 插件）。
  *
- * 与 herdr 的对齐点：
- * - 按 agent 配置目录定位（尊重对应环境变量）；
- * - hook 命令跨平台：Windows 用 PowerShell，Unix 用 bash；
- * - 只上报会话引用，agent 状态（working/blocked/done）仍由终端检测负责；
- * - 各 agent 的 hooks 结构差异用 shape 区分（nested / direct / simple / toml）。
- *
- * 已覆盖：claude、codex、kimi、copilot、devin、droid、qodercli、qwen、
- * letta、cursor。pi/omp 是扩展、opencode/kilo/hermes 是插件、mastracode/
- * grok/antigravity 各有特殊 config，后续按同样结构继续扩展 registry。
+ * 上报通道统一走本地 HTTP 上报端点（`HERDR_DESKTOP_REPORT_URL`）。hook/资产都带
+ * `HERDR_INTEGRATION_ID=herdr-desktop` 标记，用于区分 herdr 官方集成与
+ * herdr-desktop 集成。会话 id 与状态（working/blocked/idle/done）都可上报，
+ * 状态上报后该 pane 进入 hook 权威模式（终端检测不再覆盖 status）。
  */
 
-import { promises as fs, existsSync } from 'node:fs';
+import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { isWindows } from '../platform';
 import type { HookStatus } from '../../shared/protocol';
+import {
+  PI_ASSET,
+  OMP_ASSET,
+  OPENCODE_ASSET,
+  KILO_ASSET,
+  HERMES_PLUGIN_YAML,
+  HERMES_PLUGIN_INIT,
+} from './integration-assets';
 
-const HOOK_SCRIPT_NAME = isWindows ? 'herdr-agent-state.ps1' : 'herdr-agent-state.sh';
+const INTEGRATION_ID = 'herdr-desktop';
+const HOOK_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-state.ps1' : 'herdr-desktop-agent-state.sh';
 /** qwen / letta 用会话专用脚本名（对应 herdr 的 `*_HOOK_INSTALL_NAME`）。 */
-const SESSION_SCRIPT_NAME = isWindows ? 'herdr-agent-session.ps1' : 'herdr-agent-session.sh';
+const SESSION_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-session.ps1' : 'herdr-desktop-agent-session.sh';
+
+/** 全生命周期状态事件（对应 herdr 的多事件 state 上报）。 */
+const LIFECYCLE_STATE_EVENTS: Array<[event: string, action: string]> = [
+  ['UserPromptSubmit', 'working'],
+  ['PreToolUse', 'working'],
+  ['PermissionRequest', 'blocked'],
+  ['Stop', 'idle'],
+];
 
 const HOOK_TARGETS: Record<string, HookTarget> = {
   claude: claudeTarget(),
@@ -48,6 +61,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'SessionStart',
     shape: 'nested',
     timeoutSec: 10,
+    stateEvents: LIFECYCLE_STATE_EVENTS,
   }),
   droid: jsonHooksTarget({
     configDir: () => homeJoin('.factory'),
@@ -97,6 +111,25 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     shape: 'simple',
     withVersion: true,
   }),
+  mastracode: jsonHooksTarget({
+    configDir: () => homeJoin('.mastracode'),
+    scriptName: HOOK_SCRIPT_NAME,
+    scriptSubdir: 'hooks',
+    configFile: 'hooks.json',
+    event: 'SessionStart',
+    shape: 'flat',
+    timeoutSec: 10,
+    stateEvents: LIFECYCLE_STATE_EVENTS,
+    encodedCommand: true,
+  }),
+  antigravity: antigravityTarget(),
+  grok: grokTarget(),
+  // 非 hook 集成（extension / plugin）
+  pi: piTarget(),
+  omp: ompTarget(),
+  opencode: opencodeTarget(),
+  kilo: kiloTarget(),
+  hermes: hermesTarget(),
 };
 
 export function hookStatuses(): Record<string, HookStatus> {
@@ -133,12 +166,11 @@ interface HookTarget {
   uninstall(): Promise<void>;
 }
 
-type JsonShape = 'nested' | 'direct' | 'simple';
+type JsonShape = 'nested' | 'flat' | 'direct' | 'simple';
 
 interface JsonHooksTargetOptions {
   configDir: () => string | null;
   scriptName: string;
-  /** 脚本相对 configDir 的子目录；null 表示直接放 configDir 下。 */
   scriptSubdir: string | null;
   configFile: string;
   event: string;
@@ -146,8 +178,9 @@ interface JsonHooksTargetOptions {
   matcher?: string;
   timeoutSec?: number;
   quiet?: boolean;
-  /** cursor 的 hooks.json 需要顶层 version 字段。 */
   withVersion?: boolean;
+  stateEvents?: Array<[string, string]>;
+  encodedCommand?: boolean;
 }
 
 function homeJoin(...segments: string[]): string {
@@ -162,13 +195,10 @@ function envOrHome(envVar: string, fallbackSegments: string[]): string {
 
 function expandTilde(path: string): string {
   if (path === '~') return homedir();
-  if (path.startsWith('~/') || path.startsWith('~\\')) {
-    return join(homedir(), path.slice(2));
-  }
+  if (path.startsWith('~/') || path.startsWith('~\\')) return join(homedir(), path.slice(2));
   return path;
 }
 
-/** devin：XDG_CONFIG_HOME/devin，Windows 用 APPDATA/devin，否则 ~/.config/devin。 */
 function devinDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
   if (xdg && xdg.trim()) return expandTilde(join(xdg.trim(), 'devin'));
@@ -183,6 +213,24 @@ function hookCommand(path: string, action: string): string {
   return isWindows
     ? `powershell -NoProfile -ExecutionPolicy Bypass -File "${path}" ${action}`
     : `bash '${path.replace(/'/g, `'\\''`)}' ${action}`;
+}
+
+function powershellEncodedCommand(path: string, action: string): string {
+  const script = `& '${path.replace(/'/g, "''")}' ${action}`;
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+}
+
+function grokHookCommand(path: string): string {
+  return isWindows
+    ? hookCommand(path, 'session')
+    : `sh '${path.replace(/'/g, `'\\''`)}' session`;
+}
+
+function commandFor(opts: { encodedCommand?: boolean }, path: string, action: string): string {
+  return opts.encodedCommand && isWindows
+    ? powershellEncodedCommand(path, action)
+    : hookCommand(path, action);
 }
 
 async function readJson(path: string): Promise<Record<string, any>> {
@@ -205,6 +253,15 @@ async function readText(path: string): Promise<string> {
   }
 }
 
+function scriptInstalled(path: string | null): boolean {
+  if (!path || !existsSync(path)) return false;
+  try {
+    return readFileSync(path, 'utf8').includes(`HERDR_INTEGRATION_ID=${INTEGRATION_ID}`);
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 通用 JSON hooks 结构（对应 herdr config_edit.rs）
 // ---------------------------------------------------------------------------
@@ -224,7 +281,6 @@ function hookMatches(hook: any, command: string): boolean {
   );
 }
 
-/** nested：{ matcher?, hooks: [{ type:"command", command, timeout?, quiet? }] } */
 function ensureNestedHook(
   hooks: Record<string, any>,
   event: string,
@@ -243,7 +299,12 @@ function ensureNestedHook(
   entries.push(entry);
 }
 
-/** direct：{ type:"command", bash|powershell: command, timeoutSec }（copilot） */
+function ensureFlatHook(hooks: Record<string, any>, event: string, command: string, timeoutSec: number): void {
+  const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
+  if (entries.some((e: any) => hookMatches(e, command))) return;
+  entries.push({ type: 'command', command, timeout: timeoutSec, description: 'Report agent state to Herdr' });
+}
+
 function ensureDirectHook(hooks: Record<string, any>, event: string, command: string, timeoutSec: number): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
   const field = isWindows ? 'powershell' : 'bash';
@@ -251,11 +312,23 @@ function ensureDirectHook(hooks: Record<string, any>, event: string, command: st
   entries.push({ type: 'command', [field]: command, timeoutSec });
 }
 
-/** simple：{ command }（cursor） */
 function ensureSimpleHook(hooks: Record<string, any>, event: string, command: string): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
   if (entries.some((e: any) => e && e.command === command)) return;
   entries.push({ command });
+}
+
+function ensureHook(
+  hooks: Record<string, any>,
+  shape: JsonShape,
+  event: string,
+  command: string,
+  opts: { matcher?: string; timeoutSec?: number; quiet?: boolean },
+): void {
+  if (shape === 'nested') ensureNestedHook(hooks, event, command, opts);
+  else if (shape === 'flat') ensureFlatHook(hooks, event, command, opts.timeoutSec ?? 10);
+  else if (shape === 'direct') ensureDirectHook(hooks, event, command, opts.timeoutSec ?? 10);
+  else ensureSimpleHook(hooks, event, command);
 }
 
 function removeHook(hooks: Record<string, any>, event: string, command: string): boolean {
@@ -265,12 +338,10 @@ function removeHook(hooks: Record<string, any>, event: string, command: string):
   const next: any[] = [];
   for (const entry of entries) {
     if (entry && typeof entry === 'object' && Array.isArray(entry.hooks)) {
-      // nested
       const kept = entry.hooks.filter((h: any) => !hookMatches(h, command));
       if (kept.length !== entry.hooks.length) removed = true;
       if (kept.length > 0) next.push({ ...entry, hooks: kept });
     } else if (hookMatches(entry, command) || (entry && entry.command === command)) {
-      // direct / simple
       removed = true;
     } else {
       next.push(entry);
@@ -286,6 +357,7 @@ function removeHook(hooks: Record<string, any>, event: string, command: string):
 // ---------------------------------------------------------------------------
 
 function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
+  const events: Array<[string, string]> = [[opts.event, 'session'], ...(opts.stateEvents ?? [])];
   return {
     configDir: opts.configDir,
     hookPath() {
@@ -294,8 +366,7 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       return opts.scriptSubdir ? join(dir, opts.scriptSubdir, opts.scriptName) : join(dir, opts.scriptName);
     },
     isInstalled() {
-      const path = this.hookPath();
-      return path ? existsSync(path) : false;
+      return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
       const dir = this.configDir();
@@ -309,17 +380,13 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       const root = await readJson(configPath);
       if (opts.withVersion && root.version === undefined) root.version = 1;
       const hooks = ensureHooksObject(root);
-      const command = hookCommand(path, 'session');
-      if (opts.shape === 'nested') {
-        ensureNestedHook(hooks, opts.event, command, {
+      for (const [event, action] of events) {
+        const command = commandFor(opts, path, action);
+        ensureHook(hooks, opts.shape, event, command, {
           matcher: opts.matcher,
           timeoutSec: opts.timeoutSec,
           quiet: opts.quiet,
         });
-      } else if (opts.shape === 'direct') {
-        ensureDirectHook(hooks, opts.event, command, opts.timeoutSec ?? 10);
-      } else {
-        ensureSimpleHook(hooks, opts.event, command);
       }
       await writeJson(configPath, root);
     },
@@ -330,8 +397,9 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       const configPath = join(dir, opts.configFile);
       const root = await readJson(configPath);
       const hooks = ensureHooksObject(root);
-      const command = hookCommand(path ?? '', 'session');
-      removeHook(hooks, opts.event, command);
+      for (const [event, action] of events) {
+        removeHook(hooks, event, commandFor(opts, path ?? '', action));
+      }
       await writeJson(configPath, root);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
@@ -339,7 +407,7 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
 }
 
 // ---------------------------------------------------------------------------
-// claude —— ~/.claude/settings.json 的 SessionStart hook（startup + resume 两个 matcher）
+// claude —— ~/.claude/settings.json（SessionStart + 状态事件，matcher）
 // ---------------------------------------------------------------------------
 
 function claudeTarget(): HookTarget {
@@ -350,8 +418,7 @@ function claudeTarget(): HookTarget {
       return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
     },
     isInstalled() {
-      const path = this.hookPath();
-      return path ? existsSync(path) : false;
+      return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
       const dir = this.configDir();
@@ -363,9 +430,11 @@ function claudeTarget(): HookTarget {
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
       const hooks = ensureHooksObject(settings);
-      const command = hookCommand(path, 'session');
       for (const matcher of ['startup', 'resume']) {
-        ensureNestedHook(hooks, 'SessionStart', command, { matcher, timeoutSec: 10 });
+        ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { matcher, timeoutSec: 10 });
+      }
+      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+        ensureNestedHook(hooks, event, hookCommand(path, action), { matcher: '*', timeoutSec: 10 });
       }
       await writeJson(settingsPath, settings);
     },
@@ -377,6 +446,9 @@ function claudeTarget(): HookTarget {
       const settings = await readJson(settingsPath);
       const hooks = ensureHooksObject(settings);
       removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
+      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+        removeHook(hooks, event, hookCommand(path ?? '', action));
+      }
       await writeJson(settingsPath, settings);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
@@ -384,7 +456,7 @@ function claudeTarget(): HookTarget {
 }
 
 // ---------------------------------------------------------------------------
-// codex —— ~/.codex/hooks.json（SessionStart）+ ~/.codex/config.toml（hooks=true）
+// codex —— ~/.codex/hooks.json + config.toml
 // ---------------------------------------------------------------------------
 
 function codexTarget(): HookTarget {
@@ -395,8 +467,7 @@ function codexTarget(): HookTarget {
       return dir ? join(dir, HOOK_SCRIPT_NAME) : null;
     },
     isInstalled() {
-      const path = this.hookPath();
-      return path ? existsSync(path) : false;
+      return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
       const dir = this.configDir();
@@ -405,14 +476,15 @@ function codexTarget(): HookTarget {
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
 
-      // hooks.json：嵌套 SessionStart（对应 herdr ensure_command_hook，无 matcher）
       const hooksPath = join(dir, 'hooks.json');
       const hooksRoot = await readJson(hooksPath);
       const hooks = ensureHooksObject(hooksRoot);
       ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { timeoutSec: 10 });
+      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+        ensureNestedHook(hooks, event, hookCommand(path, action), { timeoutSec: 10 });
+      }
       await writeJson(hooksPath, hooksRoot);
 
-      // config.toml：启用 codex hooks（对应 herdr build_codex_config_with_hooks）
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
       await fs.writeFile(configPath, codexConfigWithHook(content), 'utf8');
@@ -425,30 +497,24 @@ function codexTarget(): HookTarget {
       const hooksRoot = await readJson(hooksPath);
       const hooks = ensureHooksObject(hooksRoot);
       removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
+      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+        removeHook(hooks, event, hookCommand(path ?? '', action));
+      }
       await writeJson(hooksPath, hooksRoot);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
 }
 
-/**
- * 给 codex 的 config.toml 追加 `[features] hooks = true`（保留原有内容）。
- * 对应 herdr `build_codex_config_with_hooks`。
- */
 function codexConfigWithHook(content: string): string {
   let result = content.replace(/\r?\n$/, '');
-  if (!/^\s*\[features\]/m.test(result)) {
-    result += '\n\n[features]';
-  }
+  if (!/^\s*\[features\]/m.test(result)) result += '\n\n[features]';
   if (!/^\s*hooks\s*=\s*true/m.test(result)) {
     const lines = result.split('\n');
     const idx = lines.findIndex((line) => /^\s*\[features\]/.test(line));
-    if (idx >= 0) {
-      lines.splice(idx + 1, 0, 'hooks = true');
-      result = lines.join('\n');
-    } else {
-      result += '\nhooks = true';
-    }
+    if (idx >= 0) lines.splice(idx + 1, 0, 'hooks = true');
+    else lines.push('hooks = true');
+    result = lines.join('\n');
   }
   return `${result}\n`;
 }
@@ -458,6 +524,7 @@ function codexConfigWithHook(content: string): string {
 // ---------------------------------------------------------------------------
 
 function kimiTarget(): HookTarget {
+  const events: Array<[string, string]> = [['SessionStart', 'session'], ...LIFECYCLE_STATE_EVENTS];
   return {
     configDir: () => envOrHome('KIMI_CODE_HOME', ['.kimi-code']),
     hookPath() {
@@ -465,8 +532,7 @@ function kimiTarget(): HookTarget {
       return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
     },
     isInstalled() {
-      const path = this.hookPath();
-      return path ? existsSync(path) : false;
+      return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
       const dir = this.configDir();
@@ -477,7 +543,7 @@ function kimiTarget(): HookTarget {
 
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
-      await fs.writeFile(configPath, kimiConfigWithHook(content, path), 'utf8');
+      await fs.writeFile(configPath, kimiConfigWithHook(content, path, events), 'utf8');
     },
     async uninstall() {
       const dir = this.configDir();
@@ -494,20 +560,15 @@ function kimiTarget(): HookTarget {
 const KIMI_BLOCK_BEGIN = '# >>> herdr kimi integration';
 const KIMI_BLOCK_END = '# <<< herdr kimi integration';
 
-/** 追加一个 herdr 标记的 `[[hooks]]` 块（对应 herdr build_kimi_config_with_hooks）。 */
-function kimiConfigWithHook(content: string, hookPath: string): string {
+function kimiConfigWithHook(content: string, hookPath: string, events: Array<[string, string]>): string {
   if (content.includes(KIMI_BLOCK_BEGIN)) return content;
-  const command = tomlString(hookCommand(hookPath, 'session'));
-  const block = [
-    KIMI_BLOCK_BEGIN,
-    '[[hooks]]',
-    'event = "SessionStart"',
-    `command = ${command}`,
-    'timeout = 10',
-    KIMI_BLOCK_END,
-  ].join('\n');
+  const rows = [KIMI_BLOCK_BEGIN];
+  for (const [event, action] of events) {
+    rows.push('[[hooks]]', `event = "${event}"`, `command = ${tomlString(hookCommand(hookPath, action))}`, 'timeout = 10');
+  }
+  rows.push(KIMI_BLOCK_END);
   const trimmed = content.replace(/\r?\n$/, '');
-  return `${trimmed}\n\n${block}\n`;
+  return `${trimmed}\n\n${rows.join('\n')}\n`;
 }
 
 function removeKimiBlock(content: string): string {
@@ -518,13 +579,215 @@ function removeKimiBlock(content: string): string {
   return (content.slice(0, begin) + content.slice(after)).replace(/\n{3,}/g, '\n\n');
 }
 
-/** TOML basic string 转义（用于命令串）。 */
 function tomlString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\u0000-\u001f/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}"`;
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\u0000-\u001f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}"`;
 }
 
 // ---------------------------------------------------------------------------
-// hook 脚本资产（bash / PowerShell）
+// antigravity-cli（agy）—— ~/.gemini/config/hooks.json 的 "herdr" 块
+// ---------------------------------------------------------------------------
+
+function antigravityTarget(): HookTarget {
+  return {
+    configDir: () => envOrHome('ANTIGRAVITY_CLI_CONFIG_DIR', ['.gemini', 'config']),
+    hookPath() {
+      const dir = this.configDir();
+      return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
+    },
+    isInstalled() {
+      return scriptInstalled(this.hookPath());
+    },
+    async install(_reportUrl: string) {
+      const dir = this.configDir();
+      const path = this.hookPath();
+      if (!dir || !path) return;
+      await fs.mkdir(join(dir, 'hooks'), { recursive: true });
+      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+
+      const hooksPath = join(dir, 'hooks.json');
+      const root = await readJson(hooksPath);
+      const command = commandFor({ encodedCommand: true }, path, 'session');
+      root['herdr-desktop'] = { PreInvocation: [{ type: 'command', command, timeout: 10 }] };
+      await writeJson(hooksPath, root);
+    },
+    async uninstall() {
+      const dir = this.configDir();
+      const path = this.hookPath();
+      if (!dir) return;
+      const hooksPath = join(dir, 'hooks.json');
+      const root = await readJson(hooksPath);
+      delete root['herdr-desktop'];
+      await writeJson(hooksPath, root);
+      await fs.rm(path ?? '', { force: true }).catch(() => undefined);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// grok —— ~/.grok/hooks/ 脚本 + herdr-desktop.json
+// ---------------------------------------------------------------------------
+
+function grokTarget(): HookTarget {
+  return {
+    configDir: () => envOrHome('GROK_HOME', ['.grok']),
+    hookPath() {
+      const dir = this.configDir();
+      return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
+    },
+    isInstalled() {
+      return scriptInstalled(this.hookPath());
+    },
+    async install(_reportUrl: string) {
+      const dir = this.configDir();
+      const path = this.hookPath();
+      if (!dir || !path) return;
+      await fs.mkdir(join(dir, 'hooks'), { recursive: true });
+      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+
+      const config = {
+        hooks: {
+          SessionStart: [{ hooks: [{ type: 'command', command: grokHookCommand(path), timeout: 10 }] }],
+        },
+      };
+      await writeJson(join(dir, 'hooks', 'herdr-desktop.json'), config);
+    },
+    async uninstall() {
+      const dir = this.configDir();
+      const path = this.hookPath();
+      if (!dir) return;
+      await fs.rm(join(dir, 'hooks', 'herdr-desktop.json'), { force: true }).catch(() => undefined);
+      await fs.rm(path ?? '', { force: true }).catch(() => undefined);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 非 hook 集成（extension / plugin）
+// ---------------------------------------------------------------------------
+
+function extensionTarget(opts: {
+  configDir: () => string | null;
+  asset: string;
+  fileName: string;
+}): HookTarget {
+  return {
+    configDir: opts.configDir,
+    hookPath() {
+      const dir = this.configDir();
+      return dir ? join(dir, opts.fileName) : null;
+    },
+    isInstalled() {
+      return scriptInstalled(this.hookPath());
+    },
+    async install(_reportUrl: string) {
+      const dir = this.configDir();
+      const path = this.hookPath();
+      if (!dir || !path) return;
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path, opts.asset, 'utf8');
+    },
+    async uninstall() {
+      await fs.rm(this.hookPath() ?? '', { force: true }).catch(() => undefined);
+    },
+  };
+}
+
+function piTarget(): HookTarget {
+  return extensionTarget({
+    configDir: () => piExtensionDir(),
+    asset: PI_ASSET,
+    fileName: 'herdr-desktop-agent-state.ts',
+  });
+}
+
+function ompTarget(): HookTarget {
+  return extensionTarget({
+    configDir: () => ompExtensionDir(),
+    asset: OMP_ASSET,
+    fileName: 'herdr-desktop-omp-agent-state.ts',
+  });
+}
+
+function piExtensionDir(): string | null {
+  return join(envOrHome('PI_CODING_AGENT_DIR', ['.pi', 'agent']), 'extensions');
+}
+
+function ompExtensionDir(): string | null {
+  const env = process.env.PI_CODING_AGENT_DIR?.trim();
+  const base = env ? expandTilde(env) : expandTilde(process.env.PI_CONFIG_DIR?.trim() || homeJoin('.omp'));
+  return join(base, 'agent', 'extensions');
+}
+
+function opencodeTarget(): HookTarget {
+  const dir = () => homeJoin('.config', 'opencode');
+  const pluginPath = () => join(dir(), 'plugins', 'herdr-desktop-agent-state.js');
+  const SPEC = './plugins/herdr-desktop-agent-state.js';
+  return {
+    configDir: dir,
+    hookPath: pluginPath,
+    isInstalled() {
+      return scriptInstalled(pluginPath());
+    },
+    async install(_reportUrl: string) {
+      const d = dir();
+      await fs.mkdir(join(d, 'plugins'), { recursive: true });
+      await fs.writeFile(pluginPath(), OPENCODE_ASSET, 'utf8');
+
+      // 注册到 cli.json（对应 herdr add_cli_plugin）：opencode 只加载 plugins 数组里声明的插件。
+      const cliPath = join(d, 'cli.json');
+      const root = await readJson(cliPath);
+      const plugins = Array.isArray(root.plugins) ? root.plugins : (root.plugins = []);
+      if (!plugins.some((p: unknown) => p === SPEC || (p && typeof p === 'object' && (p as any).package === SPEC))) {
+        plugins.push(SPEC);
+      }
+      await writeJson(cliPath, root);
+    },
+    async uninstall() {
+      const d = dir();
+      const cliPath = join(d, 'cli.json');
+      const root = await readJson(cliPath);
+      if (Array.isArray(root.plugins)) {
+        root.plugins = root.plugins.filter(
+          (p: unknown) => !(p === SPEC || (p && typeof p === 'object' && (p as any).package === SPEC)),
+        );
+        if (root.plugins.length === 0) delete root.plugins;
+        await writeJson(cliPath, root);
+      }
+      await fs.rm(pluginPath(), { force: true }).catch(() => undefined);
+    },
+  };
+}
+
+function kiloTarget(): HookTarget {
+  return extensionTarget({
+    configDir: () => homeJoin('.config', 'kilo'),
+    asset: KILO_ASSET,
+    fileName: join('plugin', 'herdr-desktop-agent-state.js'),
+  });
+}
+
+function hermesTarget(): HookTarget {
+  const pluginDir = () => homeJoin('.hermes', 'plugins', 'herdr-desktop-agent-state');
+  return {
+    configDir: pluginDir,
+    hookPath: () => join(pluginDir(), '__init__.py'),
+    isInstalled() {
+      return scriptInstalled(this.hookPath());
+    },
+    async install(_reportUrl: string) {
+      const dir = pluginDir();
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(join(dir, 'plugin.yaml'), HERMES_PLUGIN_YAML, 'utf8');
+      await fs.writeFile(join(dir, '__init__.py'), HERMES_PLUGIN_INIT, 'utf8');
+    },
+    async uninstall() {
+      await fs.rm(pluginDir(), { recursive: true, force: true }).catch(() => undefined);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// hook 脚本资产（bash / PowerShell，带标记 + 状态上报）
 // ---------------------------------------------------------------------------
 
 function hookScriptContent(windows: boolean): string {
@@ -532,34 +795,40 @@ function hookScriptContent(windows: boolean): string {
 }
 
 /**
- * hook 脚本：从 stdin 的 JSON 载荷里提取 session_id/sessionId，POST 回 Main。
- * agent 通过环境变量注入 HERDR_PANE_ID / HERDR_AGENT / HERDR_REPORT_URL，
- * 脚本据此构造上报体；提取不到会话 id 时静默退出（0），不影响 agent。
+ * hook 脚本：读取 action 参数（session/working/blocked/idle/done），从 stdin
+ * JSON 提取 session_id/sessionId，把会话引用与状态 POST 回 Main。
  */
 const UNIX_HOOK_SCRIPT = `#!/usr/bin/env bash
-# herdr-desktop agent hook: report the session id back to Herdr on SessionStart.
+# HERDR_INTEGRATION_ID=herdr-desktop
+# HERDR_INTEGRATION_VERSION=1
 set -u
+action="\${1:-session}"
 payload="$(cat)"
 session_id="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
 [ -z "$session_id" ] && session_id="$(printf '%s' "$payload" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
-[ -z "$session_id" ] && exit 0
-[ -z "$HERDR_REPORT_URL" ] && exit 0
-[ -z "$HERDR_PANE_ID" ] && exit 0
-agent="$HERDR_AGENT"
-[ -z "$agent" ] && agent="unknown"
-curl -s -X POST "$HERDR_REPORT_URL" -H 'Content-Type: application/json' \\
-  --data "{\\"paneId\\":\\"$HERDR_PANE_ID\\",\\"source\\":\\"herdr:$agent\\",\\"agent\\":\\"$agent\\",\\"sessionId\\":\\"$session_id\\"}" \\
-  >/dev/null 2>&1 || true
+[ -z "$HERDR_DESKTOP_REPORT_URL" ] && exit 0
+[ -z "$HERDR_DESKTOP_PANE_ID" ] && exit 0
+agent="\${HERDR_DESKTOP_AGENT:-unknown}"
+body="{\\"paneId\\":\\"$HERDR_DESKTOP_PANE_ID\\",\\"source\\":\\"herdr:$agent\\",\\"agent\\":\\"$agent\\""
+[ -n "$session_id" ] && body="$body,\\"sessionId\\":\\"$session_id\\""
+case "$action" in working|blocked|idle|done) body="$body,\\"state\\":\\"$action\\"";; esac
+body="$body}"
+curl -s -X POST "$HERDR_DESKTOP_REPORT_URL" -H 'Content-Type: application/json' --data "$body" >/dev/null 2>&1 || true
 `;
 
-const WINDOWS_HOOK_SCRIPT = `$ErrorActionPreference = 'SilentlyContinue'
+const WINDOWS_HOOK_SCRIPT = `# HERDR_INTEGRATION_ID=herdr-desktop
+# HERDR_INTEGRATION_VERSION=1
+$ErrorActionPreference = 'SilentlyContinue'
+$action = if ($args.Count -ge 1) { $args[0] } else { 'session' }
 $payload = [Console]::In.ReadToEnd()
 $sessionId = $null
 if ($payload -match '"session_id"\\s*:\\s*"([^"]+)"') { $sessionId = $Matches[1] }
 elseif ($payload -match '"sessionId"\\s*:\\s*"([^"]+)"') { $sessionId = $Matches[1] }
-if (-not $sessionId) { exit 0 }
-if (-not $env:HERDR_REPORT_URL -or -not $env:HERDR_PANE_ID) { exit 0 }
-$agent = if ($env:HERDR_AGENT) { $env:HERDR_AGENT } else { 'unknown' }
-$body = @{ paneId = $env:HERDR_PANE_ID; source = "herdr:$agent"; agent = $agent; sessionId = $sessionId } | ConvertTo-Json -Compress
-try { Invoke-RestMethod -Method Post -Uri $env:HERDR_REPORT_URL -ContentType 'application/json' -Body $body | Out-Null } catch { }
+if (-not $env:HERDR_DESKTOP_REPORT_URL -or -not $env:HERDR_DESKTOP_PANE_ID) { exit 0 }
+$agent = if ($env:HERDR_DESKTOP_AGENT) { $env:HERDR_DESKTOP_AGENT } else { 'unknown' }
+$body = @{ paneId = $env:HERDR_DESKTOP_PANE_ID; source = "herdr:$agent"; agent = $agent }
+if ($sessionId) { $body.sessionId = $sessionId }
+if ($action -in @('working','blocked','idle','done')) { $body.state = $action }
+$json = $body | ConvertTo-Json -Compress
+try { Invoke-RestMethod -Method Post -Uri $env:HERDR_DESKTOP_REPORT_URL -ContentType 'application/json' -Body $json | Out-Null } catch { }
 `;

@@ -12,12 +12,16 @@
 import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 
+export type AgentStateReport = 'working' | 'blocked' | 'idle' | 'done';
+
 export interface SessionReport {
   paneId: string;
   source: string;
   agent: string;
   sessionId?: string | null;
   sessionPath?: string | null;
+  /** agent 状态上报（对应 herdr 的 pane.report_agent state）。 */
+  state?: AgentStateReport | null;
 }
 
 export class ReportServer {
@@ -92,6 +96,7 @@ export class ReportServer {
           agent: parsed.agent,
           sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
           sessionPath: typeof parsed.sessionPath === 'string' ? parsed.sessionPath : null,
+          state: isState(parsed.state) ? parsed.state : null,
         };
       } catch {
         res.writeHead(400).end();
@@ -126,4 +131,8 @@ function readBody(req: import('node:http').IncomingMessage, maxBytes: number): P
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+function isState(value: unknown): value is AgentStateReport {
+  return value === 'working' || value === 'blocked' || value === 'idle' || value === 'done';
 }

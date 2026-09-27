@@ -269,9 +269,9 @@ const zhCN: Messages = {
     resetConfirm: '确定重新扫描本机的智能体命令？',
     installHook: '安装',
     uninstallHook: '卸载',
-    installAllHooks: '一键安装Hook',
+    installAllHooks: '一键安装',
     agentColumn: '智能体',
-    hookColumn: 'Hook 状态',
+    hookColumn: '集成',
     installColumn: '安装状态',
   },
   error: {
@@ -395,9 +395,9 @@ const en: Messages = {
     resetConfirm: 'Rescan for agent commands on this machine?',
     installHook: 'Install',
     uninstallHook: 'Uninstall',
-    installAllHooks: 'Install all hooks',
+    installAllHooks: 'Install all',
     agentColumn: 'Agent',
-    hookColumn: 'Hook',
+    hookColumn: 'Integration',
     installColumn: 'Installed',
   },
   error: {
