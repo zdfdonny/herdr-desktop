@@ -17,8 +17,6 @@ export const IPC = {
   /** agent 状态变化通知（blocked / done）。 */
   AGENT_STATUS: 'agent:status',
   AGENT_AVAILABILITY: 'agent:availability',
-  /** 菜单/快捷键请求新建 agent（Ctrl+T）。 */
-  NEW_AGENT: 'ui:new-agent',
   /** 菜单请求打开设置弹窗。 */
   UI_OPEN_SETTINGS: 'ui:open-settings',
   /** 菜单请求添加项目（打开系统目录选择器）。 */

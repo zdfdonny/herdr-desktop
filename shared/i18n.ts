@@ -171,7 +171,6 @@ export interface Messages {
   };
   menu: {
     file: string;
-    newAgent: string;
     addProject: string;
     settings: string;
     closeWindow: string;
@@ -321,7 +320,6 @@ const zhCN: Messages = {
   },
   menu: {
     file: '文件',
-    newAgent: '新建智能体',
     addProject: '添加项目',
     settings: '设置…',
     closeWindow: '关闭窗口',
@@ -472,7 +470,6 @@ const en: Messages = {
   },
   menu: {
     file: 'File',
-    newAgent: 'New Agent',
     addProject: 'Add Project',
     settings: 'Settings…',
     closeWindow: 'Close Window',

@@ -102,15 +102,6 @@ export function ProjectGroup({ group, focusedPaneId }: ProjectGroupProps) {
     openPicker();
   };
 
-  // 响应全局「新建 agent」请求（Ctrl+T 等入口）
-  const openAgentPickerRequest = useUiStore((s) => s.openAgentPickerRequest);
-  useEffect(() => {
-    if (openAgentPickerRequest?.projectId !== project.projectId) return;
-    openPicker();
-    useUiStore.getState().clearOpenAgentPickerRequest();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openAgentPickerRequest, project.projectId]);
-
   const handleToggle = () => {
     toggleProject(project.projectId, !project.collapsed);
   };

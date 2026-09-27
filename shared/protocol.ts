@@ -81,7 +81,6 @@ export type MainToRendererMessage =
   | { type: 'app:error'; payload: AppErrorPayload }
   | { type: 'agent:status'; payload: AgentStatusPayload }
   | { type: 'agent:availability'; payload: AgentAvailabilityPayload }
-  | { type: 'ui:new-agent'; payload: { projectId?: string } }
   | { type: 'ui:open-settings'; payload: Record<string, never> }
   | { type: 'ui:add-project'; payload: Record<string, never> }
   | {

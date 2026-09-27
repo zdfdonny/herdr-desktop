@@ -96,21 +96,6 @@ export default function App() {
           }
           break;
         }
-        case 'ui:new-agent': {
-          // 新建 agent（菜单 File → New Agent，Cmd/Ctrl+T）
-          const state = useSessionStore.getState().state;
-          const focusedPane = state.panes.find((p) => p.paneId === state.focusedPaneId);
-          const projectId =
-            focusedPane?.projectId ?? state.projects[0]?.projectId ?? null;
-          if (projectId) {
-            // 折叠侧栏时先展开，否则 ProjectGroup 未挂载、无法消费请求
-            if (useSettingsStore.getState().settings.sidebarCollapsed) {
-              useSettingsStore.getState().setSidebarCollapsed(false);
-            }
-            useUiStore.getState().requestOpenAgentPicker(projectId);
-          }
-          break;
-        }
         case 'ui:open-settings':
           useUiStore.getState().openSettings();
           break;

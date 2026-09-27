@@ -156,7 +156,6 @@ function buildMenu(): void {
     {
       label: t('menu.file'),
       submenu: [
-        { label: t('menu.newAgent'), accelerator: 'CmdOrCtrl+T', click: () => openNewPane() },
         {
           label: t('menu.addProject'),
           accelerator: 'CmdOrCtrl+Shift+N',
@@ -232,17 +231,6 @@ function sendUi(type: string, payload: Record<string, unknown> = {}): void {
   const win = BrowserWindow.getAllWindows()[0];
   if (win) {
     win.webContents.send(type, { type, version: 1, payload });
-  }
-}
-
-function openNewPane(): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win) {
-    win.webContents.send(IPC.NEW_AGENT, {
-      type: IPC.NEW_AGENT,
-      version: 1,
-      payload: {},
-    });
   }
 }
 

@@ -304,7 +304,7 @@ interface PtyRuntime {
 | `app:info` / `app:error` | 应用信息 / 错误 toast（key 下发，渲染端本地化） |
 | `agent:status` | 状态变化通知（blocked / done） |
 | `agent:availability` | 命令可用性探测结果 |
-| `ui:new-agent` | Ctrl+T 新建 agent 请求 |
+| `ui:open-settings` / `ui:add-project` | 菜单触发的设置弹窗 / 添加项目请求 |
 
 **Renderer → Main（`control:*`）：**
 
