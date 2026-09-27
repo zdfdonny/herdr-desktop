@@ -14,11 +14,26 @@
 
 ## 截图
 
+### 多 agent 分屏（深色主题）
+
 ![Herdr Desktop 界面](docs/screenshot.png)
 
-左侧是项目与 agent 列表（带分支徽标与状态点），右侧并排显示多个 agent 的终端。
-图中 5 个 agent 同时运行，状态分别为工作中 / 已完成 / 空闲 / 等待输入，
-右下角是 agent 状态变化时弹出的应用内提示。
+左侧是项目与 agent 列表（带分支徽标与状态点），右侧是当前视图的分屏终端，
+顶部标签栏可以同时挂好几套工作区：图中「PTY 重构」这个标签内部三格分屏，
+「代码审查」与「DSH Web」各占一个标签。侧栏四个状态点分别是工作中（Claude Code）、
+已完成（Codex）、等待输入（OpenCode）、空闲（Gemini CLI，在「代码审查」标签里），
+右下角是状态变化时弹出的应用内提示。
+
+### 内嵌 DeepSeek Harness
+
+![内嵌 DeepSeek Harness Web GUI](docs/screenshot-web.png)
+
+agent 不一定非得是命令行程序：`DeepSeek Harness` 直接把它的 Web GUI 嵌进 pane，
+用独立的 session 分区隔离，外观跟随应用主题。
+
+### 浅色主题
+
+![浅色主题](docs/screenshot-light.png)
 
 ---
 
@@ -70,10 +85,13 @@ Herdr Desktop 不走这条捷径：它**不依赖 herdr 二进制**，而是自�
   Cline、MastraCode、Letta、Muse……外加一个普通终端
 - **可用性探测**：创建时按 PATH 实际解析结果过滤掉没装的 agent，
   只显示本机真正能用的
+- **内嵌 Web agent**：`DeepSeek Harness` 不是终端 TUI，而是由主进程托管
+  `dsh web`、把 Web GUI 直接嵌进 pane（独立 session 分区），
+  可以和终端 agent 混排在同一个视图里
 - **状态徽标**：idle / working / blocked / done
 - **状态变化通知**：转到 blocked / done 时弹 toast；blocked 且窗口未聚焦时
   额外发系统通知
-- **多 pane 并排**：水平分屏，每个 pane 独立 xterm 实例互不串扰
+- **多 pane 分屏**：视图内水平 / 垂直分屏，每个 pane 独立 xterm 实例互不串扰
 
 ### 会话与恢复
 
@@ -84,8 +102,11 @@ Herdr Desktop 不走这条捷径：它**不依赖 herdr 二进制**，而是自�
 
 ### 界面
 
-- **风格左右分栏**，自定义标题栏（保留原生窗口按钮）
-- **浅色 / 深色 / 跟随系统** 主题
+- **标签页 + 视图内分屏**：一个标签就是一套工作区，视图内可水平 / 垂直分屏，
+  拖动分割条调整比例；标签右键重命名
+- **浮动面板布局**：侧栏与主区域是两块圆角面板，自绘标题栏（保留原生窗口按钮），
+  左侧栏可折叠
+- **浅色 / 深色 / 跟随系统** 主题，终端与内嵌 Web pane 一并跟随
 - **中英文界面**，中文默认
 
 ---
@@ -156,8 +177,10 @@ npm run dev
 
 1. 点击左侧 **添加项目**，选一个本地代码目录
 2. 在项目下点击 **+**，从列表里选一个 agent（只会显示本机已安装的）
-3. agent 启动后，右侧即可看到它的终端；侧栏状态点会随 agent 状态变化
-4. 关闭窗口不会中断 agent —— 重新打开后点击该 agent 即可回到会话
+3. agent 启动后会**新开一个标签**；用 pane 头部的分屏按钮把下一个 agent
+   并进当前视图；侧栏状态点会随 agent 状态变化
+4. 标签可右键重命名；关闭标签会一并结束它里面的 agent
+5. 关闭窗口不会中断 agent —— 重新打开后点击该 agent 即可回到会话
 
 ---
 

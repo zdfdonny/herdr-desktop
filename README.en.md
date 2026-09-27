@@ -14,12 +14,29 @@
 
 ## Screenshot
 
+### Multiple agents in split panes (dark theme)
+
 ![Herdr Desktop interface](docs/screenshot.png)
 
-Projects and agents on the left (with branch badges and status dots), several agent
-terminals side by side on the right. The screenshot shows 5 agents running at once
-in working / done / idle / waiting-for-input states, with the in-app status
-notification in the bottom-right corner.
+Projects and agents on the left (with branch badges and status dots), the current
+view's split terminals on the right, and a tab bar along the top holding several
+workspaces at once: the "PTY 重构" tab is split into three panes, while "代码审查"
+and "DSH Web" each get a tab of their own. The four sidebar dots read working
+(Claude Code), done (Codex), waiting for input (OpenCode) and idle (Gemini CLI,
+which lives in the "代码审查" tab). The in-app status toasts appear in the
+bottom-right corner.
+
+### Embedded DeepSeek Harness
+
+![Embedded DeepSeek Harness web GUI](docs/screenshot-web.png)
+
+An agent doesn't have to be a command-line program: `DeepSeek Harness` embeds its
+web GUI directly in the pane, isolated in its own session partition and following
+the app theme.
+
+### Light theme
+
+![Light theme](docs/screenshot-light.png)
 
 ---
 
@@ -77,11 +94,14 @@ manages the agent processes directly.
   MastraCode, Letta, Muse, and more, plus a plain terminal
 - **Availability probing** — filters by what actually resolves on your PATH, so
   only agents you have installed are shown
+- **Embedded web agents** — `DeepSeek Harness` is not a terminal TUI: the main
+  process hosts `dsh web` and embeds its web GUI straight into a pane (in its own
+  session partition), so it can sit next to terminal agents in the same view
 - **Status badges** — idle / working / blocked / done
 - **Status change notifications** — toast on blocked / done, plus a native system
   notification when blocked while the window is unfocused
-- **Side-by-side panes** — horizontal split, each pane an independent xterm
-  instance with no cross-talk
+- **Split panes** — horizontal or vertical splits inside a view, each pane an
+  independent xterm instance with no cross-talk
 
 ### Sessions and recovery
 
@@ -95,8 +115,12 @@ manages the agent processes directly.
 
 ### Interface
 
-- **split style layout** with a custom title bar (native window buttons kept)
-- **Light / dark / follow-system** themes
+- **Tabs + in-view splits** — one tab is one workspace; split a view horizontally
+  or vertically and drag the divider to resize; right-click a tab to rename it
+- **Floating panel layout** — the sidebar and main area are two rounded panels,
+  with a custom title bar (native window buttons kept) and a collapsible sidebar
+- **Light / dark / follow-system** themes, applied to terminals and embedded web
+  panes alike
 - **Chinese and English UI**, Chinese by default
 
 ---
@@ -167,8 +191,10 @@ For a specific architecture use `dist:win:x64` / `dist:win:arm64` /
 
 1. Click **Add Project** on the left and pick a local code directory
 2. Click **+** under the project and choose an agent (only installed ones appear)
-3. The agent's terminal shows up on the right; the sidebar status dot tracks it
-4. Closing the window does **not** kill agents — reopen and click the agent to
+3. The agent opens in a **new tab**; use the split button in a pane header to pull
+   the next agent into the current view; the sidebar dot tracks its status
+4. Right-click a tab to rename it; closing a tab also ends the agents inside it
+5. Closing the window does **not** kill agents — reopen and click the agent to
    return to its session
 
 ---
