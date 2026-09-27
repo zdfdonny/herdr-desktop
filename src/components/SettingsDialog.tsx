@@ -193,15 +193,11 @@ export function SettingsDialog() {
       return preset ? isAvailable(availability, probed, preset.command) : false;
     });
     void Promise.all(
-      agents.map((agentId) => installHook(agentId).then((status) => ({ agentId, status }))),
+      agents.map((agentId) => installHook(agentId).catch(() => 'not-installed' as HookStatus)),
     )
-      .then((results) => {
-        setHookStatuses((prev) => {
-          const next = { ...prev };
-          for (const { agentId, status } of results) next[agentId] = status;
-          return next;
-        });
-      })
+      // 装完后从 Main 重新拉一次权威状态，确保 UI 反映真实落盘结果
+      .then(() => getHookStatuses())
+      .then((statuses) => setHookStatuses(statuses))
       .catch(() => undefined)
       .finally(() => setHookBusyAll(false));
   };
