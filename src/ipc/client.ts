@@ -70,6 +70,11 @@ export function uninstallHook(agentId: string): Promise<HookStatus> {
   return api().uninstallHook(agentId);
 }
 
+/** 标记集成设置引导已完成（首次启动引导后调用）。 */
+export function setIntegrationsOnboarded(onboarded: boolean): void {
+  api().setIntegrationsOnboarded(onboarded);
+}
+
 /** 添加项目。 */
 export function addProject(path: string, name?: string): void {
   sendControl({ type: 'control:add-project', version: 1, payload: { path, name } });

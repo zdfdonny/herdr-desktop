@@ -204,6 +204,13 @@ export interface AppSettings {
    * 主进程据此在 spawn 时决定是否注入代理环境变量。
    */
   proxyAgents: Record<string, boolean>;
+  /**
+   * 集成设置引导是否已完成。
+   *
+   * 首次启动时若为 false，渲染端会主动打开「集成」设置页做一次引导，
+   * 并立即把它置为 true，保证只引导一次。
+   */
+  integrationsOnboarded: boolean;
 }
 
 /** agent 检测 manifest（继承 herdr 的声明式检测思想）。 */

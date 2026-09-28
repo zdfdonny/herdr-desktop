@@ -70,6 +70,9 @@ const api: HerdrDesktopApi = {
   uninstallHook(agentId: string): Promise<import('../shared/protocol').HookStatus> {
     return ipcRenderer.invoke('herdr:hook-uninstall', agentId);
   },
+  setIntegrationsOnboarded(onboarded: boolean): void {
+    ipcRenderer.send(IPC.SET_INTEGRATIONS_ONBOARDED, { onboarded });
+  },
 };
 
 contextBridge.exposeInMainWorld('herdrDesktop', api);

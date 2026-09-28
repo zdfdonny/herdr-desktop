@@ -300,6 +300,22 @@ export function IconGlobe({ size = 16, className }: IconProps) {
   );
 }
 
+/** 集成（连接 / 链环，取自 Feather 的 link 图标）。 */
+export function IconIntegrations({ size = 16, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      className={className}
+      {...BASE}
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
 /** Agent 检测（终端窗口）。 */
 export function IconTerminal({ size = 16, className }: IconProps) {
   return (

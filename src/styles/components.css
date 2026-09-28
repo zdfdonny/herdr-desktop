@@ -2146,12 +2146,6 @@
   width: 100%;
 }
 
-/* 一键安装 hook 的工具条 */
-.hooks-toolbar {
-  width: 100%;
-  margin-bottom: 8px;
-}
-
 .proxy-agent {
   display: flex;
   align-items: center;
@@ -2170,7 +2164,7 @@
   color: var(--text-primary);
 }
 
-/* Agent 检测列表 */
+/* 集成列表：两列 —— 智能体名字 | 状态/动作 */
 .agent-status-list {
   list-style: none;
   margin: 12px 0 0;
@@ -2180,29 +2174,12 @@
   gap: 2px;
 }
 
-/* Agent 检测列表：三列 —— 智能体 | Hook 状态 | 安装状态 */
-.agent-list-header,
 .agent-status {
   display: grid;
-  grid-template-columns: 1fr 200px 90px;
+  grid-template-columns: 1fr auto;
   gap: 10px;
   align-items: center;
   padding: 7px 10px;
-}
-
-.agent-list-header {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding-top: 0;
-}
-
-.agent-list-header__agent,
-.agent-list-header__hook,
-.agent-list-header__install {
-  min-width: 0;
-}
-
-.agent-status {
   border-radius: var(--radius-md);
   background: var(--bg-surface);
   font-size: 12.5px;
@@ -2238,29 +2215,33 @@
   white-space: nowrap;
 }
 
-.agent-status__hook {
+.agent-status__state {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
   min-width: 0;
 }
 
-.agent-status__hook-state {
-  font-size: 11.5px;
-  flex-shrink: 0;
+.agent-status__state-text {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
-.agent-status__install {
-  font-size: 11.5px;
+/* 集成页头部：说明文案 + 一键安装按钮 */
+.integrations-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
-.agent-status__hook-state.is-ok,
-.agent-status__install.is-ok {
-  color: var(--status-done);
-}
-
-.agent-status__hook-state.is-missing,
-.agent-status__install.is-missing {
+.integrations-intro {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--text-muted);
 }
 

@@ -71,6 +71,10 @@ export type ControlMessage =
       type: 'control:set-agent-proxy';
       version: 1;
     })
+  | (IpcEnvelope<{ onboarded: boolean }> & {
+      type: 'control:set-integrations-onboarded';
+      version: 1;
+    })
   | (IpcEnvelope<{ kind: string; data: string }> & { type: 'control:named'; version: 1 });
 
 /** Main → Renderer 的全部消息联合。 */
@@ -150,7 +154,7 @@ export interface AgentStatusPayload {
 }
 
 /** 官方集成 hook 的安装状态。 */
-export type HookStatus = 'installed' | 'not-installed' | 'unsupported';
+export type HookStatus = 'installed' | 'not-installed' | 'unsupported' | 'outdated';
 
 /** Renderer → Main 的全部消息联合。 */
 export type RendererToMainMessage = ControlMessage;
@@ -177,6 +181,8 @@ export interface HerdrDesktopApi {
   installHook(agentId: string): Promise<HookStatus>;
   /** 卸载某 agent 的官方集成 hook。 */
   uninstallHook(agentId: string): Promise<HookStatus>;
+  /** 标记集成设置引导已完成（首次启动引导后调用）。 */
+  setIntegrationsOnboarded(onboarded: boolean): void;
 }
 
 export type {

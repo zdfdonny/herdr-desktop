@@ -28,6 +28,12 @@ import {
 } from './integration-assets';
 
 const INTEGRATION_ID = 'herdr-desktop';
+/**
+ * 当前集成资产版本。所有 hook/插件资产模板里的 `HERDR_INTEGRATION_VERSION`
+ * 统一用它；升级资产时同步 bump 这里，设置页据此把「已安装但版本旧」的
+ * agent 标记为「更新」。
+ */
+const INTEGRATION_VERSION = 1;
 const HOOK_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-state.ps1' : 'herdr-desktop-agent-state.sh';
 /** qwen / letta 用会话专用脚本名（对应 herdr 的 `*_HOOK_INSTALL_NAME`）。 */
 const SESSION_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-session.ps1' : 'herdr-desktop-agent-session.sh';
@@ -135,9 +141,26 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
 export function hookStatuses(): Record<string, HookStatus> {
   const result: Record<string, HookStatus> = {};
   for (const [id, target] of Object.entries(HOOK_TARGETS)) {
-    result[id] = target.isInstalled() ? 'installed' : 'not-installed';
+    if (!target.isInstalled()) {
+      result[id] = 'not-installed';
+      continue;
+    }
+    const version = readInstalledVersion(target.hookPath());
+    result[id] = version !== null && version < INTEGRATION_VERSION ? 'outdated' : 'installed';
   }
   return result;
+}
+
+/** 读取已安装资产里的版本标记；读不到时返回 null。 */
+function readInstalledVersion(path: string | null): number | null {
+  if (!path) return null;
+  try {
+    const content = readFileSync(path, 'utf8');
+    const match = content.match(/HERDR_INTEGRATION_VERSION=(\d+)/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function installHook(agentId: string, reportUrl: string): Promise<HookStatus> {

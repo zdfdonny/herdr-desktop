@@ -7,8 +7,8 @@
  * 3. 探测本机 agent 命令可用性。
  */
 
-import { useEffect } from 'react';
-import { onMessage, getSettings, pickDirectory, addProject } from './ipc/client';
+import { useEffect, useRef } from 'react';
+import { onMessage, getSettings, pickDirectory, addProject, setIntegrationsOnboarded } from './ipc/client';
 import { useSessionStore } from './stores/sessionStore';
 import { useTerminalStore, terminalBus } from './stores/terminalStore';
 import { useSettingsStore, applyThemeToDom } from './stores/settingsStore';
@@ -113,11 +113,21 @@ export default function App() {
     return unsubscribe;
   }, [setState, appendTerminal, applySettings]);
 
+  const onboardedRef = useRef(false);
+
   // 首帧先用默认主题渲染，再拉取持久化设置
   useEffect(() => {
     applyThemeToDom(useSettingsStore.getState().settings.theme);
     void getSettings()
-      .then(applySettings)
+      .then((settings) => {
+        applySettings(settings);
+        // 首次启动：弹出集成设置页做一次引导（只触发一次）
+        if (!onboardedRef.current && settings.integrationsOnboarded !== true) {
+          onboardedRef.current = true;
+          useUiStore.getState().openSettings('integrations');
+          setIntegrationsOnboarded(true);
+        }
+      })
       .catch(() => {
         /* 主进程尚未就绪时保持默认 */
       });

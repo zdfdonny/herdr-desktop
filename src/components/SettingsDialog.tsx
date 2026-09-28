@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ThemePreference, Language } from '@shared/state';
 import { useSettingsStore, useResolvedTheme } from '../stores/settingsStore';
-import { useUiStore } from '../stores/uiStore';
+import { useUiStore, type SettingsSection } from '../stores/uiStore';
 import { useT } from '../i18n';
 import { LANGUAGES, LANGUAGE_LABELS, type MessageKey } from '../i18n/messages';
 import { AGENT_PRESETS, useAgentsStore, isAvailable } from '../stores/agentsStore';
@@ -18,7 +18,7 @@ import type { ProxyTestResult, HookStatus } from '@shared/protocol';
 import {
   IconSliders,
   IconGlobe,
-  IconTerminal,
+  IconIntegrations,
   IconInfo,
   IconSearch,
   IconClose,
@@ -33,7 +33,7 @@ const THEME_OPTIONS: Array<{ value: ThemePreference; labelKey: MessageKey }> = [
 const MIN_FONT = 9;
 const MAX_FONT = 24;
 
-type SectionId = 'general' | 'agents' | 'proxy' | 'about';
+type SectionId = SettingsSection;
 
 /**
  * 把检测结果翻译成用户可读文案。
@@ -92,10 +92,10 @@ const SECTIONS: Section[] = [
     ],
   },
   {
-    id: 'agents',
-    Icon: IconTerminal,
-    labelKey: 'settings.agents',
-    keywords: ['agent', '检测', 'detect', 'command', '命令'],
+    id: 'integrations',
+    Icon: IconIntegrations,
+    labelKey: 'settings.integrations',
+    keywords: ['integration', '集成', 'agent', '智能体', 'hook', '状态', 'status', 'detect', '检测'],
   },
   {
     id: 'proxy',
@@ -124,9 +124,9 @@ export function SettingsDialog() {
 
   const availability = useAgentsStore((s) => s.availability);
   const probed = useAgentsStore((s) => s.probed);
-  const refreshAgents = useAgentsStore((s) => s.refresh);
 
-  const [active, setActive] = useState<SectionId>('general');
+  const initialSection = useUiStore((s) => s.settingsSection);
+  const [active, setActive] = useState<SectionId>(initialSection ?? 'general');
   const [query, setQuery] = useState('');
   const [appInfo, setAppInfo] = useState<{ version: string; platform: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -344,9 +344,10 @@ export function SettingsDialog() {
               </Section>
             )}
 
-            {active === 'agents' && (
-              <Section title={t('settings.agents')}>
-                <div className="hooks-toolbar">
+            {active === 'integrations' && (
+              <Section title={t('settings.integrations')}>
+                <div className="integrations-header">
+                  <p className="integrations-intro">{t('settings.integrationsHint')}</p>
                   <button
                     type="button"
                     className="button"
@@ -358,22 +359,67 @@ export function SettingsDialog() {
                 </div>
 
                 <ul className="agent-status-list">
-                  <li className="agent-list-header" role="row">
-                    <span className="agent-list-header__agent" role="columnheader">
-                      {t('settings.agentColumn')}
-                    </span>
-                    <span className="agent-list-header__hook" role="columnheader">
-                      {t('settings.hookColumn')}
-                    </span>
-                    <span className="agent-list-header__install" role="columnheader">
-                      {t('settings.installColumn')}
-                    </span>
-                  </li>
                   {AGENT_PRESETS.map((preset) => {
                     const isOk = isAvailable(availability, probed, preset.command);
                     const hookStatus = hookStatuses[preset.id];
                     const busy = hookBusy === preset.id;
-                    const hookInstalled = hookStatus === 'installed';
+
+                    /*
+                     * 状态列的五种情况：
+                     * - 未安装 → 未找到
+                     * - 已安装但不支持集成（不在 HOOK_TARGETS）→ 不支持
+                     * - 已安装未集成 → 安装
+                     * - 已集成 → 卸载
+                     * - 已集成但版本旧 → 更新
+                     */
+                    let statusCell: React.ReactNode;
+                    if (!isOk) {
+                      statusCell = (
+                        <span className="agent-status__state-text">
+                          {t('settings.integrationNotFound')}
+                        </span>
+                      );
+                    } else if (hookStatus === undefined || hookStatus === 'unsupported') {
+                      statusCell = (
+                        <span className="agent-status__state-text">
+                          {t('settings.integrationUnsupported')}
+                        </span>
+                      );
+                    } else if (hookStatus === 'installed') {
+                      statusCell = (
+                        <button
+                          type="button"
+                          className="button button--small"
+                          disabled={busy}
+                          onClick={() => handleHookUninstall(preset.id)}
+                        >
+                          {busy ? '…' : t('settings.uninstallHook')}
+                        </button>
+                      );
+                    } else if (hookStatus === 'outdated') {
+                      statusCell = (
+                        <button
+                          type="button"
+                          className="button button--small"
+                          disabled={busy}
+                          onClick={() => handleHookInstall(preset.id)}
+                        >
+                          {busy ? '…' : t('settings.integrationUpdate')}
+                        </button>
+                      );
+                    } else {
+                      statusCell = (
+                        <button
+                          type="button"
+                          className="button button--small"
+                          disabled={busy}
+                          onClick={() => handleHookInstall(preset.id)}
+                        >
+                          {busy ? '…' : t('settings.installHook')}
+                        </button>
+                      );
+                    }
+
                     return (
                       <li key={preset.id} className="agent-status">
                         <span className="agent-status__agent">
@@ -383,45 +429,11 @@ export function SettingsDialog() {
                           />
                           <span className="agent-status__name">{preset.label}</span>
                         </span>
-                        <span className="agent-status__hook">
-                          {hookStatus !== undefined && isOk ? (
-                            <button
-                              type="button"
-                              className="button button--small"
-                              disabled={busy || hookStatus === 'unsupported'}
-                              onClick={() =>
-                                hookInstalled
-                                  ? handleHookUninstall(preset.id)
-                                  : handleHookInstall(preset.id)
-                              }
-                            >
-                              {busy
-                                ? '…'
-                                : hookInstalled
-                                  ? t('settings.uninstallHook')
-                                  : t('settings.installHook')}
-                            </button>
-                          ) : (
-                            <span className="agent-status__hook-state is-missing">—</span>
-                          )}
-                        </span>
-                        <span className={`agent-status__install ${isOk ? 'is-ok' : 'is-missing'}`}>
-                          {isOk ? t('settings.installed') : t('settings.notInstalled')}
-                        </span>
+                        <span className="agent-status__state">{statusCell}</span>
                       </li>
                     );
                   })}
                 </ul>
-
-                <Row label={t('settings.resetHint')}>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => void refreshAgents()}
-                  >
-                    {t('settings.reset')}
-                  </button>
-                </Row>
               </Section>
             )}
 

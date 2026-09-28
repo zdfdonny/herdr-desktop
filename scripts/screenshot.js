@@ -120,6 +120,7 @@ const DEMO_SETTINGS = {
   sidebarCollapsed: false,
   proxyUrl: '',
   proxyAgents: {},
+  integrationsOnboarded: true,
 };
 
 /* ===== 演示帧 ===== */

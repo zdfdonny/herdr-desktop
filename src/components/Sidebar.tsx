@@ -93,7 +93,7 @@ export function Sidebar() {
       <button
         type="button"
         className={`sidebar__settings ${settingsOpen ? 'is-active' : ''}`}
-        onClick={openSettings}
+        onClick={() => openSettings()}
         aria-current={settingsOpen}
       >
         <span className="sidebar__settings-icon" aria-hidden="true">

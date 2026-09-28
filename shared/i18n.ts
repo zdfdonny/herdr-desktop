@@ -136,22 +136,18 @@ export interface Messages {
     proxyTestTimeout: string;
     proxyTestFailed: string;
     proxyTestAuth: string;
-    agents: string;
-    installed: string;
-    notInstalled: string;
+    integrations: string;
+    integrationsHint: string;
     about: string;
     version: string;
     platform: string;
     dataDir: string;
-    reset: string;
-    resetHint: string;
-    resetConfirm: string;
     installHook: string;
     uninstallHook: string;
     installAllHooks: string;
-    agentColumn: string;
-    hookColumn: string;
-    installColumn: string;
+    integrationNotFound: string;
+    integrationUnsupported: string;
+    integrationUpdate: string;
   };
   error: {
     commandNotFound: string;
@@ -285,22 +281,18 @@ const zhCN: Messages = {
     proxyTestTimeout: '连接超时，代理未响应',
     proxyTestFailed: '无法通过该代理建立连接',
     proxyTestAuth: '代理要求身份验证（407）',
-    agents: '智能体',
-    installed: '已安装',
-    notInstalled: '未安装',
+    integrations: '集成',
+    integrationsHint: '让智能体直接报告状态，而不是仅依赖进程检测',
     about: '关于',
     version: '版本',
     platform: '平台',
     dataDir: '数据目录',
-    reset: '重新扫描',
-    resetHint: '重新检测本机已安装的智能体',
-    resetConfirm: '确定重新扫描本机的智能体命令？',
     installHook: '安装',
     uninstallHook: '卸载',
     installAllHooks: '一键安装',
-    agentColumn: '智能体',
-    hookColumn: '集成',
-    installColumn: '安装状态',
+    integrationNotFound: '未找到',
+    integrationUnsupported: '不支持',
+    integrationUpdate: '更新',
   },
   error: {
     commandNotFound: '命令不存在',
@@ -435,22 +427,19 @@ const en: Messages = {
     proxyTestTimeout: 'Timed out; the proxy did not respond',
     proxyTestFailed: 'Could not connect through this proxy',
     proxyTestAuth: 'Proxy requires authentication (407)',
-    agents: 'Agent',
-    installed: 'Installed',
-    notInstalled: 'Not installed',
+    integrations: 'Integrations',
+    integrationsHint:
+      'Let agents report their status directly instead of relying only on process detection',
     about: 'About',
     version: 'Version',
     platform: 'Platform',
     dataDir: 'Data directory',
-    reset: 'Rescan',
-    resetHint: 'Re-detect agents installed on this machine',
-    resetConfirm: 'Rescan for agent commands on this machine?',
     installHook: 'Install',
     uninstallHook: 'Uninstall',
     installAllHooks: 'Install all',
-    agentColumn: 'Agent',
-    hookColumn: 'Integration',
-    installColumn: 'Installed',
+    integrationNotFound: 'Not found',
+    integrationUnsupported: 'Not supported',
+    integrationUpdate: 'Update',
   },
   error: {
     commandNotFound: 'Command not found',

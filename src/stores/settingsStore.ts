@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sidebarCollapsed: false,
   proxyUrl: '',
   proxyAgents: {},
+  integrationsOnboarded: false,
 };
 
 /** 由偏好 + 系统外观解析出实际主题。 */

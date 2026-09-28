@@ -19,6 +19,7 @@ const DEFAULTS: AppSettings = {
   sidebarCollapsed: false,
   proxyUrl: '',
   proxyAgents: {},
+  integrationsOnboarded: false,
 };
 
 function settingsPath(): string {
@@ -47,6 +48,7 @@ export class SettingsStore {
         sidebarCollapsed: DEFAULTS.sidebarCollapsed,
         proxyUrl: normalizeProxyUrl(parsed.proxyUrl),
         proxyAgents: normalizeProxyAgents(parsed.proxyAgents),
+        integrationsOnboarded: parsed.integrationsOnboarded === true,
       };
     } catch {
       this.settings = { ...DEFAULTS };
@@ -104,6 +106,13 @@ export class SettingsStore {
         this.settings.proxyAgents = next;
       }
     }
+    await this.save();
+    return this.get();
+  }
+
+  /** 标记集成设置引导已完成（只在首次启动引导后调用一次）。 */
+  async setIntegrationsOnboarded(onboarded: boolean): Promise<AppSettings> {
+    this.settings.integrationsOnboarded = onboarded === true;
     await this.save();
     return this.get();
   }

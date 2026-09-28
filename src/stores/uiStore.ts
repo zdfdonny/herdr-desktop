@@ -15,10 +15,15 @@ export interface ConfirmState {
   onConfirm: () => void;
 }
 
+/** 设置弹窗的分类（与 SettingsDialog 的左侧导航一致）。 */
+export type SettingsSection = 'general' | 'integrations' | 'proxy' | 'about';
+
 interface UiStore {
   /** 设置弹窗是否打开。 */
   settingsOpen: boolean;
-  openSettings: () => void;
+  /** 打开设置弹窗时要展示的分类；null 表示默认「通用」。 */
+  settingsSection: SettingsSection | null;
+  openSettings: (section?: SettingsSection | null) => void;
   closeSettings: () => void;
   toggleSettings: () => void;
   /** 应用内确认对话框（替代原生 confirm()）。 */
@@ -29,9 +34,11 @@ interface UiStore {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   settingsOpen: false,
-  openSettings: () => set({ settingsOpen: true }),
-  closeSettings: () => set({ settingsOpen: false }),
-  toggleSettings: () => set({ settingsOpen: !get().settingsOpen }),
+  settingsSection: null,
+  openSettings: (section = null) => set({ settingsOpen: true, settingsSection: section }),
+  closeSettings: () => set({ settingsOpen: false, settingsSection: null }),
+  toggleSettings: () =>
+    set({ settingsOpen: !get().settingsOpen, settingsSection: get().settingsOpen ? null : get().settingsSection }),
   confirm: null,
   openConfirm: (confirm) => set({ confirm }),
   closeConfirm: () => set({ confirm: null }),

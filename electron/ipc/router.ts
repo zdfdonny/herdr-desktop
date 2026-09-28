@@ -281,6 +281,14 @@ export class IpcRouter {
           .then((settings) => this.pushSettings(settings));
       },
     );
+    ipcMain.on(
+      IPC.SET_INTEGRATIONS_ONBOARDED,
+      (_event, payload: { onboarded: boolean }) => {
+        void this.settings
+          .setIntegrationsOnboarded(payload.onboarded)
+          .then((settings) => this.pushSettings(settings));
+      },
+    );
     ipcMain.on(IPC.NAMED, (_event, payload: { kind: string; data: string }) => {
       this.handleNamed(payload);
     });
