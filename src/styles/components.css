@@ -656,14 +656,23 @@
   gap: 6px;
 }
 
+/*
+ * 名字占满整行可用宽度（260px 侧栏下约 145px），只有真放不下才出省略号。
+ *
+ * 旧值 max-width: 45% 是早期「名字 + 副标题」两列布局的遗留：副标题现在只进
+ * title 提示、不再渲染（见 AgentRow 的 subtitle），那 55% 便白白空着，把
+ * "Claude Code" / "DeepSeek Harness" 这类正常长度的名字截成了 "Claude Co…" /
+ * "DeepSeek…"。最长预设（"GitHub Copilot CLI"，18 字符 ≈ 112px）现在也能完整显示。
+ */
 .agent-row__name {
   font-size: 12.5px;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
-  max-width: 45%;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* 项目路径用 RTL 截断以保留盘符与末级目录名 */
