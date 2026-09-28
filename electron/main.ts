@@ -4,20 +4,36 @@
  * 创建窗口、注册 IPC、管理 Agent 运行时生命周期。
  */
 
-import { app, BrowserWindow, Menu, shell, ipcMain } from 'electron';
+import { app, BrowserWindow, Menu, shell, ipcMain, nativeTheme } from 'electron';
 import { join } from 'node:path';
 import { IpcRouter } from './ipc/router';
 import { IPC } from './ipc/protocol';
 import { translate, type MessageKey } from '../shared/i18n';
 
 /**
- * 窗口底色，需与渲染侧深色主题的 --bg-app 一致。
- * 渲染进程首次绘制前会先露出这层底色，不一致会闪一下旧配色。
+ * 主题对应的窗口底色与原生标题栏按钮配色，需与 global.css 的 --bg-app 一致。
  *
- * 浮动面板布局下 --bg-app 是"面板之间的缝隙色"，也是标题栏底色，
- * 因此这个值同时决定了原生窗口按钮条的颜色是否与标题栏齐平。
+ * 渲染进程首次绘制前会先露出窗口底色（backgroundColor），不一致会闪一下旧配色；
+ * 浮动面板布局下 --bg-app 是"面板之间的缝隙色"，也是标题栏底色，因此这里同时
+ * 决定原生窗口按钮条的颜色是否与标题栏齐平。
  */
-const APP_BACKGROUND = '#0d0d0d';
+const THEME_COLORS = {
+  light: { background: '#fafafd', overlay: '#fafafd', symbol: '#3b3b3b' },
+  dark: { background: '#0d0d0d', overlay: '#0d0d0d', symbol: '#cccccc' },
+} as const;
+
+type ResolvedTheme = keyof typeof THEME_COLORS;
+
+/**
+ * 把原生主题解析为实际主题。
+ *
+ * nativeTheme.themeSource 已在 IpcRouter.loadSettings() / 主题切换时按应用设置同步，
+ * 因此 shouldUseDarkColors 就是「system 已解析为具体值」后的结果。
+ */
+function resolveNativeTheme(): ResolvedTheme {
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+}
+
 const DEFAULT_WINDOW = { width: 1280, height: 800, minWidth: 720, minHeight: 480 };
 
 /** 自绘标题栏高度，需与渲染侧 CSS 中的 --titlebar-height 保持一致。 */
@@ -32,18 +48,27 @@ const APP_ICON = join(__dirname, '../../build/icon.png');
 
 /**
  * 标题栏叠加层配色：跟随应用主题，由渲染侧通过 IPC 更新。
- * 初值与渲染侧浅色主题的 --bg-app 一致（深色主题会在渲染后立刻同步覆盖）。
+ * 创建窗口时按当前主题初始化；弹窗打开时渲染侧会发送压暗后的近似色。
  */
-let overlayColors = { color: '#fafafd', symbolColor: '#3b3b3b' };
+let overlayColors: { color: string; symbolColor: string } = {
+  color: THEME_COLORS.light.overlay,
+  symbolColor: THEME_COLORS.light.symbol,
+};
 
 let router: IpcRouter;
 /** 主窗口引用，供标题栏配色更新使用。 */
 let mainWindow: BrowserWindow | null = null;
 
 function createMainWindow(): BrowserWindow {
+  const theme = resolveNativeTheme();
+  overlayColors = {
+    color: THEME_COLORS[theme].overlay,
+    symbolColor: THEME_COLORS[theme].symbol,
+  };
+
   const win = new BrowserWindow({
     ...DEFAULT_WINDOW,
-    backgroundColor: APP_BACKGROUND,
+    backgroundColor: THEME_COLORS[theme].background,
     show: false,
     title: 'Herdr',
     useContentSize: true,
@@ -111,6 +136,11 @@ function createMainWindow(): BrowserWindow {
 function setTitleBarOverlay(color: string, symbolColor: string): void {
   overlayColors = { color, symbolColor };
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  /*
+   * 窗口底色独立于标题栏按钮条色更新：
+   * 弹窗打开时按钮条会被渲染侧压暗（color 传入近似色），但窗口底色仍应保持主题原色。
+   */
+  mainWindow.setBackgroundColor(THEME_COLORS[resolveNativeTheme()].background);
   try {
     mainWindow.setTitleBarOverlay({
       color,
