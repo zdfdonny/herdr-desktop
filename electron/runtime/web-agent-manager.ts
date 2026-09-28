@@ -6,11 +6,18 @@
  * - 本模块用 child_process 托管 `dsh web`（长驻 Web 服务），并解析其
  *   stdout 打印的启动广播行作为「完全就绪」信号，返回可内嵌的认证链接。
  *
+ * 进程模型（共享单进程）：
+ * **全 app 只维护一个** `dsh web`
+ * 进程，多个 web pane（窗口）共享它，而不是每个 pane 各起一个进程。
+ * - `acquire`：确保共享进程已就绪（未就绪则启动），并登记该 pane 为使用方；
+ * - `release`：解除某个 pane 的使用；共享进程**保留不回收**（关闭/重开 pane
+ *   时进程与 origin 不变，localStorage 能续用）；
+ * - `disposeAll`：应用退出前统一回收（before-quit 调用）。
+ *
  * dsh 0.1.2-rc 起为 Web GUI 启用了浏览器认证：每次启动会打印
  *   dsh web: http://127.0.0.1:3080/?token=<令牌>
- * 浏览器打开该链接后，服务端用令牌换取签名 Cookie（HttpOnly; SameSite=Strict），
- * 之后凭 Cookie 访问，裸地址 401。Electron 的 <webview> 是顶层 guest（非 iframe），
- * 可直接加载该认证链接完成换发，因此这里无需像 iframe 方案那样再做认证代理。
+ * 该令牌在进程存活期内**可复用**（`authorizeIndex` 只做比对，不为一次性消费），
+ * 因此多个 <webview>（各自独立的 partition）加载同一认证链接都能各自换发 Cookie。
  *
  * 子进程生命周期：spawn 不抛异常，失败以 WebSpawnResult 返回，由调用方转成
  * 用户可见错误（与 pty-manager 的约定一致）。
@@ -22,14 +29,21 @@ import { resolveExecutable, isWindows } from '../platform';
 
 /** dsh 启动命令（web profile 通过子命令名解析）。 */
 const DSH_COMMAND = 'dsh';
+/**
+ * 共享 dsh web 进程的固定监听端口。
+ *
+ * 固定端口 → origin（`http://127.0.0.1:PORT`）跨重启稳定 → 每个 <webview> 的
+ * partition localStorage 才能续用，dsh GUI 才能恢复「最近打开的会话」。
+ * 与浏览器默认的 `dsh web`（3080）区分开，避免端口冲突。
+ */
+const DSH_WEB_PORT = 8399;
 /** 等待 `dsh web:` 启动广播行的超时时间。 */
 const WEB_START_TIMEOUT_MS = 60_000;
 /** 启动输出缓冲上限，防止异常输出无界增长。 */
 const MAX_STARTUP_BUFFER = 64 * 1024;
 
-/** 一个 dsh web 子进程的运行时句柄。 */
-export interface WebAgentRuntime {
-  paneId: string;
+/** 共享 dsh web 子进程的运行时句柄（全 app 只有一个）。 */
+interface WebAgentRuntime {
   child: ChildProcess;
   port: number;
   /** 从 stdout 学到的完整 URL（可能带 token 查询参数）。 */
@@ -45,48 +59,88 @@ export type WebSpawnResult =
   | { ok: true; url: string; cleanUrl: string; port: number }
   | {
       ok: false;
-      reason: 'not-found' | 'spawn-failed' | 'timeout' | 'duplicate';
+      reason: 'not-found' | 'spawn-failed' | 'timeout';
       error: string;
     };
 
 export interface WebAgentCallbacks {
-  /** 已就绪的子进程意外退出。 */
-  onExit: (paneId: string, exitCode: number) => void;
+  /** 已就绪的共享进程意外退出，返回所有正在使用它的 paneId。 */
+  onExit: (paneIds: string[], exitCode: number) => void;
 }
 
 export class WebAgentManager {
-  private runtimes = new Map<string, WebAgentRuntime>();
+  /** 当前共享进程（null = 尚未启动或已回收）。 */
+  private shared: WebAgentRuntime | null = null;
+  /** 正在使用共享进程的 pane 集合（引用计数）。 */
+  private refs = new Set<string>();
+  /** 进行中的首次启动（并发 acquire 复用同一次启动，避免重复 spawn）。 */
+  private pendingAcquire: Promise<WebSpawnResult> | null = null;
   private callbacks: WebAgentCallbacks;
 
   constructor(callbacks: WebAgentCallbacks) {
     this.callbacks = callbacks;
   }
 
-  /** 该 pane 是否已有运行中的 dsh web 子进程。 */
+  /** 该 pane 是否正在使用共享进程。 */
   has(paneId: string): boolean {
-    const rt = this.runtimes.get(paneId);
-    return !!rt && !rt.disposed;
+    return this.refs.has(paneId);
   }
 
   /**
-   * 启动 dsh web 并等待就绪。
+   * 确保共享 dsh web 进程已就绪，并登记 `paneId` 为使用方。
    *
-   * `env` 由调用方（router）用 launchEnvFor 组装，包含平台基础环境与代理注入；
-   * `cwd` 缺省为进程工作目录，通常传项目路径。
+   * - 已就绪：直接复用，登记后立即返回共享 URL；
+   * - 未就绪：启动一次（`env` / `cwd` 取**首个**调用方的值），
+   *   并发的后续调用复用同一次启动；
+   * - 启动失败：不登记该 pane，返回失败原因。
    */
-  async spawn(
+  async acquire(
     paneId: string,
     env: Record<string, string>,
     cwd?: string,
   ): Promise<WebSpawnResult> {
-    if (this.runtimes.has(paneId)) {
+    if (this.shared && this.shared.ready && !this.shared.disposed) {
+      this.refs.add(paneId);
       return {
-        ok: false,
-        reason: 'duplicate',
-        error: `pane ${paneId} already has a web agent`,
+        ok: true,
+        url: this.shared.url as string,
+        cleanUrl: this.shared.cleanUrl as string,
+        port: this.shared.port,
       };
     }
 
+    if (!this.pendingAcquire) {
+      this.pendingAcquire = this.spawnShared(env, cwd).finally(() => {
+        this.pendingAcquire = null;
+      });
+    }
+    const result = await this.pendingAcquire;
+    if (result.ok) {
+      this.refs.add(paneId);
+    } else {
+      this.refs.delete(paneId);
+    }
+    return result;
+  }
+
+  /**
+   * 解除某个 pane 的使用。
+   *
+   * 共享进程在关闭全部 pane 后**仍然保留**（不回收），等应用退出时再由
+   * `disposeAll` 统一回收。这样关闭/重开 pane 时进程与 origin 都不变，
+   * localStorage 能续用，会话恢复也更稳定。
+   */
+  release(paneId: string): void {
+    this.refs.delete(paneId);
+  }
+
+  /** 退出前强制回收共享进程树（before-quit 调用）。 */
+  disposeAll(): void {
+    this.killShared();
+  }
+
+  /** 启动共享进程并等待就绪（不负责引用计数，由 acquire 统一登记）。 */
+  private async spawnShared(env: Record<string, string>, cwd?: string): Promise<WebSpawnResult> {
     const executable = resolveExecutable(DSH_COMMAND);
     if (!executable) {
       return {
@@ -96,7 +150,7 @@ export class WebAgentManager {
       };
     }
 
-    const port = await findFreePort();
+    const port = await pickPort(DSH_WEB_PORT);
     if (port === 0) {
       return {
         ok: false,
@@ -133,7 +187,6 @@ export class WebAgentManager {
     }
 
     const runtime: WebAgentRuntime = {
-      paneId,
       child,
       port,
       url: null,
@@ -141,11 +194,11 @@ export class WebAgentManager {
       ready: false,
       disposed: false,
     };
-    this.runtimes.set(paneId, runtime);
+    this.shared = runtime;
 
     // 永久 error 监听：防止未处理的 'error' 事件崩掉主进程。
     child.on('error', (error) => {
-      console.error(`[dsh web:${paneId}] process error:`, error);
+      console.error('[dsh web] process error:', error);
     });
 
     // 生命周期 exit 监听：仅在「已就绪」后转发给调用方；
@@ -153,20 +206,22 @@ export class WebAgentManager {
     child.on('exit', (code) => {
       if (runtime.disposed) return;
       runtime.disposed = true;
-      this.runtimes.delete(paneId);
+      if (this.shared === runtime) this.shared = null;
+      const paneIds = [...this.refs];
+      this.refs.clear();
       if (runtime.ready) {
-        this.callbacks.onExit(paneId, code ?? 1);
+        this.callbacks.onExit(paneIds, code ?? 1);
       }
     });
 
     child.stderr?.on('data', (chunk) => {
       const s = chunk.toString('utf8').trimEnd();
-      if (s) console.error(`[dsh web:${paneId}]`, s);
+      if (s) console.error('[dsh web]', s);
     });
 
     const ready = await this.waitForReady(runtime);
     if (!ready.ok) {
-      this.kill(paneId);
+      this.killShared();
       return ready;
     }
 
@@ -242,20 +297,14 @@ export class WebAgentManager {
     });
   }
 
-  /** 结束该 pane 的 dsh web 子进程树。 */
-  kill(paneId: string): void {
-    const rt = this.runtimes.get(paneId);
+  /** 回收共享进程树并清空引用。 */
+  private killShared(): void {
+    const rt = this.shared;
+    this.shared = null;
+    this.refs.clear();
     if (!rt || rt.disposed) return;
     rt.disposed = true;
-    this.runtimes.delete(paneId);
     killTree(rt.child);
-  }
-
-  /** 退出前结束所有子进程树。 */
-  disposeAll(): void {
-    for (const paneId of [...this.runtimes.keys()]) {
-      this.kill(paneId);
-    }
   }
 }
 
@@ -289,6 +338,34 @@ function findFreePort(): Promise<number> {
       server.close(() => resolve(port));
     });
   });
+}
+
+/** 探测指定端口是否空闲（能 bind 即视为空闲）。 */
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+/**
+ * 选择监听端口：优先用固定的共享端口（保持 origin 稳定，localStorage 才能续用
+ * 「最近会话」）；被占用时回退到任意空闲端口。
+ */
+async function pickPort(preferredPort?: number): Promise<number> {
+  if (
+    typeof preferredPort === 'number' &&
+    Number.isInteger(preferredPort) &&
+    preferredPort > 0 &&
+    preferredPort <= 65535
+  ) {
+    if (await isPortFree(preferredPort)) return preferredPort;
+  }
+  return findFreePort();
 }
 
 /**

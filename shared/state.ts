@@ -113,6 +113,14 @@ export interface PaneState {
    */
   webUrl?: string | null;
   /**
+   * Web pane 当前共享进程的监听端口（informational）。
+   *
+   * 共享单进程模型下，所有 web pane 共用同一个 dsh web 进程，端口也相同；
+   * 这里仅作记录展示，不再参与启动决策（端口由 WebAgentManager 统一持有）。
+   * 旧版本快照中缺失，按未分配处理。
+   */
+  port?: number | null;
+  /**
    * agent 自身的会话引用（持久化，重启/恢复时据此重建 --resume/--session 参数）。
    *
    * 对应 herdr `PaneSnapshot.agent_session`。由官方集成上报（`agent:report-session`）

@@ -5,8 +5,9 @@
  * `dsh web` 服务地址。认证链接（带 token）由 Main 通过 `web:ready` 下发并缓存在
  * webStore，<webview> 作为顶层 guest 直接加载该链接即可完成 Cookie 换发。
  *
- * 每个 pane 使用独立的 session partition（`dsh-<paneId>`）隔离 Cookie，
- * 避免多个 DSH 实例在同一回环主机上的 Cookie 互相覆盖。
+ * 每个 pane 使用独立的 session partition（`persist:dsh-<paneId>`）隔离 Cookie
+ * 与 localStorage。localStorage 持久化让 dsh GUI 在 pane 启动/恢复时能打开该
+ * pane 最近打开过的会话；没有历史会话时 GUI 会在对应工作区新建。
  *
  * 注意：不要在这里做「卸载时搬移 webview」之类的 DOM reparent——Electron 对
  * <webview> 的 guest 生命周期绑定在元素连接上，reparent 会触发销毁重建导致重载。
@@ -48,7 +49,11 @@ export function WebPane({ pane }: WebPaneProps) {
 
   return (
     <div className="web-pane">
-      <webview src={url} partition={`dsh-${pane.paneId}`} className="web-pane__webview" />
+      <webview
+        src={url}
+        partition={`persist:dsh-${pane.paneId}`}
+        className="web-pane__webview"
+      />
     </div>
   );
 }

@@ -86,7 +86,11 @@ export class ReportServer {
       let report: SessionReport;
       try {
         const parsed = JSON.parse(body) as Partial<SessionReport>;
-        if (typeof parsed.paneId !== 'string' || typeof parsed.source !== 'string' || typeof parsed.agent !== 'string') {
+        if (
+          typeof parsed.paneId !== 'string' ||
+          typeof parsed.source !== 'string' ||
+          typeof parsed.agent !== 'string'
+        ) {
           res.writeHead(400).end();
           return;
         }

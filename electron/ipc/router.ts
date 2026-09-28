@@ -116,7 +116,7 @@ export class IpcRouter {
     });
 
     this.web = new WebAgentManager({
-      onExit: (paneId, exitCode) => this.onWebExit(paneId, exitCode),
+      onExit: (paneIds, exitCode) => this.onWebExit(paneIds, exitCode),
     });
   }
 
@@ -398,7 +398,7 @@ export class IpcRouter {
     const paneIds = this.session.removeProject(projectId);
     for (const paneId of paneIds) {
       this.pty.kill(paneId);
-      this.web.kill(paneId);
+      this.web.release(paneId);
     }
     this.pushSnapshot();
   }
@@ -479,20 +479,25 @@ export class IpcRouter {
 
     const env = this.launchEnvFor('dsh');
     /*
-     * DSH 会话恢复 seam：把持久化的会话 id 通过环境变量带给 `dsh web`。
-     *
-     * 现状：DSH 0.1.7 的 `dsh web` 还没有 `--session-id` flag（只有 headless 有），
-     * 所以这里先用一个 DSH web 忽略的环境变量承载，不破坏现有启动流程。
-     * 等 DSH web 支持 `--session-id`（或暴露 session API 供 web:ready 后调用）后，
-     * 改回把该 id 作为启动参数传入即可，改动只在这一处。
+     * 注入 Herdr 标记环境变量（HERDR_DESKTOP_REPORT_URL 等），让 dsh 侧的
+     * herdr-desktop-agent-state 插件知道这是 Herdr 启动的进程，进而把项目目录
+     * 注册为 DSH 工作区（定位项目目录）。
      */
-    if (agentResume.RESUME_AGENTS_ON_RESTORE && pane.agentSession) {
-      env.DSH_WEB_SESSION_ID = pane.agentSession.value;
-    }
-    void this.web.spawn(paneId, env, pane.cwd ?? undefined).then((result) => {
+    this.injectHookEnv(env, paneId, 'dsh');
+    // 显式带项目目录，插件用它注册工作区（不依赖 process.cwd()，防 dsh chdir）。
+    if (pane.cwd) env.HERDR_DESKTOP_CWD = pane.cwd;
+    void this.web.acquire(paneId, env, pane.cwd ?? undefined).then((result) => {
       if (result.ok) {
+        // pane 可能在共享进程启动期间被关闭：清理掉这次遗留的引用，
+        // 避免它把共享进程的引用计数卡住、导致无法回收。
+        if (!this.session.getPane(paneId)) {
+          this.web.release(paneId);
+          return;
+        }
         this.revivingPanes.delete(paneId);
         this.session.setPaneWebUrl(paneId, result.cleanUrl);
+        // 记录共享进程端口（informational；端口由共享进程统一持有）。
+        this.session.setPanePort(paneId, result.port);
         this.broadcast({
           type: IPC.WEB_READY,
           payload: { paneId, url: result.url },
@@ -533,18 +538,18 @@ export class IpcRouter {
     return true;
   }
 
-  /** web 子进程意外退出（崩溃等）：按与 PTY 退出一致的方式收掉 pane。 */
-  private onWebExit(paneId: string, _exitCode: number): void {
-    this.web.kill(paneId);
-    this.session.closePane(paneId);
-    this.pushSnapshot();
+  /** 共享 web 进程意外退出（崩溃等）：收掉所有正在使用它的 pane。 */
+  private onWebExit(paneIds: string[], _exitCode: number): void {
+    for (const paneId of paneIds) {
+      this.closePane(paneId);
+    }
   }
 
   /**
    * 记录官方集成上报的会话引用与状态（对应 herdr 的
    * `handle_pane_report_agent_session` + `HookStateReported`）。
    *
-   * 由 `agent:report-session` named 消息与 ReportServer 进入；
+   * 由 ReportServer（终端 hook 的 HTTP 上报）进入；
    * 来源与会话值经 agent-resume 校验，非官方来源直接忽略。
    * 上报后立即落盘，保证重启后仍可恢复；状态上报标记 hook 权威。
    */
@@ -634,7 +639,7 @@ export class IpcRouter {
    */
   private killForRestart(paneId: string, isWeb: boolean): void {
     if (isWeb) {
-      this.web.kill(paneId);
+      this.web.release(paneId);
     } else {
       this.pty.kill(paneId);
     }
@@ -869,7 +874,7 @@ export class IpcRouter {
 
   private closePane(paneId: string): void {
     this.pty.kill(paneId);
-    this.web.kill(paneId);
+    this.web.release(paneId);
     // 清理两阶段创建的中间态，避免 pending 泄漏
     this.pendingSpawns.delete(paneId);
     this.pendingSizes.delete(paneId);

@@ -227,6 +227,15 @@ export class Session {
     this.bump();
   }
 
+  /** 记录 web pane 实际监听的端口（就绪后回填，供下次重启复用稳定 origin）。 */
+  setPanePort(paneId: string, port: number | null): void {
+    const pane = this.panes.get(paneId);
+    if (!pane || pane.kind !== 'web') return;
+    if (pane.port === port) return;
+    pane.port = port;
+    this.bump();
+  }
+
   /**
    * 记录 pane 的 agent 会话引用（官方集成上报，对应 herdr 的 hook 上报）。
    *

@@ -336,3 +336,87 @@ def register(ctx):
     ctx.register_hook("on_session_start", _on_session_start)
     ctx.register_hook("pre_llm_call", _on_llm_call)
 `;
+
+/**
+ * DeepSeek Harness 状态上报插件的文件名（含 .mjs 后缀，确保按 ESM 加载，
+ * 与 profile 的 package.json 是否声明 "type": "module" 无关）。
+ *
+ * 命名与其他智能体保持一致：pi/opencode/kilo/hermes 的资产都叫
+ * `herdr-desktop-agent-state.*`，这里沿用同一前缀。
+ */
+export const DSH_STATUS_PLUGIN_NAME = 'herdr-desktop-agent-state.mjs';
+
+/**
+ * DeepSeek Harness 插件（对应其他智能体的 hook/插件资产）。
+ *
+ * 共享单进程模型下，一个 `dsh web` 进程服务多个 web pane。插件做两件事：
+ * 1. 把 Herdr 传入的项目目录（`HERDR_DESKTOP_CWD`，回退 `process.cwd()`）以及
+ *    见到的会话 cwd 注册为 DSH 工作区（`workspaceRegistry.create`，幂等）；
+ * 2. 在项目工作区里新建一个空白会话，让该项目成为「最近」的工作区，内嵌 GUI
+ *    启动/恢复时就会落到这个项目（打开最近会话，或复用这个空白会话）。
+ *
+ * 未设置 `HERDR_DESKTOP_REPORT_URL`（非 Herdr 启动）时为 no-op，不影响其它 profile。
+ */
+export const DSH_STATUS_PLUGIN = `// HERDR_INTEGRATION_ID=herdr-desktop
+// HERDR_INTEGRATION_VERSION=1
+// Self-contained DeepSeek Harness plugin: registers the Herdr project directory
+// (HERDR_DESKTOP_CWD, fallback process.cwd()) as a DSH workspace and creates a
+// blank session there, so the GUI opens this project instead of another one.
+
+export const name = 'herdr-desktop-agent-state'
+
+const REPORT_URL = process.env.HERDR_DESKTOP_REPORT_URL
+const CWD = process.env.HERDR_DESKTOP_CWD || ''
+
+export function apply(ctx) {
+  // Only active when herdr-desktop launched this dsh web process.
+  if (!REPORT_URL) return
+
+  // Services resolved once via ctx.inject.
+  let workspaceRegistry = null
+  let sessionController = null
+
+  const registerWorkspace = function (cwd) {
+    if (!cwd || !workspaceRegistry || typeof workspaceRegistry.create !== 'function') return
+    void workspaceRegistry.create(cwd).catch(function () {})
+  }
+
+  ctx.on('session/created', function (session) {
+    const cwd = session && session.header && typeof session.header.cwd === 'string' ? session.header.cwd : null
+    registerWorkspace(cwd)
+  }, { global: true })
+
+  // EARLY: register the project workspace as soon as workspaceRegistry is ready
+  // (before the web server / GUI connect), so the GUI never sees an empty list.
+  ctx.inject(['workspaceRegistry'], function (c) {
+    try {
+      workspaceRegistry = c && (c.workspaceRegistry || (typeof c.get === 'function' ? c.get('workspaceRegistry') : null))
+    } catch (error) {}
+    registerWorkspace(CWD || process.cwd())
+  })
+
+  // LATE: once sessionController is ready, create a blank session so the project
+  // becomes the "most recent" workspace and the GUI lands on it.
+  ctx.inject(['sessionController'], function (c) {
+    try {
+      sessionController = c && (c.sessionController || (typeof c.get === 'function' ? c.get('sessionController') : null))
+    } catch (error) {}
+    void (async function () {
+      const cwd = CWD || process.cwd()
+      if (!workspaceRegistry || typeof workspaceRegistry.create !== 'function') return
+      let ws
+      try {
+        ws = await workspaceRegistry.create(cwd)
+      } catch (error) {
+        return
+      }
+      if (!ws || !ws.id || !sessionController || typeof sessionController.create !== 'function') return
+      try {
+        await sessionController.create({ workspaceId: ws.id })
+      } catch (error) {
+        // Non-fatal: the GUI still creates/reuses a session on its own.
+      }
+    })().catch(function () {})
+  })
+}
+`;

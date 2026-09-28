@@ -25,6 +25,8 @@ import {
   KILO_ASSET,
   HERMES_PLUGIN_YAML,
   HERMES_PLUGIN_INIT,
+  DSH_STATUS_PLUGIN,
+  DSH_STATUS_PLUGIN_NAME,
 } from './integration-assets';
 
 const INTEGRATION_ID = 'herdr-desktop';
@@ -136,6 +138,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
   opencode: opencodeTarget(),
   kilo: kiloTarget(),
   hermes: hermesTarget(),
+  'dsh-web': dshWebTarget(),
 };
 
 export function hookStatuses(): Record<string, HookStatus> {
@@ -807,6 +810,95 @@ function hermesTarget(): HookTarget {
       await fs.rm(pluginDir(), { recursive: true, force: true }).catch(() => undefined);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// DeepSeek Harness（dsh web）—— 非 hook 集成（Cordis 插件）
+// ---------------------------------------------------------------------------
+
+/**
+ * 安装位置用 Harness 全局 home（`$DSH_HOME`，默认 `~/.dsh`），而非某个 profile：
+ * - 插件是自包含、无依赖的单文件，且未设置 `HERDR_DESKTOP_REPORT_URL` 时是 no-op，
+ *   挂到 home 层不会影响任何非 Herdr 启动的 dsh 进程；
+ * - home 层 `cordis.patch.yml` 不属于 profile 自动初始化写入的文件，避免 Herdr 先
+ *   安装、随后 `dsh web` 首次启动自动初始化 profile 时把条目冲掉。
+ */
+function dshWebTarget(): HookTarget {
+  const homeDir = () => {
+    const home = process.env.DSH_HOME?.trim();
+    return home ? home : join(homedir(), '.dsh');
+  };
+  const pluginPath = () => join(homeDir(), 'plugins', DSH_STATUS_PLUGIN_NAME);
+  const patchPath = () => join(homeDir(), 'cordis.patch.yml');
+
+  return {
+    configDir: homeDir,
+    hookPath: pluginPath,
+    isInstalled() {
+      const path = pluginPath();
+      if (!path || !existsSync(path)) return false;
+      try {
+        return readFileSync(path, 'utf8').includes(`HERDR_INTEGRATION_ID=${INTEGRATION_ID}`);
+      } catch {
+        return false;
+      }
+    },
+    async install(_reportUrl: string) {
+      await fs.mkdir(join(homeDir(), 'plugins'), { recursive: true });
+      await fs.writeFile(pluginPath(), DSH_STATUS_PLUGIN, 'utf8');
+      await upsertDshPatch(patchPath());
+    },
+    async uninstall() {
+      await removeDshPatchBlock(patchPath());
+      await fs.rm(pluginPath(), { force: true }).catch(() => undefined);
+    },
+  };
+}
+
+const DSH_PATCH_BEGIN = '# >>> herdr dsh integration';
+const DSH_PATCH_END = '# <<< herdr dsh integration';
+
+/** 生成需要追加进 home 层 cordis.patch.yml 的插件注册块。 */
+function dshPatchBlock(): string {
+  return [
+    '',
+    DSH_PATCH_BEGIN,
+    '- insert:',
+    '    - id: herdr-desktop-agent-state',
+    `      name: ./plugins/${DSH_STATUS_PLUGIN_NAME}`,
+    DSH_PATCH_END,
+    '',
+  ].join('\n');
+}
+
+/** 幂等地把插件注册块追加进 home 层 cordis.patch.yml（已存在则不动）。 */
+async function upsertDshPatch(patchPath: string): Promise<void> {
+  const content = await readText(patchPath);
+  if (content.includes(DSH_PATCH_BEGIN)) return;
+  const trimmed = content.replace(/\r?\n$/, '');
+  const next =
+    trimmed.length === 0
+      ? dshPatchBlock().trim() + '\n'
+      : `${trimmed}\n${dshPatchBlock()}`;
+  await fs.writeFile(patchPath, next, 'utf8');
+}
+
+/** 移除 home 层 cordis.patch.yml 中的插件注册块（不存在则不动）。 */
+async function removeDshPatchBlock(patchPath: string): Promise<void> {
+  const content = await readText(patchPath);
+  const begin = content.indexOf(DSH_PATCH_BEGIN);
+  if (begin < 0) return;
+  const end = content.indexOf(DSH_PATCH_END);
+  const after = end >= 0 ? end + DSH_PATCH_END.length : content.length;
+  const cleaned = (content.slice(0, begin) + content.slice(after))
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '')
+    .replace(/\s+$/, '');
+  if (cleaned.length === 0) {
+    await fs.rm(patchPath, { force: true }).catch(() => undefined);
+    return;
+  }
+  await fs.writeFile(patchPath, `${cleaned}\n`, 'utf8');
 }
 
 // ---------------------------------------------------------------------------
