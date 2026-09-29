@@ -378,6 +378,19 @@ async function writeJsoncArrayItem(path: string, key: string, item: unknown, add
   await writeConfigFile(path, updated);
 }
 
+/** 用 modify 仅改写 JSONC 文件的一个顶层键，保留其余键与其注释；value 为 undefined 时删除该键。 */
+async function writeJsonKey(path: string, key: string, value: unknown): Promise<void> {
+  const text = await readText(path);
+  if (!text.trim()) {
+    await writeConfigFile(path, `${JSON.stringify({ [key]: value }, null, 2)}\n`);
+    return;
+  }
+  const edits = modify(text, [key], value, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  });
+  await writeConfigFile(path, applyEdits(text, edits));
+}
+
 async function readText(path: string): Promise<string> {
   try {
     return await fs.readFile(path, 'utf8');
@@ -525,7 +538,10 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
           quiet: opts.quiet,
         });
       }
-      await writeJson(configPath, root);
+      await writeJsonKey(configPath, 'hooks', root.hooks);
+      if (opts.withVersion && root.version !== undefined) {
+        await writeJsonKey(configPath, 'version', root.version);
+      }
     },
     async uninstall() {
       const dir = this.configDir();
@@ -540,7 +556,7 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       for (const [event, action] of opts.removedEvents ?? []) {
         removeHook(hooks, event, commandFor(opts, path ?? '', action));
       }
-      await writeJson(configPath, root);
+      await writeJsonKey(configPath, 'hooks', root.hooks);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
@@ -576,7 +592,7 @@ function claudeTarget(): HookTarget {
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
         ensureNestedHook(hooks, event, hookCommand(path, action), { matcher: '*', timeoutSec: 10 });
       }
-      await writeJson(settingsPath, settings);
+      await writeJsonKey(settingsPath, 'hooks', settings.hooks);
     },
     async uninstall() {
       const dir = this.configDir();
@@ -589,7 +605,7 @@ function claudeTarget(): HookTarget {
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
         removeHook(hooks, event, hookCommand(path ?? '', action));
       }
-      await writeJson(settingsPath, settings);
+      await writeJsonKey(settingsPath, 'hooks', settings.hooks);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
@@ -623,7 +639,7 @@ function codexTarget(): HookTarget {
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
         ensureNestedHook(hooks, event, hookCommand(path, action), { timeoutSec: 10 });
       }
-      await writeJson(hooksPath, hooksRoot);
+      await writeJsonKey(hooksPath, 'hooks', hooksRoot.hooks);
 
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
@@ -640,7 +656,7 @@ function codexTarget(): HookTarget {
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
         removeHook(hooks, event, hookCommand(path ?? '', action));
       }
-      await writeJson(hooksPath, hooksRoot);
+      await writeJsonKey(hooksPath, 'hooks', hooksRoot.hooks);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
@@ -954,7 +970,7 @@ function opencodeTarget(): HookTarget {
             plugins.push(spec);
           }
         }
-        await writeJson(cliPath, root);
+        await writeJsonKey(cliPath, 'plugins', root.plugins);
       }
 
       // 注册 TUI 插件到 tui.jsonc（对应 herdr add_tui_plugin，保留注释）。
@@ -969,7 +985,7 @@ function opencodeTarget(): HookTarget {
           (p: unknown) => !(p === SPEC || p === V2_SPEC || (p && typeof p === 'object' && ((p as any).package === SPEC || (p as any).package === V2_SPEC))),
         );
         if (root.plugins.length === 0) delete root.plugins;
-        await writeJson(cliPath, root);
+        await writeJsonKey(cliPath, 'plugins', root.plugins);
       }
       await writeJsoncArrayItem(join(d, 'tui.jsonc'), 'plugin', TUI_SPEC, false);
       await fs.rm(pluginPath(), { force: true }).catch(() => undefined);
