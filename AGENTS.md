@@ -58,6 +58,7 @@ npm run test:sort   # 排序相关测试（其余 test:* 同理）
 ### 智能体集成
 
 - 参考 herdr `src/integration/`：每个智能体的脚本单独存放在 `electron/runtime/integration/assets/<agent>/`，由 `assets.ts` 通过 Vite `?raw` 在构建期内联（对应 herdr 的 `include_str!`），`index.ts` 负责安装/卸载。新增或修改智能体集成时先看这里。
+- 版本按每个智能体独立管理：修改某个智能体的脚本/插件后，必须同步更新该 agent 的版本号——① 该 agent 所有资产文件里的 `HERDR_INTEGRATION_VERSION` 标记（一个 agent 有多个文件时保持一致，如 opencode 的主插件 + TUI 脚本）；② `assets.ts` 的 `INTEGRATION_VERSIONS` 映射里对应的值。两者不一致会导致设置页把「已安装」误判为「更新」或反之。
 
 ### 测试
 
