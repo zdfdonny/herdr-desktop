@@ -41,6 +41,8 @@ import grokSh from './assets/grok/herdr-desktop-agent-state.sh?raw';
 import piAsset from './assets/pi/herdr-desktop-agent-state.ts?raw';
 import ompAsset from './assets/omp/herdr-desktop-omp-agent-state.ts?raw';
 import opencodeAsset from './assets/opencode/herdr-desktop-agent-state.js?raw';
+import opencodeTuiSessionAsset from './assets/opencode/herdr-tui-session.js?raw';
+import opencodeTuiAsset from './assets/opencode/tui.js?raw';
 import kiloAsset from './assets/kilo/herdr-desktop-agent-state.js?raw';
 import hermesPluginYaml from './assets/hermes/plugin.yaml?raw';
 import hermesPluginInit from './assets/hermes/__init__.py?raw';
@@ -90,6 +92,10 @@ export const PI_ASSET = piAsset;
 export const OMP_ASSET = ompAsset;
 /** opencode 插件（`herdr-agent-state.js`）。 */
 export const OPENCODE_ASSET = opencodeAsset;
+/** opencode TUI session 插件（`herdr-tui-session.js`）。 */
+export const OPENCODE_TUI_SESSION_ASSET = opencodeTuiSessionAsset;
+/** opencode V2 TUI 插件入口（`tui.js`，转发到 `herdr-tui-session.js`）。 */
+export const OPENCODE_TUI_ASSET = opencodeTuiAsset;
 /** kilo 插件（`herdr-agent-state.js`）。 */
 export const KILO_ASSET = kiloAsset;
 /** hermes 插件 manifest。 */
@@ -128,7 +134,7 @@ export const INTEGRATION_VERSIONS: Record<string, number> = {
   grok: 2,
   pi: 3,
   omp: 3,
-  opencode: 2,
+  opencode: 3,
   kilo: 2,
   hermes: 2,
   'dsh-web': 2,

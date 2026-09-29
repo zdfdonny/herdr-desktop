@@ -24,6 +24,8 @@ import {
   PI_ASSET,
   OMP_ASSET,
   OPENCODE_ASSET,
+  OPENCODE_TUI_SESSION_ASSET,
+  OPENCODE_TUI_ASSET,
   KILO_ASSET,
   HERMES_PLUGIN_YAML,
   HERMES_PLUGIN_INIT,
@@ -326,6 +328,21 @@ async function readText(path: string): Promise<string> {
     return await fs.readFile(path, 'utf8');
   } catch {
     return '';
+  }
+}
+
+/** 读取 JSONC（容忍行注释、块注释与尾逗号），失败返回 {}。 */
+async function readJsonc(path: string): Promise<Record<string, any>> {
+  const text = await readText(path);
+  if (!text) return {};
+  try {
+    const stripped = text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(stripped) as Record<string, any>;
+  } catch {
+    return {};
   }
 }
 
@@ -803,7 +820,11 @@ function ompExtensionDir(): string | null {
 function opencodeTarget(): HookTarget {
   const dir = () => homeJoin('.config', 'opencode');
   const pluginPath = () => join(dir(), 'plugins', 'herdr-desktop-agent-state.js');
+  const tuiPluginPath = () => join(dir(), 'herdr-tui-session.js');
+  const v2Dir = () => join(dir(), 'herdr-opencode');
   const SPEC = './plugins/herdr-desktop-agent-state.js';
+  const TUI_SPEC = './herdr-tui-session.js';
+  const V2_SPEC = './herdr-opencode';
   return {
     configDir: dir,
     hookPath: pluginPath,
@@ -814,15 +835,30 @@ function opencodeTarget(): HookTarget {
       const d = dir();
       await fs.mkdir(join(d, 'plugins'), { recursive: true });
       await fs.writeFile(pluginPath(), OPENCODE_ASSET, 'utf8');
+      // TUI session 插件（对应 herdr herdr-tui-session.js + herdr-opencode/tui.js）。
+      await fs.writeFile(tuiPluginPath(), OPENCODE_TUI_SESSION_ASSET, 'utf8');
+      await fs.mkdir(v2Dir(), { recursive: true });
+      await fs.writeFile(join(v2Dir(), 'tui.js'), OPENCODE_TUI_ASSET, 'utf8');
 
-      // 注册到 cli.json（对应 herdr add_cli_plugin）：opencode 只加载 plugins 数组里声明的插件。
+      // 注册主插件 + V2 TUI 到 cli.json（对应 herdr add_cli_plugin）。
       const cliPath = join(d, 'cli.json');
       const root = await readJson(cliPath);
       const plugins = Array.isArray(root.plugins) ? root.plugins : (root.plugins = []);
-      if (!plugins.some((p: unknown) => p === SPEC || (p && typeof p === 'object' && (p as any).package === SPEC))) {
-        plugins.push(SPEC);
+      for (const spec of [SPEC, V2_SPEC]) {
+        if (!plugins.some((p: unknown) => p === spec || (p && typeof p === 'object' && (p as any).package === spec))) {
+          plugins.push(spec);
+        }
       }
       await writeJson(cliPath, root);
+
+      // 注册 TUI 插件到 tui.jsonc（对应 herdr add_tui_plugin）。
+      const tuiPath = join(d, 'tui.jsonc');
+      const tuiRoot = await readJsonc(tuiPath);
+      const tuiPlugins = Array.isArray(tuiRoot.plugin) ? tuiRoot.plugin : (tuiRoot.plugin = []);
+      if (!tuiPlugins.some((p: unknown) => p === TUI_SPEC || (p && typeof p === 'object' && ((p as any).package === TUI_SPEC || (Array.isArray(p) && p[0] === TUI_SPEC))))) {
+        tuiPlugins.push(TUI_SPEC);
+      }
+      await writeJson(tuiPath, tuiRoot);
     },
     async uninstall() {
       const d = dir();
@@ -830,12 +866,23 @@ function opencodeTarget(): HookTarget {
       const root = await readJson(cliPath);
       if (Array.isArray(root.plugins)) {
         root.plugins = root.plugins.filter(
-          (p: unknown) => !(p === SPEC || (p && typeof p === 'object' && (p as any).package === SPEC)),
+          (p: unknown) => !(p === SPEC || p === V2_SPEC || (p && typeof p === 'object' && ((p as any).package === SPEC || (p as any).package === V2_SPEC))),
         );
         if (root.plugins.length === 0) delete root.plugins;
         await writeJson(cliPath, root);
       }
+      const tuiPath = join(d, 'tui.jsonc');
+      const tuiRoot = await readJsonc(tuiPath);
+      if (Array.isArray(tuiRoot.plugin)) {
+        tuiRoot.plugin = tuiRoot.plugin.filter(
+          (p: unknown) => !(p === TUI_SPEC || (p && typeof p === 'object' && ((p as any).package === TUI_SPEC || (Array.isArray(p) && p[0] === TUI_SPEC)))),
+        );
+        if (tuiRoot.plugin.length === 0) delete tuiRoot.plugin;
+        await writeJson(tuiPath, tuiRoot);
+      }
       await fs.rm(pluginPath(), { force: true }).catch(() => undefined);
+      await fs.rm(tuiPluginPath(), { force: true }).catch(() => undefined);
+      await fs.rm(v2Dir(), { recursive: true, force: true }).catch(() => undefined);
     },
   };
 }
