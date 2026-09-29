@@ -317,9 +317,16 @@ function commandFor(opts: { encodedCommand?: boolean }, path: string, action: st
     : hookCommand(path, action);
 }
 
+/** 读取 JSON（容忍 JSONC 注释与尾逗号，避免带注释的配置被当 {} 而整体覆盖）。 */
 async function readJson(path: string): Promise<Record<string, any>> {
+  const text = await readText(path);
+  if (!text) return {};
   try {
-    return JSON.parse(await fs.readFile(path, 'utf8')) as Record<string, any>;
+    const stripped = text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(stripped) as Record<string, any>;
   } catch {
     return {};
   }
@@ -361,21 +368,6 @@ async function readText(path: string): Promise<string> {
     return await fs.readFile(path, 'utf8');
   } catch {
     return '';
-  }
-}
-
-/** 读取 JSONC（容忍行注释、块注释与尾逗号），失败返回 {}。 */
-async function readJsonc(path: string): Promise<Record<string, any>> {
-  const text = await readText(path);
-  if (!text) return {};
-  try {
-    const stripped = text
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1')
-      .replace(/,\s*([}\]])/g, '$1');
-    return JSON.parse(stripped) as Record<string, any>;
-  } catch {
-    return {};
   }
 }
 
@@ -952,7 +944,7 @@ function opencodeTarget(): HookTarget {
 
       // 注册 TUI 插件到 tui.jsonc（对应 herdr add_tui_plugin）。
       const tuiPath = join(d, 'tui.jsonc');
-      const tuiRoot = await readJsonc(tuiPath);
+      const tuiRoot = await readJson(tuiPath);
       const tuiPlugins = Array.isArray(tuiRoot.plugin) ? tuiRoot.plugin : (tuiRoot.plugin = []);
       if (!tuiPlugins.some((p: unknown) => p === TUI_SPEC || (p && typeof p === 'object' && ((p as any).package === TUI_SPEC || (Array.isArray(p) && p[0] === TUI_SPEC))))) {
         tuiPlugins.push(TUI_SPEC);
@@ -971,7 +963,7 @@ function opencodeTarget(): HookTarget {
         await writeJson(cliPath, root);
       }
       const tuiPath = join(d, 'tui.jsonc');
-      const tuiRoot = await readJsonc(tuiPath);
+      const tuiRoot = await readJson(tuiPath);
       if (Array.isArray(tuiRoot.plugin)) {
         tuiRoot.plugin = tuiRoot.plugin.filter(
           (p: unknown) => !(p === TUI_SPEC || (p && typeof p === 'object' && ((p as any).package === TUI_SPEC || (Array.isArray(p) && p[0] === TUI_SPEC)))),
