@@ -47,6 +47,47 @@ const LIFECYCLE_STATE_EVENTS: Array<[event: string, action: string]> = [
   ['Stop', 'idle'],
 ];
 
+/** devin 的额外事件（对应 herdr DEVIN_HOOK_EVENTS）：每个事件都带会话引用。 */
+const DEVIN_STATE_EVENTS: Array<[string, string]> = [
+  ['UserPromptSubmit', 'session'],
+  ['PreToolUse', 'session'],
+  ['PostToolUse', 'session'],
+  ['PermissionRequest', 'session'],
+  ['Stop', 'session'],
+];
+
+/** mastracode 的额外事件（对应 herdr MASTRACODE_HOOK_EVENTS，除去 SessionStart）。 */
+const MASTRACODE_STATE_EVENTS: Array<[string, string]> = [
+  ['UserPromptSubmit', 'working'],
+  ['AgentStart', 'working'],
+  ['PreToolUse', 'working'],
+  ['PermissionRequest', 'blocked'],
+  ['PermissionResult', 'working'],
+  ['SubagentStart', 'working'],
+  ['SubagentEnd', 'working'],
+  ['Interrupt', 'idle'],
+  ['AgentEnd', 'idle'],
+  ['Stop', 'idle'],
+];
+
+/** kimi 的事件集（对应 herdr KIMI_HOOK_EVENTS）：matcher 区分 AskUserQuestion。 */
+const KIMI_ASK_USER_QUESTION_MATCHER = '^AskUserQuestion$';
+const KIMI_OTHER_TOOL_MATCHER = '^(?!AskUserQuestion$).*$';
+const KIMI_HOOK_EVENTS: Array<[event: string, matcher: string | null, action: string]> = [
+  ['SessionStart', null, 'session'],
+  ['UserPromptSubmit', null, 'working'],
+  ['PreToolUse', KIMI_OTHER_TOOL_MATCHER, 'working'],
+  ['PreToolUse', KIMI_ASK_USER_QUESTION_MATCHER, 'blocked'],
+  ['PostToolUse', KIMI_ASK_USER_QUESTION_MATCHER, 'working'],
+  ['PostToolUseFailure', KIMI_ASK_USER_QUESTION_MATCHER, 'working'],
+  ['SubagentStart', null, 'working'],
+  ['PreCompact', null, 'working'],
+  ['PermissionRequest', null, 'blocked'],
+  ['PermissionResult', null, 'working'],
+  ['Stop', null, 'idle'],
+  ['Interrupt', null, 'idle'],
+];
+
 const HOOK_TARGETS: Record<string, HookTarget> = {
   claude: claudeTarget(),
   codex: codexTarget(),
@@ -70,7 +111,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'SessionStart',
     shape: 'nested',
     timeoutSec: 10,
-    stateEvents: LIFECYCLE_STATE_EVENTS,
+    stateEvents: DEVIN_STATE_EVENTS,
   }),
   droid: jsonHooksTarget({
     agent: 'droid',
@@ -134,7 +175,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'SessionStart',
     shape: 'flat',
     timeoutSec: 10,
-    stateEvents: LIFECYCLE_STATE_EVENTS,
+    stateEvents: MASTRACODE_STATE_EVENTS,
     encodedCommand: true,
   }),
   antigravity: antigravityTarget(),
@@ -559,7 +600,7 @@ function codexConfigWithHook(content: string): string {
 // ---------------------------------------------------------------------------
 
 function kimiTarget(): HookTarget {
-  const events: Array<[string, string]> = [['SessionStart', 'session'], ...LIFECYCLE_STATE_EVENTS];
+  const events = KIMI_HOOK_EVENTS;
   return {
     configDir: () => envOrHome('KIMI_CODE_HOME', ['.kimi-code']),
     hookPath() {
@@ -595,11 +636,17 @@ function kimiTarget(): HookTarget {
 const KIMI_BLOCK_BEGIN = '# >>> herdr kimi integration';
 const KIMI_BLOCK_END = '# <<< herdr kimi integration';
 
-function kimiConfigWithHook(content: string, hookPath: string, events: Array<[string, string]>): string {
+function kimiConfigWithHook(
+  content: string,
+  hookPath: string,
+  events: Array<[event: string, matcher: string | null, action: string]>,
+): string {
   if (content.includes(KIMI_BLOCK_BEGIN)) return content;
   const rows = [KIMI_BLOCK_BEGIN];
-  for (const [event, action] of events) {
-    rows.push('[[hooks]]', `event = "${event}"`, `command = ${tomlString(hookCommand(hookPath, action))}`, 'timeout = 10');
+  for (const [event, matcher, action] of events) {
+    rows.push('[[hooks]]', `event = "${event}"`);
+    if (matcher) rows.push(`matcher = ${tomlString(matcher)}`);
+    rows.push(`command = ${tomlString(hookCommand(hookPath, action))}`, 'timeout = 10');
   }
   rows.push(KIMI_BLOCK_END);
   const trimmed = content.replace(/\r?\n$/, '');
