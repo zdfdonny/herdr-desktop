@@ -15,8 +15,8 @@
  * （终端检测不再覆盖 status）。
  */
 
-import { promises as fs, existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { promises as fs, existsSync, readFileSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -116,6 +116,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     shape: 'nested',
     timeoutSec: 10,
     stateEvents: DEVIN_STATE_EVENTS,
+    removedEvents: LIFECYCLE_STATE_EVENTS,
   }),
   droid: jsonHooksTarget({
     agent: 'droid',
@@ -180,6 +181,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     shape: 'flat',
     timeoutSec: 10,
     stateEvents: MASTRACODE_STATE_EVENTS,
+    removedEvents: LIFECYCLE_STATE_EVENTS,
     encodedCommand: true,
   }),
   antigravity: antigravityTarget(),
@@ -260,6 +262,8 @@ interface JsonHooksTargetOptions {
   quiet?: boolean;
   withVersion?: boolean;
   stateEvents?: Array<[string, string]>;
+  /** 旧版事件（安装/卸载时一并移除，对应 herdr *_REMOVED_*_EVENTS）。 */
+  removedEvents?: Array<[string, string]>;
   encodedCommand?: boolean;
 }
 
@@ -322,7 +326,34 @@ async function readJson(path: string): Promise<Record<string, any>> {
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
-  await fs.writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  await writeConfigFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** 用户配置写入前的安全预检：目标存在且非普通文件时抛错（对应 herdr check_config_target）。 */
+function checkConfigTarget(path: string): void {
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (!st.isFile()) {
+    throw new Error(`cannot update ${path}: not a regular file`);
+  }
+}
+
+/** 原子写用户配置（临时文件 + rename，对应 herdr write_config）。 */
+async function writeConfigFile(path: string, contents: string): Promise<void> {
+  checkConfigTarget(path);
+  const tmp = join(dirname(path), `.herdr-desktop-config-${process.pid}-${Date.now()}.tmp`);
+  await fs.writeFile(tmp, contents, 'utf8');
+  try {
+    await fs.rename(tmp, path);
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function readText(path: string): Promise<string> {
@@ -475,6 +506,10 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       const root = await readJson(configPath);
       if (opts.withVersion && root.version === undefined) root.version = 1;
       const hooks = ensureHooksObject(root);
+      // 先移除旧版事件，再写入新事件（对应 herdr *_REMOVED_*_EVENTS）。
+      for (const [event, action] of opts.removedEvents ?? []) {
+        removeHook(hooks, event, commandFor(opts, path, action));
+      }
       for (const [event, action] of events) {
         const command = commandFor(opts, path, action);
         ensureHook(hooks, opts.shape, event, command, {
@@ -493,6 +528,9 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       const root = await readJson(configPath);
       const hooks = ensureHooksObject(root);
       for (const [event, action] of events) {
+        removeHook(hooks, event, commandFor(opts, path ?? '', action));
+      }
+      for (const [event, action] of opts.removedEvents ?? []) {
         removeHook(hooks, event, commandFor(opts, path ?? '', action));
       }
       await writeJson(configPath, root);
@@ -582,7 +620,7 @@ function codexTarget(): HookTarget {
 
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
-      await fs.writeFile(configPath, codexConfigWithHook(content), 'utf8');
+      await writeConfigFile(configPath, codexConfigWithHook(content));
     },
     async uninstall() {
       const dir = this.configDir();
@@ -639,7 +677,7 @@ function kimiTarget(): HookTarget {
 
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
-      await fs.writeFile(configPath, kimiConfigWithHook(content, path, events), 'utf8');
+      await writeConfigFile(configPath, kimiConfigWithHook(content, path, events));
     },
     async uninstall() {
       const dir = this.configDir();
@@ -776,7 +814,11 @@ function grokTarget(): HookTarget {
       return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
     },
     isInstalled() {
-      return scriptInstalled(this.hookPath());
+      const dir = this.configDir();
+      return (
+        scriptInstalled(this.hookPath()) &&
+        (dir ? existsSync(join(dir, 'hooks', 'herdr-desktop.json')) : false)
+      );
     },
     async install(_reportUrl: string) {
       const dir = this.configDir();
@@ -879,7 +921,11 @@ function opencodeTarget(): HookTarget {
     configDir: dir,
     hookPath: pluginPath,
     isInstalled() {
-      return scriptInstalled(pluginPath());
+      return (
+        scriptInstalled(pluginPath()) &&
+        existsSync(tuiPluginPath()) &&
+        existsSync(join(v2Dir(), 'tui.js'))
+      );
     },
     async install(_reportUrl: string) {
       const d = dir();
@@ -1035,12 +1081,12 @@ function hermesTarget(): HookTarget {
       // 在 config.yaml 启用插件（对应 herdr ensure_hermes_plugin_enabled）。
       const content = await readText(configPath());
       const updated = updateHermesEnabled(content, true);
-      if (updated !== content) await fs.writeFile(configPath(), updated, 'utf8');
+      if (updated !== content) await writeConfigFile(configPath(), updated);
     },
     async uninstall() {
       const content = await readText(configPath());
       const updated = updateHermesEnabled(content, false);
-      if (updated !== content) await fs.writeFile(configPath(), updated, 'utf8');
+      if (updated !== content) await writeConfigFile(configPath(), updated);
       await fs.rm(pluginDir(), { recursive: true, force: true }).catch(() => undefined);
     },
   };
@@ -1114,7 +1160,7 @@ async function upsertDshPatch(patchPath: string): Promise<void> {
     trimmed.length === 0
       ? dshPatchBlock().trim() + '\n'
       : `${trimmed}\n${dshPatchBlock()}`;
-  await fs.writeFile(patchPath, next, 'utf8');
+  await writeConfigFile(patchPath, next);
 }
 
 /** 移除 home 层 cordis.patch.yml 中的插件注册块（不存在则不动）。 */
@@ -1132,5 +1178,5 @@ async function removeDshPatchBlock(patchPath: string): Promise<void> {
     await fs.rm(patchPath, { force: true }).catch(() => undefined);
     return;
   }
-  await fs.writeFile(patchPath, `${cleaned}\n`, 'utf8');
+  await writeConfigFile(patchPath, `${cleaned}\n`);
 }
