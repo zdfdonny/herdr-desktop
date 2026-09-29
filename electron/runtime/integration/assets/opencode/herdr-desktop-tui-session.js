@@ -1,7 +1,7 @@
 // installed by herdr-desktop
 // managed by herdr-desktop; reinstalling or updating the integration overwrites this file.
 // HERDR_INTEGRATION_ID=herdr-desktop-opencode-tui
-// HERDR_INTEGRATION_VERSION=2
+// HERDR_INTEGRATION_VERSION=3
 
 const SOURCE = "herdr:opencode";
 const AGENT = "opencode";
