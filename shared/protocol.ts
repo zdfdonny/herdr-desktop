@@ -151,6 +151,8 @@ export interface AgentStatusPayload {
   label: string;
   /** 触发通知的新状态。 */
   status: 'blocked' | 'done';
+  /** blocked 详情（如工具名），可选。 */
+  message?: string;
 }
 
 /** 官方集成 hook 的安装状态。 */

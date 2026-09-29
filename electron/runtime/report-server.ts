@@ -22,6 +22,12 @@ export interface SessionReport {
   sessionPath?: string | null;
   /** agent 状态上报（对应 herdr 的 pane.report_agent state）。 */
   state?: AgentStateReport | null;
+  /** 单调递增序号（对应 herdr 的 seq）。 */
+  seq?: number | null;
+  /** blocked 详情（对应 herdr 的 message）。 */
+  message?: string | null;
+  /** 会话启动来源（startup/resume/select 等，对应 herdr 的 session_start_source）。 */
+  sessionStartSource?: string | null;
 }
 
 export class ReportServer {
@@ -101,6 +107,9 @@ export class ReportServer {
           sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
           sessionPath: typeof parsed.sessionPath === 'string' ? parsed.sessionPath : null,
           state: isState(parsed.state) ? parsed.state : null,
+          seq: typeof parsed.seq === 'number' ? parsed.seq : null,
+          message: typeof parsed.message === 'string' ? parsed.message : null,
+          sessionStartSource: typeof parsed.sessionStartSource === 'string' ? parsed.sessionStartSource : null,
         };
       } catch {
         res.writeHead(400).end();

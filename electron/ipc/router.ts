@@ -175,6 +175,9 @@ export class IpcRouter {
         sessionId: report.sessionId,
         sessionPath: report.sessionPath,
         state: report.state,
+        seq: report.seq,
+        message: report.message,
+        sessionStartSource: report.sessionStartSource,
       });
     });
   }
@@ -349,15 +352,18 @@ export class IpcRouter {
           break;
         }
         case 'agent:report-session': {
-          const { paneId, source, agent, sessionId, sessionPath, state } = JSON.parse(payload.data) as {
+          const { paneId, source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource } = JSON.parse(payload.data) as {
             paneId: string;
             source: string;
             agent: string;
             sessionId?: string | null;
             sessionPath?: string | null;
             state?: 'working' | 'blocked' | 'idle' | 'done' | null;
+            seq?: number | null;
+            message?: string | null;
+            sessionStartSource?: string | null;
           };
-          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath, state });
+          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource });
           break;
         }
         default:
@@ -561,6 +567,9 @@ export class IpcRouter {
       sessionId?: string | null;
       sessionPath?: string | null;
       state?: 'working' | 'blocked' | 'idle' | 'done' | null;
+      seq?: number | null;
+      message?: string | null;
+      sessionStartSource?: string | null;
     },
   ): void {
     const ref = agentResume.sessionRefFromReport(
@@ -584,7 +593,7 @@ export class IpcRouter {
       const derived = this.deriveStatus(paneId, report.state);
       const transition = this.session.setAgentStatus(paneId, derived);
       if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
-        this.notifyAgentStatus(paneId, transition.to);
+        this.notifyAgentStatus(paneId, transition.to, report.message ?? undefined);
       }
     }
 
@@ -1002,7 +1011,7 @@ export class IpcRouter {
    *
    * 同一 pane + 状态在冷却窗口内只通知一次，避免终端检测抖动导致重复弹。
    */
-  private notifyAgentStatus(paneId: string, status: 'blocked' | 'done'): void {
+  private notifyAgentStatus(paneId: string, status: 'blocked' | 'done', message?: string): void {
     const key = `${paneId}:${status}`;
     const now = Date.now();
     const last = this.agentStatusNotifyCooldown.get(key);
@@ -1020,6 +1029,7 @@ export class IpcRouter {
         projectId: pane.projectId,
         label: pane.label ?? paneId,
         status,
+        ...(message ? { message } : {}),
       },
     });
   }
