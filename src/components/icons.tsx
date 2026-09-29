@@ -5,6 +5,8 @@
  * SVG 用统一的 stroke-width 保证视觉重量一致，并随 currentColor 继承颜色。
  */
 
+import { useId } from 'react';
+
 interface IconProps {
   /** 尺寸（px），默认 16。 */
   size?: number;
@@ -416,15 +418,26 @@ export function IconRestart({ size = 16, className }: IconProps) {
  * 应用品牌标记 —— 与应用图标（build/icon.png）保持同一造型。
  *
  * 几何数据与 scripts/gen-icon.js 一一对应（同为 512 视口）：
- *   圆角底 #171717（圆角 96，四周留 8）
- *   提示符箭头 #4ade80  (170,196)-(170,316)-(238,256)
- *   光标下划线 #e4e4e7  x 268..372, y 300..336
+ *   渐变圆角底  圆角 112，四周留 8，#3b82f6 → #8b5cf6 → #ec4899（135° 对角）
+ *   提示符箭头  #ffffff  (136,170)-(136,342)-(238,256)，外扩 12 后倒圆角
+ *   光标下划线  #ffffff  x 258..368, y 294..334，圆角 20
+ *
+ * 为什么改成彩色：旧版是 #171717 深色底，和黑色主题的顶栏几乎同色，
+ * 贴上去只剩一个浮着的箭头、看不出是块图标（当时靠 CSS 描边救场）。
+ * 换成高饱和渐变底 + 纯白前景后，深浅两种主题下轮廓都清晰。
+ * 底色属于图标本身，不随主题切换。
+ *
+ * 圆角三角用「三角形 + 24 宽圆角描边」表达：描边向外扩 12，
+ * 顶点处由 round join 补出半径 12 的圆弧 —— 与 gen-icon.js 里
+ * 「到边界最近距离减圆角半径」的距离场是同一个形状（都是外扩而非内缩）。
  *
  * 改图标时两边要一起改，否则窗口内的标记会和桌面图标不一致。
- * 底色固定深色：这是图标的一部分，不随主题切换，
- * 保证在浅色主题下也是同一个「黑底绿箭头」标识。
  */
 export function IconLogo({ size = 18, className }: IconProps) {
+  // 渐变 id 需要全局唯一：同一页面渲染多个 IconLogo 时，
+  // 重复 id 会让所有 url(#...) 都指向第一个定义。
+  const gradientId = `herdr-logo-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+
   return (
     <svg
       width={size}
@@ -433,9 +446,22 @@ export function IconLogo({ size = 18, className }: IconProps) {
       className={className}
       aria-hidden="true"
     >
-      <rect x="8" y="8" width="496" height="496" rx="96" fill="#171717" />
-      <polygon points="170,196 170,316 238,256" fill="#4ade80" />
-      <rect x="268" y="300" width="104" height="36" fill="#e4e4e7" />
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#3b82f6" />
+          <stop offset="0.5" stopColor="#8b5cf6" />
+          <stop offset="1" stopColor="#ec4899" />
+        </linearGradient>
+      </defs>
+      <rect x="8" y="8" width="496" height="496" rx="112" fill={`url(#${gradientId})`} />
+      <polygon
+        points="136,170 136,342 238,256"
+        fill="#ffffff"
+        stroke="#ffffff"
+        strokeWidth="24"
+        strokeLinejoin="round"
+      />
+      <rect x="258" y="294" width="110" height="40" rx="20" fill="#ffffff" />
     </svg>
   );
 }
