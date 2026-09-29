@@ -134,7 +134,7 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     if (!container) return;
 
     /*
-     * 原生粘贴（右键菜单 / 鼠标中键）。
+     * 原生粘贴（右键菜单 / 鼠标中键 / macOS 上经菜单 ⌘V 触发的 paste）。
      *
      * 图片与文件没有文本表示，走 readClipboard → 路径插入；纯文本不拦截，
      * 仍交给 xterm 自带的 textarea 处理（保留其 bracketed paste 语义）。
@@ -143,10 +143,25 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     const onNativePaste = (event: ClipboardEvent) => {
       const dt = event.clipboardData;
       if (!dt) return;
+
       const items = Array.from(dt.items);
-      const hasImage = items.some((item) => item.type.startsWith('image/'));
       const fileList = Array.from(dt.files);
-      if (!hasImage && fileList.length === 0) return; // 纯文本交给 xterm
+      const hasImage = items.some((item) => item.type.startsWith('image/'));
+      /*
+       * 文件在 paste 事件里可能以多种形式暴露，因平台而异：
+       * - files（Windows 上由 CF_HDROP 映射）；
+       * - text/uri-list 或 file-kind item（部分平台）；
+       * - DataTransfer.types 里的 "Files"。
+       * 任一命中就拦截，拿不到具体路径时兜底走主进程 readClipboard
+       * （含 text/uri-list + Windows HDROP 双兜底）。
+       */
+      const hasFileMarker =
+        fileList.length > 0 ||
+        items.some((item) => item.type === 'text/uri-list' || item.kind === 'file') ||
+        dt.types.includes('Files');
+
+      if (!hasImage && !hasFileMarker) return; // 纯文本交给 xterm
+
       event.preventDefault();
       event.stopPropagation();
 

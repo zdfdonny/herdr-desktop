@@ -223,10 +223,22 @@ function buildMenu(): void {
         { type: 'separator' as const },
         { role: 'cut' as const, label: t('menu.cut') },
         { role: 'copy' as const, label: t('menu.copy') },
-        {
-          label: t('menu.paste'),
-          click: () => mainWindow?.webContents?.paste(),
-        },
+        /*
+         * paste 按平台区分：
+         * - macOS：保留 role:'paste'，菜单栏显示 ⌘V。终端里的 ⌘V 被系统菜单
+         *   拦截后触发 webContents.paste()，由渲染侧 onNativePaste 兜底处理
+         *   文件/图片路径插入，纯文本交 xterm 原生。
+         * - Windows/Linux：用无快捷键的自定义项，避免与终端 Ctrl+V 的渲染侧
+         *   自定义处理重复触发（粘贴两次）。
+         */
+        ...(isMac
+          ? [{ role: 'paste' as const, label: t('menu.paste') }]
+          : [
+              {
+                label: t('menu.paste'),
+                click: () => mainWindow?.webContents?.paste(),
+              },
+            ]),
         ...(isMac
           ? [
               { role: 'pasteAndMatchStyle' as const, label: t('menu.pasteAndMatchStyle') },
