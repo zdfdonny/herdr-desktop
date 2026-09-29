@@ -162,7 +162,7 @@ export const HerdrAgentStatePlugin = async () => {
 };
 
 export default {
-  id: "herdr.opencode",
+  id: "herdr-desktop.opencode",
   server: HerdrAgentStatePlugin,
   setup() {},
 };

@@ -927,11 +927,11 @@ function ompExtensionDir(): string | null {
 function opencodeTarget(): HookTarget {
   const dir = () => homeJoin('.config', 'opencode');
   const pluginPath = () => join(dir(), 'plugins', 'herdr-desktop-agent-state.js');
-  const tuiPluginPath = () => join(dir(), 'herdr-tui-session.js');
-  const v2Dir = () => join(dir(), 'herdr-opencode');
+  const tuiPluginPath = () => join(dir(), 'herdr-desktop-tui-session.js');
+  const v2Dir = () => join(dir(), 'herdr-desktop-opencode');
   const SPEC = './plugins/herdr-desktop-agent-state.js';
-  const TUI_SPEC = './herdr-tui-session.js';
-  const V2_SPEC = './herdr-opencode';
+  const TUI_SPEC = './herdr-desktop-tui-session.js';
+  const V2_SPEC = './herdr-desktop-opencode';
   const stateDir = () => {
     const xdg = process.env.XDG_STATE_HOME?.trim();
     return xdg ? join(xdg, 'opencode') : homeJoin('.local', 'state', 'opencode');
@@ -954,7 +954,7 @@ function opencodeTarget(): HookTarget {
       const d = dir();
       await fs.mkdir(join(d, 'plugins'), { recursive: true });
       await fs.writeFile(pluginPath(), OPENCODE_ASSET, 'utf8');
-      // TUI session 插件（对应 herdr herdr-tui-session.js + herdr-opencode/tui.js）。
+      // TUI session 插件（对应 herdr herdr-tui-session.js + herdr-opencode/tui.js，文件名加 herdr-desktop 前缀区分）。
       await fs.writeFile(tuiPluginPath(), OPENCODE_TUI_SESSION_ASSET, 'utf8');
       await fs.mkdir(v2Dir(), { recursive: true });
       await fs.writeFile(join(v2Dir(), 'tui.js'), OPENCODE_TUI_ASSET, 'utf8');

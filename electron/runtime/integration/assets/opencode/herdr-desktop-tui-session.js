@@ -1,6 +1,6 @@
 // installed by herdr-desktop
 // managed by herdr-desktop; reinstalling or updating the integration overwrites this file.
-// HERDR_INTEGRATION_ID=opencode-tui
+// HERDR_INTEGRATION_ID=herdr-desktop-opencode-tui
 // HERDR_INTEGRATION_VERSION=2
 
 const SOURCE = "herdr:opencode";
@@ -52,7 +52,7 @@ function requestOnce(sessionID, state, seq, isCurrent = () => true) {
 }
 
 export default {
-  id: "herdr.opencode.session-selection",
+  id: "herdr-desktop.opencode.session-selection",
   // Keep this plain object dependency-free: V1 and V2 expose different SDK
   // packages, but both loaders accept their own lifecycle entry on this object.
   setup,
