@@ -12,7 +12,12 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, MouseEvent as ReactMouseEvent, RefObject } from 'react';
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+} from 'react';
 import type { PaneState } from '@shared/state';
 import {
   useLayoutStore,
@@ -116,6 +121,7 @@ function SplitDivider({
         width: `${DIVIDER_SIZE}px`,
         height: `${divider.h * 100}%`,
         transform: `translateX(-${DIVIDER_SIZE / 2}px)`,
+        touchAction: 'none',
       }
     : {
         left: `${divider.x * 100}%`,
@@ -123,9 +129,10 @@ function SplitDivider({
         width: `${divider.w * 100}%`,
         height: `${DIVIDER_SIZE}px`,
         transform: `translateY(-${DIVIDER_SIZE / 2}px)`,
+        touchAction: 'none',
       };
 
-  const onMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const { setRatio } = useLayoutStore.getState();
     const node = findSplitNode(treeRoot, divider.nodeId);
@@ -143,25 +150,36 @@ function SplitDivider({
     const startX = e.clientX;
     const startY = e.clientY;
 
-    const onMove = (ev: MouseEvent) => {
+    /*
+     * 捕获指针：分隔条旁边可能是 <webview>（WebPane）。不捕获的话，指针一旦
+     * 移到 webview 上，host 页面就收不到 pointermove，拖动会卡住；松开时
+     * pointerup 也可能被 webview 吞掉，导致 onUp 清理不执行、分隔条继续跟着
+     * 后续移动。setPointerCapture 让后续事件始终派发给分隔条，绕过 webview。
+     */
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+
+    const onMove = (ev: PointerEvent) => {
       const delta = isRow ? ev.clientX - startX : ev.clientY - startY;
       const next = clamp(((startRatio / 100) * total + delta) / total * 100, 10, 90);
       setRatio(divider.nodeId, next);
     };
     const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
     };
 
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
   };
 
   return (
     <div
       className={`split-divider split-divider--${divider.orientation}`}
       style={style}
-      onMouseDown={onMouseDown}
+      onPointerDown={onPointerDown}
       role="separator"
       aria-orientation={isRow ? 'vertical' : 'horizontal'}
     />
