@@ -156,6 +156,21 @@ export interface AgentStatusPayload {
 /** 官方集成 hook 的安装状态。 */
 export type HookStatus = 'installed' | 'not-installed' | 'unsupported' | 'outdated';
 
+/**
+ * 系统剪贴板内容（供终端「智能粘贴」读取）。
+ *
+ * Main 按「文件 → 图片 → 文本」的优先级从系统剪贴板解析，返回其中一种：
+ * - files：从文件管理器复制来的文件（`text/uri-list` / 原生 HDROP 解析为绝对路径）；
+ * - image：剪贴板里的位图（如截图），已由 Main 落盘为临时文件，返回其绝对路径；
+ * - text：普通文本；
+ * - empty：剪贴板为空或无法解析。
+ */
+export type ClipboardPayload =
+  | { kind: 'empty' }
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; imagePath: string }
+  | { kind: 'files'; files: string[] };
+
 /** Renderer → Main 的全部消息联合。 */
 export type RendererToMainMessage = ControlMessage;
 
@@ -183,6 +198,10 @@ export interface HerdrDesktopApi {
   uninstallHook(agentId: string): Promise<HookStatus>;
   /** 标记集成设置引导已完成（首次启动引导后调用）。 */
   setIntegrationsOnboarded(onboarded: boolean): void;
+  /** 读取系统剪贴板（文本 / 图片 / 文件），供终端智能粘贴。 */
+  readClipboard(): Promise<ClipboardPayload>;
+  /** 取拖拽 / 粘贴 File 对应的磁盘绝对路径（非磁盘文件返回空串）。 */
+  getPathForFile(file: File): string;
 }
 
 export type {

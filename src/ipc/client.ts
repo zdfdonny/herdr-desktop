@@ -9,6 +9,7 @@ import type {
   AppSettings,
   ProxyTestResult,
   HookStatus,
+  ClipboardPayload,
 } from '@shared/protocol';
 import type { ThemePreference, Language } from '@shared/state';
 
@@ -73,6 +74,16 @@ export function uninstallHook(agentId: string): Promise<HookStatus> {
 /** 标记集成设置引导已完成（首次启动引导后调用）。 */
 export function setIntegrationsOnboarded(onboarded: boolean): void {
   api().setIntegrationsOnboarded(onboarded);
+}
+
+/** 读取系统剪贴板（文本 / 图片 / 文件），供终端智能粘贴。 */
+export function readClipboard(): Promise<ClipboardPayload> {
+  return api().readClipboard();
+}
+
+/** 取拖拽 / 粘贴 File 对应的磁盘绝对路径（非磁盘文件返回空串）。 */
+export function getPathForFile(file: File): string {
+  return api().getPathForFile(file);
 }
 
 /** 添加项目。 */

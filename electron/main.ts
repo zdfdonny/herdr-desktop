@@ -8,6 +8,7 @@ import { app, BrowserWindow, Menu, shell, ipcMain, nativeTheme } from 'electron'
 import { join } from 'node:path';
 import { IpcRouter } from './ipc/router';
 import { IPC } from './ipc/protocol';
+import { readClipboard } from './runtime/clipboard';
 import { translate, type MessageKey } from '../shared/i18n';
 
 /**
@@ -212,16 +213,20 @@ function buildMenu(): void {
       label: t('menu.edit'),
       submenu: [
         /*
-         * 复制/粘贴交给原生 role：
-         * 终端内的文本复制粘贴走 xterm 自己的 Ctrl+Shift+C/V 处理，
-         * 这里的菜单项服务于输入框（搜索栏、设置、项目名等）。
+         * 复制/粘贴：undo/redo/cut/copy 走原生 role；paste 改为无快捷键的
+         * 自定义项——终端里 Ctrl+V 由渲染侧自定义处理（智能粘贴文本/图片/文件），
+         * 若这里仍用 `role: 'paste'`，Electron 会再给 Ctrl+V 绑一次原生粘贴，
+         * 造成粘贴两次。
          */
         { role: 'undo' as const, label: t('menu.undo') },
         { role: 'redo' as const, label: t('menu.redo') },
         { type: 'separator' as const },
         { role: 'cut' as const, label: t('menu.cut') },
         { role: 'copy' as const, label: t('menu.copy') },
-        { role: 'paste' as const, label: t('menu.paste') },
+        {
+          label: t('menu.paste'),
+          click: () => mainWindow?.webContents?.paste(),
+        },
         ...(isMac
           ? [
               { role: 'pasteAndMatchStyle' as const, label: t('menu.pasteAndMatchStyle') },
@@ -296,6 +301,7 @@ app.whenReady().then(async () => {
     version: app.getVersion(),
     platform: process.platform,
   }));
+  ipcMain.handle('herdr:read-clipboard', () => readClipboard());
   ipcMain.handle('herdr:settings', () => router.getSettings());
   ipcMain.handle('herdr:hook-statuses', () => router.getHookStatuses());
   ipcMain.handle('herdr:hook-install', (_event, agentId: string) => router.installHook(agentId));

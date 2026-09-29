@@ -13,9 +13,17 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { PaneState } from '@shared/state';
+import type { ClipboardPayload } from '@shared/protocol';
 import { useTerminalStore, terminalBus } from '../stores/terminalStore';
 import { useSettingsStore, useResolvedTheme } from '../stores/settingsStore';
-import { writeTerminal, resizeTerminal, attachPane, focusPane } from '../ipc/client';
+import {
+  writeTerminal,
+  resizeTerminal,
+  attachPane,
+  focusPane,
+  readClipboard,
+  getPathForFile,
+} from '../ipc/client';
 import { createTerminal, type TerminalHandle } from '../xterm/terminal';
 import { useT } from '../i18n';
 import { isMac, searchShortcutLabel } from '../platform';
@@ -30,6 +38,46 @@ const SEARCH_DECORATIONS = {
   activeMatchBorder: '#fde047',
   activeMatchColorOverviewRuler: '#eab308',
 };
+
+/**
+ * 把一组磁盘绝对路径格式化为写入终端的文本。
+ *
+ * 刻意不做 shell 转义 / 加引号：这些 pane 绝大多数跑的是 CLI coding agent
+ * （Claude Code / Codex / opencode 等），它们的输入是纯文本提示词而非 shell，
+ * 加引号会把引号本身带进路径、导致 agent 读不到文件。多个文件用空格分隔，
+ * 与主流终端（Windows Terminal 等）的拖放行为一致。
+ */
+function formatInsertPaths(paths: string[]): string {
+  return paths.join(' ');
+}
+
+/**
+ * 读取系统剪贴板并按「文件 / 图片 → 路径、文本 → 原文」写入指定 pane 的 PTY。
+ *
+ * 图片没有文本表示：由 Main 先把它落盘为临时文件，再插入临时文件路径，
+ * 让终端里的 CLI agent 能按普通文件路径读取它。
+ */
+async function pasteIntoTerminal(paneId: string): Promise<void> {
+  let payload: ClipboardPayload;
+  try {
+    payload = await readClipboard();
+  } catch {
+    return;
+  }
+  switch (payload.kind) {
+    case 'files':
+      writeTerminal(paneId, formatInsertPaths(payload.files));
+      break;
+    case 'image':
+      writeTerminal(paneId, formatInsertPaths([payload.imagePath]));
+      break;
+    case 'text':
+      writeTerminal(paneId, payload.text);
+      break;
+    case 'empty':
+      break;
+  }
+}
 
 interface TerminalPaneProps {
   pane: PaneState;
@@ -85,6 +133,79 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     const container = containerRef.current;
     if (!container) return;
 
+    /*
+     * 原生粘贴（右键菜单 / 鼠标中键）。
+     *
+     * 图片与文件没有文本表示，走 readClipboard → 路径插入；纯文本不拦截，
+     * 仍交给 xterm 自带的 textarea 处理（保留其 bracketed paste 语义）。
+     * 监听挂在 capture 阶段，保证在 xterm 的 textarea 处理前截住非文本内容。
+     */
+    const onNativePaste = (event: ClipboardEvent) => {
+      const dt = event.clipboardData;
+      if (!dt) return;
+      const items = Array.from(dt.items);
+      const hasImage = items.some((item) => item.type.startsWith('image/'));
+      const fileList = Array.from(dt.files);
+      if (!hasImage && fileList.length === 0) return; // 纯文本交给 xterm
+      event.preventDefault();
+      event.stopPropagation();
+
+      /*
+       * 优先用事件自带 File 的磁盘路径：这比让 Main 重新解析 text/uri-list
+       * 更可靠（部分平台不暴露该格式）。截图等合成 File 拿不到路径时，
+       * 退回 readClipboard（Main 落盘为临时文件）。
+       */
+      const paths: string[] = [];
+      let hasSyntheticImage = false;
+      for (const file of fileList) {
+        let path = '';
+        try {
+          path = getPathForFile(file);
+        } catch {
+          path = '';
+        }
+        if (path) {
+          paths.push(path);
+        } else if (file.type.startsWith('image/')) {
+          hasSyntheticImage = true;
+        }
+      }
+      if (paths.length > 0 && !hasSyntheticImage) {
+        writeTerminal(pane.paneId, formatInsertPaths(paths));
+        return;
+      }
+      void pasteIntoTerminal(pane.paneId);
+    };
+
+    // 拖文件到终端：插入文件绝对路径。
+    const onDragOver = (event: DragEvent) => {
+      if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    };
+
+    const onDrop = (event: DragEvent) => {
+      const fileList = event.dataTransfer?.files;
+      if (!fileList || fileList.length === 0) return;
+      event.preventDefault();
+      const paths: string[] = [];
+      for (let i = 0; i < fileList.length; i += 1) {
+        try {
+          const path = getPathForFile(fileList[i]);
+          if (path) paths.push(path);
+        } catch {
+          // 前端构造、非磁盘文件的 File 拿不到路径，跳过
+        }
+      }
+      if (paths.length > 0) {
+        writeTerminal(pane.paneId, formatInsertPaths(paths));
+      }
+    };
+
+    container.addEventListener('paste', onNativePaste, true);
+    container.addEventListener('dragover', onDragOver);
+    container.addEventListener('drop', onDrop);
+
     const handle = createTerminal(container, {
       fontSize,
       theme: resolvedTheme,
@@ -126,39 +247,47 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     // 终端快捷键（拦截在 xterm 处理之前；随 terminal.dispose 一起销毁）
     handle.terminal.attachCustomKeyEventHandler((event) => {
       /*
+       * xterm 会在 keydown / keypress / keyup 三个事件里都调用本回调。
+       * 这里只处理 keydown，其余事件放行——否则一次按键会触发两次处理，
+       * 典型症状就是 Ctrl+V 粘贴两次。
+       */
+      if (event.type !== 'keydown') return true;
+
+      /*
        * 平台差异：
-       * - macOS：终端复制/粘贴用 Cmd+C / Cmd+V（系统约定），
+       * - macOS：复制/粘贴用 Cmd+C / Cmd+V（系统约定），
        *   且 Ctrl+C 必须原样送进 PTY（它是 SIGINT）。
-       * - Windows / Linux：用 Ctrl+Shift+C / Ctrl+Shift+V，
-       *   因为裸 Ctrl+C 同样是 SIGINT，不能占用。
+       * - Windows / Linux：复制/粘贴都用 Ctrl+C / Ctrl+V：
+       *   Ctrl+C 有选中时复制并清除选中，无选中时放行为 SIGINT。
        *
        * `primary` 即「该平台的命令键」：mac 为 meta，其余为 ctrl。
        */
       const primary = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
       const plain = primary && !event.altKey;
-      // mac 上 Cmd+Shift+C/V 也一并接受，容错用户习惯
-      const shiftOk = isMac ? true : event.shiftKey;
 
-      // 复制选中文本
-      if (plain && shiftOk && (event.key === 'c' || event.key === 'C')) {
+      // 复制选中文本（Ctrl+C / Cmd+C：有选中复制，无选中放行为 SIGINT）
+      if (plain && !event.shiftKey && (event.key === 'c' || event.key === 'C')) {
         const selection = handle.terminal.getSelection();
         if (selection) {
           navigator.clipboard?.writeText(selection).catch(() => {});
+          // 复制后清除选中：下一次 Ctrl+C 即为 SIGINT（退出）
+          handle.terminal.clearSelection();
           event.preventDefault();
           return false;
         }
-        // 无选中时放行：mac 上 Cmd+C 无选中应无副作用，Windows 上 Ctrl+Shift+C 亦然
+        // 无选中：Ctrl+C 是 SIGINT，放行给 xterm 送进 PTY
         return true;
       }
 
-      // 粘贴剪贴板
-      if (plain && shiftOk && (event.key === 'v' || event.key === 'V')) {
-        navigator.clipboard
-          ?.readText()
-          .then((text) => {
-            if (text) writeTerminal(pane.paneId, text);
-          })
-          .catch(() => {});
+      // 粘贴剪贴板（文本 / 图片 / 文件）：Ctrl+V / Cmd+V
+      if (plain && !event.shiftKey && (event.key === 'v' || event.key === 'V')) {
+        void pasteIntoTerminal(pane.paneId);
+        event.preventDefault();
+        return false;
+      }
+
+      // Ctrl+Shift+V 不再作为粘贴：显式拦截，避免 xterm 默认仍把它当粘贴
+      if (plain && event.shiftKey && (event.key === 'v' || event.key === 'V')) {
         event.preventDefault();
         return false;
       }
@@ -245,6 +374,9 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
       cancelAnimationFrame(initialRaf);
       if (lateRaf) cancelAnimationFrame(lateRaf);
       if (rafId) cancelAnimationFrame(rafId);
+      container.removeEventListener('paste', onNativePaste, true);
+      container.removeEventListener('dragover', onDragOver);
+      container.removeEventListener('drop', onDrop);
       observer.disconnect();
       terminalBus.unregister(pane.paneId);
       dataSub.dispose();

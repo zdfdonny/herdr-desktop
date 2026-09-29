@@ -4,7 +4,7 @@
  * 只暴露最小必要的安全接口，不暴露 ipcRenderer 原对象。
  */
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from './ipc/protocol';
 import type {
   HerdrDesktopApi,
@@ -12,6 +12,7 @@ import type {
   MainToRendererMessage,
   AppSettings,
   ProxyTestResult,
+  ClipboardPayload,
 } from '../shared/protocol';
 
 const MESSAGE_CHANNELS = [
@@ -72,6 +73,12 @@ const api: HerdrDesktopApi = {
   },
   setIntegrationsOnboarded(onboarded: boolean): void {
     ipcRenderer.send(IPC.SET_INTEGRATIONS_ONBOARDED, { onboarded });
+  },
+  readClipboard(): Promise<ClipboardPayload> {
+    return ipcRenderer.invoke('herdr:read-clipboard');
+  },
+  getPathForFile(file: File): string {
+    return webUtils.getPathForFile(file);
   },
 };
 
