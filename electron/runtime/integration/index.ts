@@ -7,17 +7,19 @@
  * - 非 hook（extension/plugin）：pi、omp（扩展）、opencode、kilo（JS 插件）、
  *   hermes（Python 插件）。
  *
- * 上报通道统一走本地 HTTP 上报端点（`HERDR_DESKTOP_REPORT_URL`）。hook/资产都带
- * `HERDR_INTEGRATION_ID=herdr-desktop` 标记，用于区分 herdr 官方集成与
- * herdr-desktop 集成。会话 id 与状态（working/blocked/idle/done）都可上报，
- * 状态上报后该 pane 进入 hook 权威模式（终端检测不再覆盖 status）。
+ * 每个智能体的脚本单独存放在 `assets/<agent>/` 文件夹里（见 `assets.ts`），
+ * 对应 herdr `src/integration/assets/`。上报通道统一走本地 HTTP 上报端点
+ * （`HERDR_DESKTOP_REPORT_URL`）。hook/资产都带 `HERDR_INTEGRATION_ID=herdr-desktop`
+ * 标记，用于区分 herdr 官方集成与 herdr-desktop 集成。会话 id 与状态
+ * （working/blocked/idle/done）都可上报，状态上报后该 pane 进入 hook 权威模式
+ * （终端检测不再覆盖 status）。
  */
 
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { isWindows } from '../platform';
-import type { HookStatus } from '../../shared/protocol';
+import { isWindows } from '../../platform';
+import type { HookStatus } from '../../../shared/protocol';
 import {
   PI_ASSET,
   OMP_ASSET,
@@ -27,7 +29,9 @@ import {
   HERMES_PLUGIN_INIT,
   DSH_STATUS_PLUGIN,
   DSH_STATUS_PLUGIN_NAME,
-} from './integration-assets';
+  hookScriptContent,
+  type HookScriptAgent,
+} from './assets';
 
 const INTEGRATION_ID = 'herdr-desktop';
 /**
@@ -35,7 +39,7 @@ const INTEGRATION_ID = 'herdr-desktop';
  * 统一用它；升级资产时同步 bump 这里，设置页据此把「已安装但版本旧」的
  * agent 标记为「更新」。
  */
-const INTEGRATION_VERSION = 1;
+const INTEGRATION_VERSION = 2;
 const HOOK_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-state.ps1' : 'herdr-desktop-agent-state.sh';
 /** qwen / letta 用会话专用脚本名（对应 herdr 的 `*_HOOK_INSTALL_NAME`）。 */
 const SESSION_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-session.ps1' : 'herdr-desktop-agent-session.sh';
@@ -53,6 +57,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
   codex: codexTarget(),
   kimi: kimiTarget(),
   copilot: jsonHooksTarget({
+    agent: 'copilot',
     configDir: () => envOrHome('COPILOT_HOME', ['.copilot']),
     scriptName: HOOK_SCRIPT_NAME,
     scriptSubdir: 'hooks',
@@ -62,6 +67,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     timeoutSec: 10,
   }),
   devin: jsonHooksTarget({
+    agent: 'devin',
     configDir: () => devinDir(),
     scriptName: HOOK_SCRIPT_NAME,
     scriptSubdir: null,
@@ -72,6 +78,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     stateEvents: LIFECYCLE_STATE_EVENTS,
   }),
   droid: jsonHooksTarget({
+    agent: 'droid',
     configDir: () => homeJoin('.factory'),
     scriptName: HOOK_SCRIPT_NAME,
     scriptSubdir: 'hooks',
@@ -81,6 +88,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     timeoutSec: 10,
   }),
   qodercli: jsonHooksTarget({
+    agent: 'qodercli',
     configDir: () => envOrHome('QODER_CONFIG_DIR', ['.qoder']),
     scriptName: HOOK_SCRIPT_NAME,
     scriptSubdir: 'hooks',
@@ -91,6 +99,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     timeoutSec: 10,
   }),
   qwen: jsonHooksTarget({
+    agent: 'qwen',
     configDir: () => envOrHome('QWEN_HOME', ['.qwen']),
     scriptName: SESSION_SCRIPT_NAME,
     scriptSubdir: 'hooks',
@@ -101,6 +110,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     timeoutSec: 10,
   }),
   letta: jsonHooksTarget({
+    agent: 'letta',
     configDir: () => homeJoin('.letta'),
     scriptName: SESSION_SCRIPT_NAME,
     scriptSubdir: 'hooks',
@@ -111,6 +121,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     quiet: true,
   }),
   cursor: jsonHooksTarget({
+    agent: 'cursor',
     configDir: () => envOrHome('CURSOR_CONFIG_DIR', ['.cursor']),
     scriptName: HOOK_SCRIPT_NAME,
     scriptSubdir: null,
@@ -120,6 +131,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     withVersion: true,
   }),
   mastracode: jsonHooksTarget({
+    agent: 'mastracode',
     configDir: () => homeJoin('.mastracode'),
     scriptName: HOOK_SCRIPT_NAME,
     scriptSubdir: 'hooks',
@@ -195,6 +207,7 @@ interface HookTarget {
 type JsonShape = 'nested' | 'flat' | 'direct' | 'simple';
 
 interface JsonHooksTargetOptions {
+  agent: HookScriptAgent;
   configDir: () => string | null;
   scriptName: string;
   scriptSubdir: string | null;
@@ -400,7 +413,7 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       if (!dir || !path) return;
       const scriptDir = opts.scriptSubdir ? join(dir, opts.scriptSubdir) : dir;
       await fs.mkdir(scriptDir, { recursive: true });
-      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+      await fs.writeFile(path, hookScriptContent(opts.agent, isWindows), 'utf8');
 
       const configPath = join(dir, opts.configFile);
       const root = await readJson(configPath);
@@ -451,7 +464,7 @@ function claudeTarget(): HookTarget {
       const path = this.hookPath();
       if (!dir || !path) return;
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
-      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+      await fs.writeFile(path, hookScriptContent('claude', isWindows), 'utf8');
 
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
@@ -500,7 +513,7 @@ function codexTarget(): HookTarget {
       const path = this.hookPath();
       if (!dir || !path) return;
       await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+      await fs.writeFile(path, hookScriptContent('codex', isWindows), 'utf8');
 
       const hooksPath = join(dir, 'hooks.json');
       const hooksRoot = await readJson(hooksPath);
@@ -565,7 +578,7 @@ function kimiTarget(): HookTarget {
       const path = this.hookPath();
       if (!dir || !path) return;
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
-      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+      await fs.writeFile(path, hookScriptContent('kimi', isWindows), 'utf8');
 
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
@@ -628,7 +641,7 @@ function antigravityTarget(): HookTarget {
       const path = this.hookPath();
       if (!dir || !path) return;
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
-      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+      await fs.writeFile(path, hookScriptContent('antigravity', isWindows), 'utf8');
 
       const hooksPath = join(dir, 'hooks.json');
       const root = await readJson(hooksPath);
@@ -668,7 +681,7 @@ function grokTarget(): HookTarget {
       const path = this.hookPath();
       if (!dir || !path) return;
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
-      await fs.writeFile(path, hookScriptContent(isWindows), 'utf8');
+      await fs.writeFile(path, hookScriptContent('grok', isWindows), 'utf8');
 
       const config = {
         hooks: {
@@ -900,59 +913,3 @@ async function removeDshPatchBlock(patchPath: string): Promise<void> {
   }
   await fs.writeFile(patchPath, `${cleaned}\n`, 'utf8');
 }
-
-// ---------------------------------------------------------------------------
-// hook 脚本资产（bash / PowerShell，带标记 + 状态上报）
-// ---------------------------------------------------------------------------
-
-function hookScriptContent(windows: boolean): string {
-  return windows ? WINDOWS_HOOK_SCRIPT : UNIX_HOOK_SCRIPT;
-}
-
-/**
- * hook 脚本：读取 action 参数（session/working/blocked/idle/done），从 stdin
- * JSON 提取 session_id/sessionId，把会话引用与状态 POST 回 Main。
- */
-const UNIX_HOOK_SCRIPT = `#!/usr/bin/env bash
-# HERDR_INTEGRATION_ID=herdr-desktop
-# HERDR_INTEGRATION_VERSION=1
-set -u
-action="\${1:-session}"
-payload="$(cat)"
-session_id="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
-[ -z "$session_id" ] && session_id="$(printf '%s' "$payload" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
-# SessionStart(source=startup) 是全新会话，可能尚无对话内容，空会话无法 --resume；先不保存，等首个内容事件再报。
-session_source="$(printf '%s' "$payload" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
-if [ "$action" = "session" ] && [ "$session_source" = "startup" ]; then
-  session_id=""
-fi
-[ -z "$HERDR_DESKTOP_REPORT_URL" ] && exit 0
-[ -z "$HERDR_DESKTOP_PANE_ID" ] && exit 0
-agent="\${HERDR_DESKTOP_AGENT:-unknown}"
-body="{\\"paneId\\":\\"$HERDR_DESKTOP_PANE_ID\\",\\"source\\":\\"herdr:$agent\\",\\"agent\\":\\"$agent\\""
-[ -n "$session_id" ] && body="$body,\\"sessionId\\":\\"$session_id\\""
-case "$action" in working|blocked|idle|done) body="$body,\\"state\\":\\"$action\\"";; esac
-body="$body}"
-curl -s -X POST "$HERDR_DESKTOP_REPORT_URL" -H 'Content-Type: application/json' --data "$body" >/dev/null 2>&1 || true
-`;
-
-const WINDOWS_HOOK_SCRIPT = `# HERDR_INTEGRATION_ID=herdr-desktop
-# HERDR_INTEGRATION_VERSION=1
-$ErrorActionPreference = 'SilentlyContinue'
-$action = if ($args.Count -ge 1) { $args[0] } else { 'session' }
-$payload = [Console]::In.ReadToEnd()
-$sessionId = $null
-if ($payload -match '"session_id"\\s*:\\s*"([^"]+)"') { $sessionId = $Matches[1] }
-elseif ($payload -match '"sessionId"\\s*:\\s*"([^"]+)"') { $sessionId = $Matches[1] }
-# SessionStart(source=startup) 是全新会话，可能尚无对话内容，空会话无法 --resume；先不保存，等首个内容事件再报。
-$sessionSource = $null
-if ($payload -match '"source"\\s*:\\s*"([^"]+)"') { $sessionSource = $Matches[1] }
-if ($action -eq 'session' -and $sessionSource -eq 'startup') { $sessionId = $null }
-if (-not $env:HERDR_DESKTOP_REPORT_URL -or -not $env:HERDR_DESKTOP_PANE_ID) { exit 0 }
-$agent = if ($env:HERDR_DESKTOP_AGENT) { $env:HERDR_DESKTOP_AGENT } else { 'unknown' }
-$body = @{ paneId = $env:HERDR_DESKTOP_PANE_ID; source = "herdr:$agent"; agent = $agent }
-if ($sessionId) { $body.sessionId = $sessionId }
-if ($action -in @('working','blocked','idle','done')) { $body.state = $action }
-$json = $body | ConvertTo-Json -Compress
-try { Invoke-RestMethod -Method Post -Uri $env:HERDR_DESKTOP_REPORT_URL -ContentType 'application/json' -Body $json | Out-Null } catch { }
-`;
