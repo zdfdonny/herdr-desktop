@@ -133,9 +133,9 @@ export const INTEGRATION_VERSIONS: Record<string, number> = {
   antigravity: 2,
   grok: 2,
   pi: 3,
-  omp: 3,
+  omp: 4,
   opencode: 3,
-  kilo: 2,
+  kilo: 3,
   hermes: 2,
   'dsh-web': 2,
 };
