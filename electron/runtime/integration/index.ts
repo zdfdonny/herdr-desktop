@@ -18,6 +18,8 @@
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { isWindows } from '../../platform';
 import type { HookStatus } from '../../../shared/protocol';
 import {
@@ -628,6 +630,7 @@ function kimiTarget(): HookTarget {
       return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
+      await checkKimiVersion();
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
@@ -652,6 +655,45 @@ function kimiTarget(): HookTarget {
 
 const KIMI_BLOCK_BEGIN = '# >>> herdr kimi integration';
 const KIMI_BLOCK_END = '# <<< herdr kimi integration';
+
+const execFileAsync = promisify(execFile);
+const KIMI_MIN_VERSION = '0.14.0';
+
+function extractVersionTriple(text: string): [number, number, number] | null {
+  for (const token of text.split(/\s+/)) {
+    const m = /^v?(\d+)\.(\d+)(?:\.(\d+))?/.exec(token);
+    if (m) return [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)];
+  }
+  return null;
+}
+
+function compareTriples(a: [number, number, number], b: [number, number, number]): number {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+/**
+ * kimi 最低版本检查（对应 herdr enforce_agent_version）。
+ * 无法探测或无法解析时放行（warning 分支）；太旧则抛错阻断安装。
+ */
+async function checkKimiVersion(): Promise<void> {
+  let stdout: string;
+  try {
+    const result = await execFileAsync('kimi', ['--version'], { timeout: 5000 });
+    stdout = result.stdout;
+  } catch {
+    return;
+  }
+  const found = extractVersionTriple(stdout);
+  const required = extractVersionTriple(KIMI_MIN_VERSION);
+  if (found && required && compareTriples(found, required) < 0) {
+    throw new Error(
+      `kimi ${found.join('.')} is too old: hooks require kimi ${KIMI_MIN_VERSION} or newer`,
+    );
+  }
+}
 
 function kimiConfigWithHook(
   content: string,
@@ -825,6 +867,14 @@ function opencodeTarget(): HookTarget {
   const SPEC = './plugins/herdr-desktop-agent-state.js';
   const TUI_SPEC = './herdr-tui-session.js';
   const V2_SPEC = './herdr-opencode';
+  const stateDir = () => {
+    const xdg = process.env.XDG_STATE_HOME?.trim();
+    return xdg ? join(xdg, 'opencode') : homeJoin('.local', 'state', 'opencode');
+  };
+  // 当 tui.json 或 state/kv.json 存在时，OpenCode 会在首次 V2 启动时把 V1 配置迁移
+  // 到 cli.json（仅在 cli.json 缺失时）；此时暂不写 cli.json（对应 herdr cli_migration_pending）。
+  const migrationPending = () =>
+    existsSync(join(dir(), 'tui.json')) || existsSync(join(stateDir(), 'kv.json'));
   return {
     configDir: dir,
     hookPath: pluginPath,
@@ -841,15 +891,18 @@ function opencodeTarget(): HookTarget {
       await fs.writeFile(join(v2Dir(), 'tui.js'), OPENCODE_TUI_ASSET, 'utf8');
 
       // 注册主插件 + V2 TUI 到 cli.json（对应 herdr add_cli_plugin）。
-      const cliPath = join(d, 'cli.json');
-      const root = await readJson(cliPath);
-      const plugins = Array.isArray(root.plugins) ? root.plugins : (root.plugins = []);
-      for (const spec of [SPEC, V2_SPEC]) {
-        if (!plugins.some((p: unknown) => p === spec || (p && typeof p === 'object' && (p as any).package === spec))) {
-          plugins.push(spec);
+      // 迁移未完成时先跳过，避免用 cli.json 抢占 OpenCode 的 V1→V2 迁移。
+      if (!migrationPending()) {
+        const cliPath = join(d, 'cli.json');
+        const root = await readJson(cliPath);
+        const plugins = Array.isArray(root.plugins) ? root.plugins : (root.plugins = []);
+        for (const spec of [SPEC, V2_SPEC]) {
+          if (!plugins.some((p: unknown) => p === spec || (p && typeof p === 'object' && (p as any).package === spec))) {
+            plugins.push(spec);
+          }
         }
+        await writeJson(cliPath, root);
       }
-      await writeJson(cliPath, root);
 
       // 注册 TUI 插件到 tui.jsonc（对应 herdr add_tui_plugin）。
       const tuiPath = join(d, 'tui.jsonc');
@@ -895,21 +948,99 @@ function kiloTarget(): HookTarget {
   });
 }
 
+const HERMES_PLUGIN_NAME = 'herdr-agent-state';
+
+/**
+ * 在 hermes config.yaml 里启用/禁用插件（对应 herdr ensure_hermes_plugin_enabled）。
+ * 简化处理三种形态：内联列表 `plugins: [...]`、`enabled:` 子列表、扁平列表。
+ */
+function updateHermesEnabled(content: string, enabled: boolean): string {
+  const lines = content.split('\n');
+  const pluginsIdx = lines.findIndex((l) => /^plugins\s*:/.test(l));
+
+  if (pluginsIdx < 0) {
+    if (!enabled) return content;
+    const base = content.replace(/\n+$/, '');
+    return `${base}${base ? '\n' : ''}plugins:\n  enabled:\n    - ${HERMES_PLUGIN_NAME}\n`;
+  }
+
+  // 内联列表：plugins: [a, b]
+  const inline = lines[pluginsIdx].match(/^plugins\s*:\s*\[([^\]]*)\]/);
+  if (inline) {
+    const items = inline[1]
+      .split(',')
+      .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    const idx = items.indexOf(HERMES_PLUGIN_NAME);
+    if (enabled && idx < 0) items.push(HERMES_PLUGIN_NAME);
+    if (!enabled && idx >= 0) items.splice(idx, 1);
+    lines[pluginsIdx] = items.length
+      ? `plugins: [${items.map((s) => `'${s}'`).join(', ')}]`
+      : 'plugins: []';
+    return lines.join('\n');
+  }
+
+  // 块形态：找 enabled 子键或扁平列表项
+  const nextTop = lines.findIndex((l, i) => i > pluginsIdx && /^[A-Za-z_][\w-]*\s*:/.test(l));
+  const end = nextTop < 0 ? lines.length : nextTop;
+  const sub = lines.slice(pluginsIdx + 1, end);
+  const enabledIdx = sub.findIndex((l) => /^\s{2}enabled\s*:/.test(l));
+
+  if (enabledIdx >= 0) {
+    const listStart = pluginsIdx + 1 + enabledIdx + 1;
+    let listEnd = listStart;
+    while (listEnd < end && /^\s{2,}-\s/.test(lines[listEnd])) listEnd += 1;
+    const itemIdx =
+      lines.slice(listStart, listEnd).findIndex((l) => l.trim() === `- ${HERMES_PLUGIN_NAME}`) + listStart;
+    if (enabled && itemIdx < listStart) lines.splice(listStart, 0, `    - ${HERMES_PLUGIN_NAME}`);
+    else if (!enabled && itemIdx >= listStart) lines.splice(itemIdx, 1);
+    return lines.join('\n');
+  }
+
+  // 扁平列表形态：plugins:\n  - x
+  const flatIdx = sub.findIndex((l) => /^\s{2}-\s/.test(l));
+  if (flatIdx >= 0) {
+    const listStart = pluginsIdx + 1 + flatIdx;
+    const itemIdx =
+      lines.slice(listStart, end).findIndex((l) => l.trim() === `- ${HERMES_PLUGIN_NAME}`) + listStart;
+    if (enabled && itemIdx < listStart) lines.splice(listStart, 0, `  - ${HERMES_PLUGIN_NAME}`);
+    else if (!enabled && itemIdx >= listStart) lines.splice(itemIdx, 1);
+    return lines.join('\n');
+  }
+
+  // 有 plugins 键但没有 enabled/列表：追加 enabled 子键
+  if (enabled) {
+    lines.splice(pluginsIdx + 1, 0, '  enabled:', `    - ${HERMES_PLUGIN_NAME}`);
+    return lines.join('\n');
+  }
+
+  return content;
+}
+
 function hermesTarget(): HookTarget {
-  const pluginDir = () => homeJoin('.hermes', 'plugins', 'herdr-desktop-agent-state');
+  const dir = () => homeJoin('.hermes');
+  const pluginDir = () => join(dir(), 'plugins', 'herdr-desktop-agent-state');
+  const configPath = () => join(dir(), 'config.yaml');
   return {
-    configDir: pluginDir,
+    configDir: dir,
     hookPath: () => join(pluginDir(), '__init__.py'),
     isInstalled() {
       return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
-      const dir = pluginDir();
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(join(dir, 'plugin.yaml'), HERMES_PLUGIN_YAML, 'utf8');
-      await fs.writeFile(join(dir, '__init__.py'), HERMES_PLUGIN_INIT, 'utf8');
+      await fs.mkdir(pluginDir(), { recursive: true });
+      await fs.writeFile(join(pluginDir(), 'plugin.yaml'), HERMES_PLUGIN_YAML, 'utf8');
+      await fs.writeFile(join(pluginDir(), '__init__.py'), HERMES_PLUGIN_INIT, 'utf8');
+
+      // 在 config.yaml 启用插件（对应 herdr ensure_hermes_plugin_enabled）。
+      const content = await readText(configPath());
+      const updated = updateHermesEnabled(content, true);
+      if (updated !== content) await fs.writeFile(configPath(), updated, 'utf8');
     },
     async uninstall() {
+      const content = await readText(configPath());
+      const updated = updateHermesEnabled(content, false);
+      if (updated !== content) await fs.writeFile(configPath(), updated, 'utf8');
       await fs.rm(pluginDir(), { recursive: true, force: true }).catch(() => undefined);
     },
   };
