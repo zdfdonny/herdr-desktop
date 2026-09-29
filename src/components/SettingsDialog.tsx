@@ -14,6 +14,7 @@ import { useT } from '../i18n';
 import { LANGUAGES, LANGUAGE_LABELS, type MessageKey } from '../i18n/messages';
 import { AGENT_PRESETS, useAgentsStore, isAvailable } from '../stores/agentsStore';
 import { getAppInfo, testProxy, getHookStatuses, installHook, uninstallHook } from '../ipc/client';
+import { useNotificationStore } from '../stores/notificationStore';
 import type { ProxyTestResult, HookStatus } from '@shared/protocol';
 import {
   IconSliders,
@@ -169,11 +170,23 @@ export function SettingsDialog() {
       .catch(() => setHookStatuses({}));
   }, []);
 
+  const notifyInstallError = (agentId: string, error: unknown) => {
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = raw.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+    useNotificationStore.getState().push({
+      kind: 'error',
+      titleKey: 'settings.integrationInstallFailed',
+      titleVars: { agent: agentId },
+      detailKey: 'settings.integrationInstallFailedDetail',
+      detailVars: { error: message },
+    });
+  };
+
   const handleHookInstall = (agentId: string) => {
     setHookBusy(agentId);
     void installHook(agentId)
       .then((status) => setHookStatuses((prev) => ({ ...prev, [agentId]: status })))
-      .catch(() => undefined)
+      .catch((error) => notifyInstallError(agentId, error))
       .finally(() => setHookBusy(null));
   };
 
@@ -181,7 +194,7 @@ export function SettingsDialog() {
     setHookBusy(agentId);
     void uninstallHook(agentId)
       .then((status) => setHookStatuses((prev) => ({ ...prev, [agentId]: status })))
-      .catch(() => undefined)
+      .catch((error) => notifyInstallError(agentId, error))
       .finally(() => setHookBusy(null));
   };
 

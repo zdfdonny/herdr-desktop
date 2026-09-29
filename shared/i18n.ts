@@ -148,6 +148,8 @@ export interface Messages {
     integrationNotFound: string;
     integrationUnsupported: string;
     integrationUpdate: string;
+    integrationInstallFailed: string;
+    integrationInstallFailedDetail: string;
   };
   error: {
     commandNotFound: string;
@@ -293,6 +295,8 @@ const zhCN: Messages = {
     integrationNotFound: '未找到',
     integrationUnsupported: '不支持',
     integrationUpdate: '更新',
+    integrationInstallFailed: '「{agent}」集成安装失败',
+    integrationInstallFailedDetail: '{error}',
   },
   error: {
     commandNotFound: '命令不存在',
@@ -440,6 +444,8 @@ const en: Messages = {
     integrationNotFound: 'Not found',
     integrationUnsupported: 'Not supported',
     integrationUpdate: 'Update',
+    integrationInstallFailed: '"{agent}" integration install failed',
+    integrationInstallFailedDetail: '{error}',
   },
   error: {
     commandNotFound: 'Command not found',

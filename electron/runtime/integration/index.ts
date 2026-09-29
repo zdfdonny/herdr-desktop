@@ -20,6 +20,7 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
 import { isWindows } from '../../platform';
 import type { HookStatus } from '../../../shared/protocol';
 import {
@@ -317,19 +318,15 @@ function commandFor(opts: { encodedCommand?: boolean }, path: string, action: st
     : hookCommand(path, action);
 }
 
-/** 读取 JSON（容忍 JSONC 注释与尾逗号，避免带注释的配置被当 {} 而整体覆盖）。 */
+/** 读取 JSON（用 jsonc-parser 容忍 JSONC 注释与尾逗号）。 */
 async function readJson(path: string): Promise<Record<string, any>> {
   const text = await readText(path);
   if (!text) return {};
-  try {
-    const stripped = text
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1')
-      .replace(/,\s*([}\]])/g, '$1');
-    return JSON.parse(stripped) as Record<string, any>;
-  } catch {
-    return {};
-  }
+  const errors: ParseError[] = [];
+  const value = parse(text, errors, { allowTrailingComma: true }) as unknown;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {};
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -361,6 +358,24 @@ async function writeConfigFile(path: string, contents: string): Promise<void> {
     await fs.rm(tmp, { force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+/** 在 JSONC 文件的某数组键里增删一项，用 modify 保留键外注释（对应 herdr jsonc 保真）。 */
+async function writeJsoncArrayItem(path: string, key: string, item: unknown, add: boolean): Promise<void> {
+  const text = await readText(path);
+  const errors: ParseError[] = [];
+  const value = parse(text, errors, { allowTrailingComma: true }) as Record<string, any> | null;
+  const arr = value && Array.isArray(value[key]) ? value[key] : [];
+  const idx = arr.findIndex((p: unknown) => p === item);
+  let next: unknown[];
+  if (add && idx < 0) next = [...arr, item];
+  else if (!add && idx >= 0) next = arr.filter((_: unknown, i: number) => i !== idx);
+  else return;
+  const edits = modify(text, [key], next, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  });
+  const updated = applyEdits(text, edits);
+  await writeConfigFile(path, updated);
 }
 
 async function readText(path: string): Promise<string> {
@@ -942,14 +957,8 @@ function opencodeTarget(): HookTarget {
         await writeJson(cliPath, root);
       }
 
-      // 注册 TUI 插件到 tui.jsonc（对应 herdr add_tui_plugin）。
-      const tuiPath = join(d, 'tui.jsonc');
-      const tuiRoot = await readJson(tuiPath);
-      const tuiPlugins = Array.isArray(tuiRoot.plugin) ? tuiRoot.plugin : (tuiRoot.plugin = []);
-      if (!tuiPlugins.some((p: unknown) => p === TUI_SPEC || (p && typeof p === 'object' && ((p as any).package === TUI_SPEC || (Array.isArray(p) && p[0] === TUI_SPEC))))) {
-        tuiPlugins.push(TUI_SPEC);
-      }
-      await writeJson(tuiPath, tuiRoot);
+      // 注册 TUI 插件到 tui.jsonc（对应 herdr add_tui_plugin，保留注释）。
+      await writeJsoncArrayItem(join(d, 'tui.jsonc'), 'plugin', TUI_SPEC, true);
     },
     async uninstall() {
       const d = dir();
@@ -962,15 +971,7 @@ function opencodeTarget(): HookTarget {
         if (root.plugins.length === 0) delete root.plugins;
         await writeJson(cliPath, root);
       }
-      const tuiPath = join(d, 'tui.jsonc');
-      const tuiRoot = await readJson(tuiPath);
-      if (Array.isArray(tuiRoot.plugin)) {
-        tuiRoot.plugin = tuiRoot.plugin.filter(
-          (p: unknown) => !(p === TUI_SPEC || (p && typeof p === 'object' && ((p as any).package === TUI_SPEC || (Array.isArray(p) && p[0] === TUI_SPEC)))),
-        );
-        if (tuiRoot.plugin.length === 0) delete tuiRoot.plugin;
-        await writeJson(tuiPath, tuiRoot);
-      }
+      await writeJsoncArrayItem(join(d, 'tui.jsonc'), 'plugin', TUI_SPEC, false);
       await fs.rm(pluginPath(), { force: true }).catch(() => undefined);
       await fs.rm(tuiPluginPath(), { force: true }).catch(() => undefined);
       await fs.rm(v2Dir(), { recursive: true, force: true }).catch(() => undefined);
