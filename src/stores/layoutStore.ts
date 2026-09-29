@@ -22,7 +22,9 @@
  * - 停止态 pane 保留在原位置：应用重启后所有 pane 都是停止态，剪掉它们
  *   等于把整个分屏树清空，用户重启智能体时只能拿到单格视图；
  * - 用新出现的**运行态** pane 填充空位（优先 projectId 匹配）——这是分屏路径；
- * - 仍未被任何树接纳的新运行态 pane → 各自新开一个视图并激活最后一个——侧栏路径。
+ * - 仍未被任何树接纳的新运行态 pane → 各自新开一个视图并激活最后一个——侧栏路径；
+ * - 布局丢失时，当前聚焦项目下未被任何视图接纳的停止态 pane → 补成独立标签
+ *   （只恢复标签，不拉起进程；点标签时才 respawn）。
  *
  * 布局持久化到 localStorage（按 paneId 引用），应用重启后只要会话里的 paneId
  * 还在（session.json 会恢复它们），视图与布局就能原样回来。
@@ -148,6 +150,21 @@ export function viewPaneIds(view: View): string[] {
   };
   scan(view.tree);
   return out;
+}
+
+/**
+ * 视图所属项目：取视图内第一个 pane 的 projectId。
+ *
+ * 正常情况下一个视图内的 pane 都属于同一项目（分屏只会在同项目内创建空位）；
+ * 即使 reconcile 填空位的兜底把不同项目的 pane 塞进同一视图，取第一个也足以
+ * 用于「标签栏按当前项目过滤」的展示分组。空视图（无任何 pane）返回 null。
+ */
+export function viewProjectId(view: View, panesById: Map<string, PaneState>): string | null {
+  for (const id of viewPaneIds(view)) {
+    const projectId = panesById.get(id)?.projectId;
+    if (projectId) return projectId;
+  }
+  return null;
 }
 
 function findPaneLeaf(node: LayoutNode | null, paneId: string): PaneLeaf | null {
@@ -666,7 +683,15 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       const next = views.filter((v) => v.id !== viewId);
       let nextActive = activeViewId;
       if (activeViewId === viewId) {
-        nextActive = next[idx]?.id ?? next[idx - 1]?.id ?? null;
+        /*
+         * 关闭激活标签后直接选中第一个标签，而不是「下一个/上一个」。
+         *
+         * 主进程 closePane 会把焦点交给剩余 panes 里的第一个（session 的 Map
+         * 插入序），随后的 reconcile 焦点跟随也会把激活项指到第一个视图；
+         * 若这里先选 next[idx]（倒数第二个），会与 reconcile 的「第一个」打架，
+         * 用户会看到标签先跳到倒数第二个、再跳回第一个。这里直接选第一个即可消除跳变。
+         */
+        nextActive = next[0]?.id ?? null;
       }
       commit(next, nextActive);
     },
@@ -713,9 +738,9 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       /*
        * 「填位 / 开新视图」只针对运行态 pane。
        *
-       * 停止态 pane 留在树里等待用户重启（原地复活），不会被挪去填空位、
-       * 也不会被铺成新视图——否则重启后每个停止态 pane 都会冒出一个新标签，
-       * 反而覆盖了用户原来的布局。
+       * 停止态 pane 留在树里等待用户重启（原地复活），不会被挪去填空位。
+       * 布局丢失时，当前聚焦项目下的停止态 pane 会在下面单独补成标签
+       * （见「恢复标签」段落），而不是在这里跟随运行态 pane 一起处理。
        */
       const running = panes.filter((p) => p.running !== false);
 
@@ -749,6 +774,38 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
           })()
         : null;
 
+      /*
+       * 恢复标签：当前聚焦项目下的停止态 pane 也要各自铺成一个标签。
+       *
+       * 布局丢失（本地布局为空）时，停止态 pane 不在任何视图里；新建/恢复
+       * 某个智能体只会让它自己进入视图，同一项目的其它停止态智能体就没了
+       * 标签。这里把它们补成独立标签，但**只恢复标签、不拉起进程**——pane 仍
+       * 是 running=false，侧栏/标签里显示「已停止」，用户点标签时才 respawn。
+       *
+       * 只处理当前聚焦项目：应用恢复后其它项目的停止态 pane 不冒标签，
+       * 等用户点到那个项目时再补。
+       */
+      const focusedPane = focusedPaneId
+        ? panes.find((p) => p.paneId === focusedPaneId) ?? null
+        : null;
+      const currentProjectId = focusedPane?.projectId ?? null;
+      if (currentProjectId) {
+        const placedNow = new Set<string>();
+        for (const v of views) {
+          for (const id of collectPaneIds(v.tree)) placedNow.add(id);
+        }
+        const stoppedToPlace = panes.filter(
+          (p) =>
+            p.running === false &&
+            p.projectId === currentProjectId &&
+            !placedNow.has(p.paneId) &&
+            !hiddenPaneIds.has(p.paneId),
+        );
+        if (stoppedToPlace.length > 0) {
+          views = [...views, ...stoppedToPlace.map((p) => makeView(makePaneLeaf(p)))];
+        }
+      }
+
       // 有存活（运行中）pane 却没有任何视图（首次启动/布局丢失）：全部按新视图铺开
       // 被 closeView 摘除的 pane 也跳过——否则关掉最后一个标签后立刻又铺回来。
       if (views.length === 0 && running.length > 0) {
@@ -759,6 +816,23 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
         // 新建的视图优先于下面的焦点跟随：快照里的 focusedPaneId 可能仍是旧 pane
         activeViewId = spawnedViewId;
       }
+
+      /*
+       * 标签按 pane 创建顺序排序：快照的 panes 数组顺序即创建顺序（Main 端
+       * Map 插入序）。视图的「创建时间」取其内部最早一个 pane 的位置，因此
+       * 分屏视图保持为第一个 pane 加入时的位置。这样新建/恢复的最晚 pane
+       * 不会插到标签栏最前。
+       */
+      const paneOrder = new Map(panes.map((p, i) => [p.paneId, i]));
+      const earliestPaneOrder = (view: View): number => {
+        let earliest = Number.POSITIVE_INFINITY;
+        for (const id of viewPaneIds(view)) {
+          const order = paneOrder.get(id);
+          if (order !== undefined && order < earliest) earliest = order;
+        }
+        return earliest;
+      };
+      views.sort((a, b) => earliestPaneOrder(a) - earliestPaneOrder(b));
 
       if (!activeViewId) activeViewId = views[0]?.id ?? null;
 

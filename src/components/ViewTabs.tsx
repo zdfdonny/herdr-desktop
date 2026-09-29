@@ -51,12 +51,35 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
    * 关闭标签：先关闭标签里所有智能体（杀进程 + 移除会话条目），
    * 再收起视图。closeView 会把这些 pane 记入 hiddenPaneIds，
    * 避免快照间隙里 reconcile 把正在关闭的 pane 铺成新视图。
+   *
+   * 若关的是当前激活标签，closeView 会把激活项切到第一个标签——但那只改
+   * activeViewId，不会像手动点标签那样恢复停止态智能体，导致跳过去的标签
+   * 停在「已停止」。这里在切换后补一次「激活 + 恢复」，与 activateTab 一致。
    */
   const closeTab = (view: View) => {
+    const closingActive = activeViewId === view.id;
     for (const id of viewPaneIds(view)) {
       closePane(id);
     }
     useLayoutStore.getState().closeView(view.id);
+
+    if (closingActive) {
+      /*
+       * 关闭激活标签后，标签栏会跳到当前项目的第一个标签。这里按 `views` prop
+       * （当前项目过滤后的标签顺序）取新的第一个标签，而非 store 的全局
+       * views[0]——后者可能属于其它项目。然后补一次「激活 + 恢复」，避免
+       * 跳过去的标签停在「已停止」。
+       */
+      const nextView = views.find((v) => v.id !== view.id) ?? null;
+      if (nextView) {
+        const firstId = viewPaneIds(nextView)[0] ?? null;
+        if (firstId) {
+          activateAndReviveView(nextView, firstId);
+        } else {
+          useLayoutStore.getState().activateView(nextView.id);
+        }
+      }
+    }
   };
 
   return (

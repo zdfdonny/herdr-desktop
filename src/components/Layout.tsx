@@ -15,7 +15,7 @@
 import type { ReactNode } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsOpen } from '../stores/uiStore';
-import { useLayoutStore } from '../stores/layoutStore';
+import { useLayoutStore, viewProjectId } from '../stores/layoutStore';
 import { TitleBar } from './TitleBar';
 import { Sidebar } from './Sidebar';
 import { TerminalPane } from './TerminalPane';
@@ -48,7 +48,20 @@ export function Layout() {
    */
   const panesById = new Map(state.panes.map((p) => [p.paneId, p]));
 
-  const activeView = views.find((v) => v.id === activeViewId) ?? views[0] ?? null;
+  /*
+   * 当前选中项目 = 聚焦 pane 所属项目。
+   *
+   * 标签栏只展示该项目下的视图标签；其余项目的视图仍全部挂载在内容区，
+   * 只通过 visibility 切换可见性，避免 <webview> 被卸载重载。
+   * 未选中任何 pane（如应用刚恢复）时回退为全部视图，此时主区显示引导，
+   * 标签栏不会出现。
+   */
+  const currentProjectId = focusedPane?.projectId ?? null;
+  const projectViews = currentProjectId
+    ? views.filter((v) => viewProjectId(v, panesById) === currentProjectId)
+    : views;
+  const projectActiveView =
+    projectViews.find((v) => v.id === activeViewId) ?? projectViews[0] ?? null;
 
   // 选中智能体后才展示分屏布局；未选中时即使布局树里还有停止态 pane 也显示引导
   const showingViews = focusedPane !== null && views.length > 0;
@@ -105,8 +118,8 @@ export function Layout() {
       <div className="layout__body">
         <Sidebar />
         <main className="layout__main">
-          {showingViews && views.length > 1 && (
-            <ViewTabs views={views} activeViewId={activeView?.id ?? null} />
+          {showingViews && projectViews.length > 1 && (
+            <ViewTabs views={projectViews} activeViewId={projectActiveView?.id ?? null} />
           )}
           <div className="layout__content">{content}</div>
         </main>

@@ -64,6 +64,8 @@ export interface AgentState {
   /** 单调序号，用于状态排序与通知去重。 */
   stateChangeSeq: number;
   focused: boolean;
+  /** 创建时间戳（ms），用于项目内按创建顺序稳定排序。 */
+  createdAt: number;
 }
 
 export interface PaneState {

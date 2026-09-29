@@ -145,6 +145,7 @@ export class Session {
       status: 'unknown',
       stateChangeSeq: 0,
       focused: true,
+      createdAt: Date.now(),
     };
     this.agents.set(paneId, agent);
 
@@ -201,6 +202,7 @@ export class Session {
       status: 'idle',
       stateChangeSeq: 0,
       focused: true,
+      createdAt: Date.now(),
     };
     this.agents.set(paneId, agent);
 
@@ -340,6 +342,8 @@ export class Session {
         ...agent,
         status: 'idle',
         focused: false,
+        // 旧版本快照缺 createdAt：兜底为当前时间，保证字段始终存在
+        createdAt: typeof agent.createdAt === 'number' ? agent.createdAt : Date.now(),
       });
     }
 

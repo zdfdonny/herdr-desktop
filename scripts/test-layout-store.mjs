@@ -133,6 +133,60 @@ store.getState().reconcile([], null);
 views = store.getState().views;
 check('关闭最后一个智能体：视图关闭', views.length, 0);
 
+// ---- 场景七：布局丢失时，聚焦项目下的停止态 pane 补成标签（不拉起进程） ----
+store.getState().reset();
+// A 运行（刚被恢复/新建），B、C 同项目但停止 → 都应有标签
+store.getState().reconcile([pane('A', 'p1', true), pane('B', 'p1', false), pane('C', 'p1', false)], 'A');
+views = store.getState().views;
+check('布局丢失：聚焦项目所有 pane 都补成标签', allPaneIds(views), ['A', 'B', 'C']);
+check('布局丢失：标签数 = 3', views.length, 3);
+
+// ---- 场景八：只补当前聚焦项目，不把其它项目的停止态 pane 铺出来 ----
+store.getState().reset();
+store.getState().reconcile(
+  [pane('A', 'p1', true), pane('B', 'p1', false), pane('C', 'p2', false)],
+  'A',
+);
+views = store.getState().views;
+check('只补聚焦项目：p2 的停止态 pane 不铺标签', allPaneIds(views), ['A', 'B']);
+
+// ---- 场景九：停止态 pane 已在本项目视图中（布局保留）时不重复补标签 ----
+store.getState().reset();
+// 先建立 A、B 两个视图（都运行），再全部翻转为停止态，布局仍在
+store.getState().reconcile([pane('A', 'p1', true)], null);
+store.getState().splitPane('A', 'right', 'p1');
+store.getState().reconcile([pane('A', 'p1', true), pane('B', 'p1', true)], null);
+store.getState().reconcile([pane('A', 'p1', false), pane('B', 'p1', false)], 'A');
+views = store.getState().views;
+check('布局保留：停止态 pane 不重复开标签', views.length, 1);
+check('布局保留：分屏内两个 pane 仍在同一标签', allPaneIds(views), ['A', 'B']);
+
+// ---- 场景十：标签按创建顺序排序，最新恢复/新建的不能排到最前 ----
+store.getState().reset();
+// panes 数组顺序即创建顺序：A 最早、C 最晚；聚焦恢复 C（最晚）
+store.getState().reconcile(
+  [pane('A', 'p1', false), pane('B', 'p1', false), pane('C', 'p1', true)],
+  'C',
+);
+views = store.getState().views;
+check('恢复最晚创建的 pane：标签仍按创建顺序', allPaneIds(views), ['A', 'B', 'C']);
+
+// ---- 场景十一：关闭激活标签后直接选中第一个标签，不经过倒数第二个 ----
+store.getState().reset();
+// 一次铺出 A、B、C 三个视图，并激活最后的 C
+store.getState().reconcile(
+  [pane('A', 'p1', true), pane('B', 'p1', true), pane('C', 'p1', true)],
+  'C',
+);
+views = store.getState().views;
+const firstViewId = views[0].id;
+const lastViewId = views[views.length - 1].id;
+check('关闭前视图数 = 3', views.length, 3);
+store.getState().closeView(lastViewId);
+views = store.getState().views;
+check('关闭激活的最后一个标签：视图数变为 2', views.length, 2);
+check('关闭激活的最后一个标签：直接选中第一个标签', store.getState().activeViewId, firstViewId);
+
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
 process.exit(failed.length === 0 ? 0 : 1);
