@@ -921,6 +921,11 @@ action="\${1:-session}"
 payload="$(cat)"
 session_id="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
 [ -z "$session_id" ] && session_id="$(printf '%s' "$payload" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
+# SessionStart(source=startup) 是全新会话，可能尚无对话内容，空会话无法 --resume；先不保存，等首个内容事件再报。
+session_source="$(printf '%s' "$payload" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n1)"
+if [ "$action" = "session" ] && [ "$session_source" = "startup" ]; then
+  session_id=""
+fi
 [ -z "$HERDR_DESKTOP_REPORT_URL" ] && exit 0
 [ -z "$HERDR_DESKTOP_PANE_ID" ] && exit 0
 agent="\${HERDR_DESKTOP_AGENT:-unknown}"
@@ -939,6 +944,10 @@ $payload = [Console]::In.ReadToEnd()
 $sessionId = $null
 if ($payload -match '"session_id"\\s*:\\s*"([^"]+)"') { $sessionId = $Matches[1] }
 elseif ($payload -match '"sessionId"\\s*:\\s*"([^"]+)"') { $sessionId = $Matches[1] }
+# SessionStart(source=startup) 是全新会话，可能尚无对话内容，空会话无法 --resume；先不保存，等首个内容事件再报。
+$sessionSource = $null
+if ($payload -match '"source"\\s*:\\s*"([^"]+)"') { $sessionSource = $Matches[1] }
+if ($action -eq 'session' -and $sessionSource -eq 'startup') { $sessionId = $null }
 if (-not $env:HERDR_DESKTOP_REPORT_URL -or -not $env:HERDR_DESKTOP_PANE_ID) { exit 0 }
 $agent = if ($env:HERDR_DESKTOP_AGENT) { $env:HERDR_DESKTOP_AGENT } else { 'unknown' }
 $body = @{ paneId = $env:HERDR_DESKTOP_PANE_ID; source = "herdr:$agent"; agent = $agent }
