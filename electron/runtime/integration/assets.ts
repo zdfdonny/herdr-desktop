@@ -104,3 +104,32 @@ export const DSH_STATUS_PLUGIN = dshStatusPlugin;
  * 与 profile 的 package.json 是否声明 "type": "module" 无关）。
  */
 export const DSH_STATUS_PLUGIN_NAME = 'herdr-desktop-agent-state.mjs';
+
+/**
+ * 每个智能体独立的集成资产版本（对应 herdr 的 `*_INTEGRATION_VERSION`）。
+ *
+ * 每个资产的 `HERDR_INTEGRATION_VERSION` 标记与此处保持一致；单独升级某个
+ * 智能体的脚本时只 bump 该 agent 的版本，设置页据此把「已安装但版本旧」的
+ * agent 标记为「更新」，不再用全局统一版本。
+ */
+export const INTEGRATION_VERSIONS: Record<string, number> = {
+  claude: 2,
+  codex: 2,
+  kimi: 2,
+  copilot: 2,
+  devin: 2,
+  droid: 2,
+  qodercli: 2,
+  qwen: 2,
+  letta: 2,
+  cursor: 2,
+  mastracode: 2,
+  antigravity: 2,
+  grok: 2,
+  pi: 2,
+  omp: 2,
+  opencode: 2,
+  kilo: 2,
+  hermes: 2,
+  'dsh-web': 2,
+};

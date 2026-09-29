@@ -30,16 +30,11 @@ import {
   DSH_STATUS_PLUGIN,
   DSH_STATUS_PLUGIN_NAME,
   hookScriptContent,
+  INTEGRATION_VERSIONS,
   type HookScriptAgent,
 } from './assets';
 
 const INTEGRATION_ID = 'herdr-desktop';
-/**
- * 当前集成资产版本。所有 hook/插件资产模板里的 `HERDR_INTEGRATION_VERSION`
- * 统一用它；升级资产时同步 bump 这里，设置页据此把「已安装但版本旧」的
- * agent 标记为「更新」。
- */
-const INTEGRATION_VERSION = 2;
 const HOOK_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-state.ps1' : 'herdr-desktop-agent-state.sh';
 /** qwen / letta 用会话专用脚本名（对应 herdr 的 `*_HOOK_INSTALL_NAME`）。 */
 const SESSION_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-session.ps1' : 'herdr-desktop-agent-session.sh';
@@ -161,7 +156,8 @@ export function hookStatuses(): Record<string, HookStatus> {
       continue;
     }
     const version = readInstalledVersion(target.hookPath());
-    result[id] = version !== null && version < INTEGRATION_VERSION ? 'outdated' : 'installed';
+    const expected = INTEGRATION_VERSIONS[id];
+    result[id] = version !== null && expected !== undefined && version < expected ? 'outdated' : 'installed';
   }
   return result;
 }
