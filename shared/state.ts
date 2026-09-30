@@ -213,10 +213,10 @@ export interface AppSettings {
    */
   proxyAgents: Record<string, boolean>;
   /**
-   * 集成设置引导是否已完成。
+   * 集成引导是否已完成。
    *
-   * 首次启动时若为 false，渲染端会主动打开「集成」设置页做一次引导，
-   * 并立即把它置为 true，保证只引导一次。
+   * 首次启动时若为 false，渲染端会弹出集成引导弹窗（告诉用户集成是什么、
+   * 下次在哪找到），并立即把它置为 true，保证只引导一次。
    */
   integrationsOnboarded: boolean;
 }

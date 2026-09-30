@@ -37,6 +37,10 @@ interface UiStore {
   confirm: ConfirmState | null;
   openConfirm: (confirm: ConfirmState) => void;
   closeConfirm: () => void;
+  /** 首次启动的集成引导弹窗是否打开（瞬态，不持久化）。 */
+  integrationsOnboardingOpen: boolean;
+  openIntegrationsOnboarding: () => void;
+  closeIntegrationsOnboarding: () => void;
 }
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -54,6 +58,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   confirm: null,
   openConfirm: (confirm) => set({ confirm }),
   closeConfirm: () => set({ confirm: null }),
+  integrationsOnboardingOpen: false,
+  openIntegrationsOnboarding: () => set({ integrationsOnboardingOpen: true }),
+  closeIntegrationsOnboarding: () => set({ integrationsOnboardingOpen: false }),
 }));
 
 export function useSettingsOpen(): boolean {

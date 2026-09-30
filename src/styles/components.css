@@ -48,7 +48,8 @@
 
 /* 列表行内的小按钮（如智能体行里的安装/卸载 hook）。 */
 .button--small {
-  padding: 4px 10px;
+  padding: 0 10px;
+  height: 20px;
   font-size: 12px;
   font-weight: 400;
 }
@@ -1501,7 +1502,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 10px 12px;
+  padding: 8px 2px 12px 10px;
 }
 
 .integrations-install-all {
@@ -1581,6 +1582,147 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ===== 集成引导弹窗（首次启动）===== */
+/*
+ * 覆盖在首次启动的主界面之上，回答「集成是什么」与「下次在哪里找到」。
+ * 视觉复刻确认弹窗（遮罩 + 居中卡片），但更高一点以容纳位置提示块。
+ */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 310;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 45%);
+  animation: settings-fade 0.12s ease;
+}
+
+.dark .onboarding-overlay {
+  background: rgb(0 0 0 / 60%);
+}
+
+.onboarding-dialog {
+  width: 100%;
+  max-width: 560px;
+  /*
+   * 顶部（图标+标题、说明、一键安装）与底部（位置提示、按钮）固定，
+   * 只有中间的智能体列表滚动。整卡用 flex 纵向布局 + overflow hidden，
+   * 滚动交给 .onboarding-dialog__agent-list，避免整卡滚动。
+   */
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 24px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  animation: settings-rise 0.14s ease;
+}
+
+/* 顶部：图标 + 标题同行 */
+.onboarding-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.onboarding-dialog__icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.onboarding-dialog__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.onboarding-dialog__body {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+/* 一键安装按钮固定在顶部，不随列表滚动 */
+.onboarding-dialog__install-all {
+  flex-shrink: 0;
+}
+
+/* 只有智能体列表滚动：占据中间剩余空间，超高时内部滚动 */
+.onboarding-dialog__agent-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+
+/* 位置提示块：左侧复刻侧栏「集成」按钮，右侧是说明文字 */
+.onboarding-dialog__where {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.onboarding-dialog__rail-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.onboarding-dialog__where-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.onboarding-dialog__where-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.onboarding-dialog__where-detail {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.onboarding-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .settings-dialog {
@@ -2039,10 +2181,10 @@
 
 .agent-status {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr minmax(64px, auto);
   gap: 10px;
   align-items: center;
-  padding: 7px 10px;
+  padding: 7px 4px 7px 10px;
   border-radius: var(--radius-md);
   background: var(--bg-surface);
   font-size: 12.5px;
@@ -2081,12 +2223,13 @@
 .agent-status__state {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   min-width: 0;
 }
 
 .agent-status__state-text {
   font-size: 12px;
+  line-height: 20px;
   color: var(--text-muted);
 }
 

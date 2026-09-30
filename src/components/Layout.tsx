@@ -24,6 +24,7 @@ import { SplitView } from './SplitView';
 import { ViewTabs } from './ViewTabs';
 import { SettingsDialog } from './SettingsDialog';
 import { ConfirmDialog } from './ConfirmDialog';
+import { IntegrationsOnboardingDialog } from './IntegrationsOnboardingDialog';
 import { EmptyState } from './EmptyState';
 import { NotificationToasts } from './NotificationToasts';
 import { isMac } from '../platform';
@@ -126,6 +127,7 @@ export function Layout() {
       </div>
       {settingsOpen && <SettingsDialog />}
       <ConfirmDialog />
+      <IntegrationsOnboardingDialog />
       <NotificationToasts />
     </div>
   );

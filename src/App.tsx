@@ -121,10 +121,10 @@ export default function App() {
     void getSettings()
       .then((settings) => {
         applySettings(settings);
-        // 首次启动：切到侧栏「集成」页做一次引导（只触发一次）
+        // 首次启动：只弹出集成引导弹窗（只触发一次）
         if (!onboardedRef.current && settings.integrationsOnboarded !== true) {
           onboardedRef.current = true;
-          useUiStore.getState().selectSidebarSection('integrations');
+          useUiStore.getState().openIntegrationsOnboarding();
           setIntegrationsOnboarded(true);
         }
       })

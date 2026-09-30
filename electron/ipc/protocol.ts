@@ -50,7 +50,7 @@ export const IPC = {
   SET_PROXY_URL: 'control:set-proxy-url',
   /** 按启动命令开启/关闭代理注入。 */
   SET_AGENT_PROXY: 'control:set-agent-proxy',
-  /** 标记集成设置引导已完成（首次启动引导后置 true）。 */
+  /** 标记集成引导已完成（首次启动引导弹窗关闭后置 true）。 */
   SET_INTEGRATIONS_ONBOARDED: 'control:set-integrations-onboarded',
   NAMED: 'control:named',
 } as const;

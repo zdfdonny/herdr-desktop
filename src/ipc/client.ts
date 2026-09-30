@@ -71,7 +71,7 @@ export function uninstallHook(agentId: string): Promise<HookStatus> {
   return api().uninstallHook(agentId);
 }
 
-/** 标记集成设置引导已完成（首次启动引导后调用）。 */
+/** 标记集成引导已完成（首次启动引导弹窗关闭后调用）。 */
 export function setIntegrationsOnboarded(onboarded: boolean): void {
   api().setIntegrationsOnboarded(onboarded);
 }

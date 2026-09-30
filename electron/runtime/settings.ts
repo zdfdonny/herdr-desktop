@@ -92,7 +92,7 @@ export class SettingsStore {
     return this.get();
   }
 
-  /** 标记集成设置引导已完成（只在首次启动引导后调用一次）。 */
+  /** 标记集成引导已完成（首次启动引导弹窗关闭后调用一次）。 */
   async setIntegrationsOnboarded(onboarded: boolean): Promise<AppSettings> {
     this.settings.integrationsOnboarded = onboarded === true;
     await this.save();

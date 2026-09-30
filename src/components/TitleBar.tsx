@@ -13,7 +13,7 @@
 
 import { useEffect } from 'react';
 import { useResolvedTheme } from '../stores/settingsStore';
-import { useSettingsOpen } from '../stores/uiStore';
+import { useSettingsOpen, useUiStore } from '../stores/uiStore';
 import { setTitleBarTheme } from '../ipc/client';
 import { useT } from '../i18n';
 import { IconLogo } from './icons';
@@ -34,26 +34,29 @@ export function TitleBar() {
   const t = useT();
   const resolvedTheme = useResolvedTheme();
   const settingsOpen = useSettingsOpen();
+  const onboardingOpen = useUiStore((s) => s.integrationsOnboardingOpen);
 
   /*
    * 同步原生窗口按钮配色。
    *
    * titleBarOverlay 的颜色由主进程持有，CSS 管不到。
-   * 设置弹窗的半透明遮罩同样盖不住原生按钮条（原生绘制在最上层），
-   * 因此弹窗打开时把按钮条同步成遮罩压暗后的近似色，关闭时恢复，
+   * 设置弹窗/集成引导弹窗的半透明遮罩同样盖不住原生按钮条（原生绘制在最上层），
+   * 因此任一弹窗打开时把按钮条同步成遮罩压暗后的近似色，关闭时恢复，
    * 否则弹窗四周都变暗、唯独右上角按钮条仍是亮色，视觉上"没有全覆盖"。
    * 原生 overlay 的 color 不支持透明度，只能用不透明近似色：
    * 浅色 = 45% 黑压 #fafafd（≈#8a8a8c），深色 = 60% 黑压 #0d0d0d（≈#050505）。
    */
+  const anyModalOpen = settingsOpen || onboardingOpen;
+
   useEffect(() => {
     const base = OVERLAY_COLORS[resolvedTheme];
-    if (settingsOpen) {
+    if (anyModalOpen) {
       const dimmedColor = resolvedTheme === 'dark' ? '#050505' : '#8a8a8c';
       setTitleBarTheme(dimmedColor, base.symbolColor);
     } else {
       setTitleBarTheme(base.color, base.symbolColor);
     }
-  }, [resolvedTheme, settingsOpen]);
+  }, [resolvedTheme, anyModalOpen]);
 
   return (
     <header className="topbar">

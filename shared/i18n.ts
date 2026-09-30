@@ -151,6 +151,13 @@ export interface Messages {
     integrationInstallFailed: string;
     integrationInstallFailedDetail: string;
   };
+  onboarding: {
+    integrationsTitle: string;
+    integrationsBody: string;
+    integrationsWhereTitle: string;
+    integrationsWhereDetail: string;
+    integrationsGotIt: string;
+  };
   error: {
     commandNotFound: string;
     spawnFailed: string;
@@ -297,6 +304,13 @@ const zhCN: Messages = {
     integrationUpdate: '更新',
     integrationInstallFailed: '「{agent}」集成安装失败',
     integrationInstallFailedDetail: '{error}',
+  },
+  onboarding: {
+    integrationsTitle: '了解集成功能',
+    integrationsBody: '集成让智能体直接向 Herdr 报告运行状态，比仅靠进程检测更准确。',
+    integrationsWhereTitle: '下次在哪里找到？',
+    integrationsWhereDetail: '点击左侧栏的「集成」图标，即可随时打开集成面板。',
+    integrationsGotIt: '知道了',
   },
   error: {
     commandNotFound: '命令不存在',
@@ -446,6 +460,14 @@ const en: Messages = {
     integrationUpdate: 'Update',
     integrationInstallFailed: '"{agent}" integration install failed',
     integrationInstallFailedDetail: '{error}',
+  },
+  onboarding: {
+    integrationsTitle: 'Meet integrations',
+    integrationsBody:
+      'Integrations let agents report their status to Herdr directly — more reliable than process detection alone.',
+    integrationsWhereTitle: 'Where to find it later?',
+    integrationsWhereDetail: 'Click the Integrations icon in the left sidebar to open the panel anytime.',
+    integrationsGotIt: 'Got it',
   },
   error: {
     commandNotFound: 'Command not found',

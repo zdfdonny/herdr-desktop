@@ -197,7 +197,7 @@ export interface HerdrDesktopApi {
   installHook(agentId: string): Promise<HookStatus>;
   /** 卸载某 agent 的官方集成 hook。 */
   uninstallHook(agentId: string): Promise<HookStatus>;
-  /** 标记集成设置引导已完成（首次启动引导后调用）。 */
+  /** 标记集成引导已完成（首次启动引导弹窗关闭后调用）。 */
   setIntegrationsOnboarded(onboarded: boolean): void;
   /** 读取系统剪贴板（文本 / 图片 / 文件），供终端智能粘贴。 */
   readClipboard(): Promise<ClipboardPayload>;
