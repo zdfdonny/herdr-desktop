@@ -203,11 +203,6 @@ export function setFontSize(fontSize: number): void {
   sendControl({ type: 'control:set-font-size', version: 1, payload: { fontSize } });
 }
 
-/** 设置左侧栏折叠状态。 */
-export function setSidebarCollapsed(collapsed: boolean): void {
-  sendControl({ type: 'control:set-sidebar', version: 1, payload: { collapsed } });
-}
-
 /** 设置代理地址（启动 agent 时注入）。 */
 export function setProxyUrl(url: string): void {
   sendControl({ type: 'control:set-proxy-url', version: 1, payload: { url } });
@@ -223,7 +218,6 @@ export {
   setTheme as sendSetTheme,
   setLanguage as sendSetLanguage,
   setFontSize as sendSetFontSize,
-  setSidebarCollapsed as sendSetSidebar,
   setProxyUrl as sendSetProxyUrl,
   setAgentProxy as sendSetAgentProxy,
 };

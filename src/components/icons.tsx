@@ -27,9 +27,9 @@ const BASE = {
 /**
  * 设置（齿轮 / cog，取自 Feather icons 的 settings 图标）。
  *
- * 旧版图形画成了「圆 + 8 条放射短线」——那实际是太阳，
- * 和 IconThemeLight（浅色主题）几乎无法区分，因此换成标准齿轮轮廓：
- * 外圈 8 齿 + 中心圆孔。描边风格（stroke 2 / 圆角连接）与本图标集一致。
+ * 旧版图形画成了「圆 + 8 条放射短线」——那实际是太阳，和浅色主题图标
+ * 几乎无法区分，因此换成标准齿轮轮廓：外圈 8 齿 + 中心圆孔。
+ * 描边风格（stroke 2 / 圆角连接）与本图标集一致。
  */
 export function IconSettings({ size = 16, className }: IconProps) {
   return (
@@ -42,53 +42,6 @@ export function IconSettings({ size = 16, className }: IconProps) {
     >
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-
-/** 跟随系统主题（半明半暗圆）。 */
-export function IconThemeSystem({ size = 16, className }: IconProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      className={className}
-      {...BASE}
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-/** 浅色主题（太阳）。 */
-export function IconThemeLight({ size = 16, className }: IconProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      className={className}
-      {...BASE}
-    >
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-    </svg>
-  );
-}
-
-/** 深色主题（月亮）。 */
-export function IconThemeDark({ size = 16, className }: IconProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      className={className}
-      {...BASE}
-    >
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
     </svg>
   );
 }
@@ -304,6 +257,21 @@ export function IconGlobe({ size = 16, className }: IconProps) {
   );
 }
 
+/** 项目（文件夹，取自 Feather 的 folder 图标）。 */
+export function IconFolder({ size = 16, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      className={className}
+      {...BASE}
+    >
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 /** 集成（连接 / 链环，取自 Feather 的 link 图标）。 */
 export function IconIntegrations({ size = 16, className }: IconProps) {
   return (
@@ -350,22 +318,6 @@ export function IconInfo({ size = 16, className }: IconProps) {
       <circle cx="12" cy="12" r="9" />
       <line x1="12" y1="11" x2="12" y2="16" />
       <circle cx="12" cy="8" r="1.1" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-/** 侧栏图标（左侧面板）。用于折叠/展开侧栏。 */
-export function IconPanelLeft({ size = 16, className }: IconProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      className={className}
-      {...BASE}
-    >
-      <rect x="3" y="4" width="18" height="16" rx="2.5" />
-      <line x1="9.5" y1="4" x2="9.5" y2="20" />
     </svg>
   );
 }

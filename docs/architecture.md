@@ -202,8 +202,8 @@ herdr-desktop/
 ├── src/                           # Renderer 进程（GUI）
 │   ├── components/                # 扁平组件（TitleBar / Sidebar / ProjectGroup /
 │   │                              #   AgentRow / AgentPicker / TerminalPane / Layout /
-│   │                              #   SettingsDialog / ConfirmDialog / EmptyState /
-│   │                              #   NotificationToasts / ThemeSwitch / icons …）
+│   │                              #   SettingsDialog / IntegrationsPanel / ConfirmDialog /
+│   │                              #   EmptyState / NotificationToasts / icons …）
 │   ├── stores/                    # Zustand（session / terminal / settings / agents /
 │   │                              #   ui / notification）
 │   ├── xterm/terminal.ts          # xterm.js 封装（fit / 主题 / 搜索 / 颜色查询响应）
@@ -274,7 +274,6 @@ interface AppSettings {
   theme: 'system' | 'light' | 'dark';
   language: 'zh-CN' | 'en';
   fontSize: number;                // 9–24
-  sidebarCollapsed: boolean;
   proxyUrl: string;                // 启动 agent 时按 proxyAgents 注入
   proxyAgents: Record<string, boolean>;
 }
@@ -313,7 +312,7 @@ interface PtyRuntime {
 | `control:add-project` / `remove-project` / `toggle-project` | 项目管理 |
 | `control:spawn-agent` / `attach-pane` / `respawn-pane` | 两阶段 pane 创建 + 恢复 |
 | `control:close-pane` / `focus-pane` | pane 操作 |
-| `control:set-theme` / `set-language` / `set-font-size` / `set-sidebar` | 设置 |
+| `control:set-theme` / `set-language` / `set-font-size` | 设置 |
 | `control:set-proxy-url` / `set-agent-proxy` / `set-titlebar-theme` | 代理 / 标题栏 |
 | `control:named` | 高频子命令（`pty:write` / `pty:resize`） |
 

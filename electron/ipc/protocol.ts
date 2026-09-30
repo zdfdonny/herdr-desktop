@@ -46,7 +46,6 @@ export const IPC = {
   SET_TITLEBAR_THEME: 'control:set-titlebar-theme',
   SET_LANGUAGE: 'control:set-language',
   SET_FONT_SIZE: 'control:set-font-size',
-  SET_SIDEBAR: 'control:set-sidebar',
   /** 设置代理地址（启动 agent 时注入）。 */
   SET_PROXY_URL: 'control:set-proxy-url',
   /** 按启动命令开启/关闭代理注入。 */

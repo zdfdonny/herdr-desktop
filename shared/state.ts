@@ -198,8 +198,6 @@ export interface AppSettings {
   language: Language;
   /** 终端字号。 */
   fontSize: number;
-  /** 左侧栏是否折叠为窄图标条。 */
-  sidebarCollapsed: boolean;
   /**
    * 代理地址（如 http://127.0.0.1:7890），空串表示未配置。
    *

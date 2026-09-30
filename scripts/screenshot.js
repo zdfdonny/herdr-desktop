@@ -117,7 +117,6 @@ const DEMO_SETTINGS = {
   theme: 'dark',
   language: 'zh-CN',
   fontSize: 13,
-  sidebarCollapsed: false,
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: true,

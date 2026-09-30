@@ -1,5 +1,5 @@
 /**
- * 应用设置管理 —— 主题偏好、语言、字号、侧栏状态，持久化到 userData。
+ * 应用设置管理 —— 主题偏好、语言、字号、代理与集成引导状态，持久化到 userData。
  *
  * 主题模型：支持 system / light / dark 三态，
  * system 表示跟随操作系统外观。语言默认中文。
@@ -16,7 +16,6 @@ const DEFAULTS: AppSettings = {
   theme: 'system',
   language: 'zh-CN',
   fontSize: 13,
-  sidebarCollapsed: false,
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: false,
@@ -38,14 +37,6 @@ export class SettingsStore {
         theme: normalizeTheme(parsed.theme),
         language: normalizeLanguage(parsed.language),
         fontSize: typeof parsed.fontSize === 'number' ? parsed.fontSize : DEFAULTS.fontSize,
-        /*
-         * 侧栏折叠状态**不持久化**：每次启动都从展开态开始。
-         *
-         * 折叠是一个"临时腾地方"的动作，不是一项偏好设置；
-         * 上次为了看宽一点的终端把侧栏收起来，下次启动却看不到项目列表，
-         * 会让人以为是数据丢了。故这里恒取默认值，忽略磁盘上的旧值。
-         */
-        sidebarCollapsed: DEFAULTS.sidebarCollapsed,
         proxyUrl: normalizeProxyUrl(parsed.proxyUrl),
         proxyAgents: normalizeProxyAgents(parsed.proxyAgents),
         integrationsOnboarded: parsed.integrationsOnboarded === true,
@@ -77,15 +68,6 @@ export class SettingsStore {
       this.settings.fontSize = Math.min(24, Math.max(9, Math.round(fontSize)));
     }
     await this.save();
-    return this.get();
-  }
-
-  /*
-   * 侧栏折叠状态只存在内存里，**不落盘**（详见 loadSync 的说明）。
-   * 仍然返回完整设置，让 Renderer 侧的乐观更新拿到回推确认。
-   */
-  async setSidebarCollapsed(collapsed: boolean): Promise<AppSettings> {
-    this.settings.sidebarCollapsed = collapsed === true;
     return this.get();
   }
 

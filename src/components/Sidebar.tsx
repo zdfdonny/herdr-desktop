@@ -1,31 +1,29 @@
 /**
- * Sidebar —— 左侧项目/agent 列表（一块独立卡片）。
+ * Sidebar —— 左侧「图标栏 + 内容页」。
  *
- * 支持收起为窄图标栏：
- * - 展开：完整项目分组 + agent 列表
- * - 收起：约 48px 宽，显示项目首字母 + 状态点，悬停有 tooltip
+ * 结构：
+ * - .sidebar__rail：图标栏，常驻显示，顶部为「项目」「集成」两个入口，
+ *   底部常驻设置按钮（动作，不是可展开分区）；
+ * - .sidebar__panel：内容页，选中图标时展开，取消选中（再点一次）收起。
  *
- * 本组件**不含品牌行**：应用图标、应用名与折叠/展开按钮都在 TitleBar 上，
- * 侧栏只负责项目列表本身。
- * 左下角为设置入口（常驻，不随滚动）。
+ * 启动默认选中「项目」并展开（状态由 uiStore.sidebarSection 维护，不持久化）。
  */
 
+import type { ReactNode } from 'react';
 import { useProjectGroups, useFocusedPaneId } from '../stores/sessionStore';
-import { useSettingsStore } from '../stores/settingsStore';
 import { useUiStore, useSettingsOpen } from '../stores/uiStore';
 import { useT } from '../i18n';
-import { AGENT_PRESETS, useAgentsStore, isAvailable } from '../stores/agentsStore';
-import { addProject, pickDirectory, spawnAgent } from '../ipc/client';
+import { addProject, pickDirectory } from '../ipc/client';
 import { ProjectGroup } from './ProjectGroup';
-import { CollapsedSidebar } from './CollapsedSidebar';
-import { IconPlus, IconSettings } from './icons';
+import { IntegrationsPanel } from './IntegrationsPanel';
+import { IconPlus, IconFolder, IconIntegrations, IconSettings } from './icons';
 
 export function Sidebar() {
   const t = useT();
   const groups = useProjectGroups();
   const focusedPaneId = useFocusedPaneId();
-  const collapsed = useSettingsStore((s) => s.settings.sidebarCollapsed);
-  const setSidebarCollapsed = useSettingsStore((s) => s.setSidebarCollapsed);
+  const section = useUiStore((s) => s.sidebarSection);
+  const toggleSection = useUiStore((s) => s.toggleSidebarSection);
   const settingsOpen = useSettingsOpen();
   const openSettings = useUiStore((s) => s.openSettings);
 
@@ -36,71 +34,100 @@ export function Sidebar() {
     }
   };
 
-  /** 收起态：点击项目直接在其下创建默认 agent 并展开侧栏。 */
-  const handleQuickSpawn = (projectId: string) => {
-    const availability = useAgentsStore.getState().availability;
-    const probed = useAgentsStore.getState().probed;
-    const preferred =
-      AGENT_PRESETS.find(
-        (p) => p.id !== 'terminal' && isAvailable(availability, probed, p.command),
-      ) ?? AGENT_PRESETS.find((p) => p.id === 'terminal');
-    if (preferred) {
-      spawnAgent(projectId, preferred.command, { label: preferred.label });
-      setSidebarCollapsed(false);
-    }
-  };
-
-  if (collapsed) {
-    return (
-      <CollapsedSidebar
-        groups={groups}
-        focusedPaneId={focusedPaneId}
-        onSelectProject={() => setSidebarCollapsed(false)}
-        onQuickSpawn={handleQuickSpawn}
-        settingsActive={settingsOpen}
-        onOpenSettings={openSettings}
-      />
-    );
-  }
-
   return (
-    <aside className="sidebar">
-      <div className="sidebar__header">
-        <span className="sidebar__title">{t('sidebar.projects')}</span>
-        <div className="sidebar__header-actions">
-          <button
-            type="button"
-            className="icon-button"
-            onClick={handleAddProject}
-            title={t('sidebar.addProject')}
-            aria-label={t('sidebar.addProject')}
-          >
-            <IconPlus size={15} />
-          </button>
+    <aside className={`sidebar ${section ? '' : 'sidebar--collapsed'}`}>
+      {/* 图标栏：常驻，选中态有圆角底色块 */}
+      <nav className="sidebar__rail">
+        <RailButton
+          icon={<IconFolder size={18} />}
+          label={t('sidebar.projects')}
+          active={section === 'projects'}
+          onClick={() => toggleSection('projects')}
+        />
+        <RailButton
+          icon={<IconIntegrations size={18} />}
+          label={t('settings.integrations')}
+          active={section === 'integrations'}
+          onClick={() => toggleSection('integrations')}
+        />
+
+        {/* 设置：底部常驻动作按钮，打开设置弹窗，不参与侧栏分区切换 */}
+        <button
+          type="button"
+          className={`sidebar__rail-button sidebar__rail-button--settings ${settingsOpen ? 'is-active' : ''}`}
+          onClick={() => openSettings()}
+          title={t('settings.title')}
+          aria-label={t('settings.title')}
+          aria-current={settingsOpen}
+        >
+          <IconSettings size={18} />
+        </button>
+      </nav>
+
+      {section && (
+        <div className="sidebar__panel">
+          {section === 'projects' ? (
+            <>
+              <div className="sidebar__header">
+                <span className="sidebar__title">{t('sidebar.projects')}</span>
+                <div className="sidebar__header-actions">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={handleAddProject}
+                    title={t('sidebar.addProject')}
+                    aria-label={t('sidebar.addProject')}
+                  >
+                    <IconPlus size={15} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="sidebar__list">
+                {groups.map((group) => (
+                  <ProjectGroup
+                    key={group.project.projectId}
+                    group={group}
+                    focusedPaneId={focusedPaneId}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="sidebar__header">
+                <span className="sidebar__title">{t('settings.integrations')}</span>
+              </div>
+              <IntegrationsPanel />
+            </>
+          )}
         </div>
-      </div>
-
-      <div className="sidebar__list">
-        {groups.map((group) => (
-          <ProjectGroup
-            key={group.project.projectId}
-            group={group}
-            focusedPaneId={focusedPaneId}
-          />
-        ))}
-      </div>
-
-      <button
-        type="button"
-        className={`sidebar__settings ${settingsOpen ? 'is-active' : ''}`}
-        onClick={() => openSettings()}
-        aria-current={settingsOpen}
-      >
-        <span className="sidebar__settings-icon" aria-hidden="true">
-          <IconSettings size={16} />
-        </span>
-        <span className="sidebar__settings-label">{t('settings.title')}</span>
-      </button>
+      )}
     </aside>
+  );
+}
+
+function RailButton({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`sidebar__rail-button ${active ? 'is-active' : ''}`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-current={active}
+    >
+      {icon}
+    </button>
   );
 }

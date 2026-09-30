@@ -149,8 +149,7 @@
 /* ===== 窗口标题栏（横贯整宽，位于所有面板之上）===== */
 /*
  * 完全自定义的顶部栏：不使用系统默认标题栏样式，也不展示任何标题文字。
- * 它是**唯一**承载应用标识与侧栏折叠按钮的地方——
- * 侧栏/项目列表是下方一块独立卡片，不包含品牌行。
+ * 它只承载应用标识；侧栏的展开/收起由其自身的图标栏负责。
  *
  * 整条可拖拽窗口，内部交互控件需显式 no-drag。
  * 高度需与主进程 TITLEBAR_HEIGHT 一致。
@@ -217,19 +216,6 @@
   text-overflow: ellipsis;
 }
 
-/*
- * 折叠/展开按钮：紧跟在应用名之后，收起/展开两态共用同一个按钮，
- * 因此位置恒定、不随状态跳动。
- * 父级是 drag 区，必须显式 no-drag，否则点击会被吞掉。
- */
-.topbar__toggle {
-  width: 26px;
-  height: 26px;
-  margin-left: 4px;
-  flex-shrink: 0;
-  -webkit-app-region: no-drag;
-}
-
 /* 空白拖拽区：撑满中间剩余空间，供拖动窗口使用 */
 .topbar__drag-region {
   flex: 1;
@@ -267,43 +253,8 @@
   display: none;
 }
 
-/* ===== 主题切换 ===== */
-.theme-switch {
-  display: inline-flex;
-  padding: 2px;
-  gap: 2px;
-  background: var(--bg-surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.theme-switch__button {
-  width: 26px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-.theme-switch__button:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.theme-switch__button--active {
-  background: var(--bg-active);
-  color: var(--text-primary);
-}
-
 /* 图标统一继承文字颜色并保持笔画清晰（品牌标记是位图，见 .topbar__brand-mark img） */
 .icon-button svg,
-.sidebar__settings-icon svg,
 .settings-nav__icon svg,
 .settings-nav__search-icon svg,
 .settings-content__close svg {
@@ -313,24 +264,84 @@
 
 /* ===== Sidebar ===== */
 /*
- * 侧栏 = 浮动面板布局里的**左卡片**。
+ * 侧栏 = 浮动面板布局里的**左卡片**，内部是「图标栏 + 内容页」。
  *
  * 与主区卡片并列，二者之间由 .layout__body 的 gap 形成缝隙，
  * 因此这里不再需要右边框/分隔线——缝隙本身就是分隔。
  *
- * 注意：侧栏不含品牌行。应用图标/名字/折叠按钮都在 TitleBar 上，
- * 这里从「项目」分区标题开始。
+ * 图标栏常驻，选中某个入口时展开右侧内容页；取消选中（再点一次）
+ * 收起内容页，侧栏退回只占图标栏宽度的窄条。
  */
 .sidebar {
-  width: 260px;
-  min-width: 220px;
+  width: 316px;
+  min-width: 0;
   background: var(--bg-surface);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   border: 1px solid var(--border);
   border-radius: var(--panel-radius);
   /* 裁掉分区标题与列表的方角，保证卡片圆角干净 */
   overflow: hidden;
+  flex-shrink: 0;
+  transition: width 0.15s ease;
+}
+
+.sidebar--collapsed {
+  width: 48px;
+}
+
+/* 图标栏：常驻左侧，竖向排列两个入口 + 底部设置按钮 */
+.sidebar__rail {
+  width: 48px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  background: var(--bg-surface-2);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.sidebar__rail-button {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.sidebar__rail-button:hover {
+  background: color-mix(in srgb, var(--bg-hover) 60%, transparent);
+  color: var(--text-primary);
+}
+
+.sidebar__rail-button.is-active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+/* 底部设置按钮：贴底显示，未选中同样无底色，仅悬停/打开时高亮。 */
+.sidebar__rail-button--settings {
+  margin-top: auto;
+}
+
+/* 内容页：展开时占满图标栏右侧的剩余宽度 */
+.sidebar__panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
 }
 
 .sidebar__header {
@@ -347,10 +358,10 @@
 }
 
 .sidebar__title {
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   text-transform: uppercase;
 }
 
@@ -410,7 +421,7 @@
 .project-group__name {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -662,7 +673,7 @@
  * "DeepSeek…"。最长预设（"GitHub Copilot CLI"，18 字符 ≈ 112px）现在也能完整显示。
  */
 .agent-row__name {
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1478,168 +1489,23 @@
   margin-top: 18px;
 }
 
-/* ===== 侧栏：设置入口 ===== */
-.sidebar__settings {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 9px 14px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-.sidebar__settings:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.sidebar__settings.is-active {
-  background: var(--bg-active);
-  color: var(--text-primary);
-}
-
-.sidebar__settings-icon {
-  font-size: 13px;
-  width: 16px;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-/* ===== 侧栏：收起态===== */
+/* ===== 侧栏：集成页 ===== */
 /*
- * 收起态仍是**左卡片**，只是变窄。圆角/描边/底色沿用 .sidebar，
- * 保持收起前后是同一块面板在变宽变窄，而不是换了个控件。
- *
- * 展开按钮不在这里——它常驻 TitleBar，收起/展开两态位置恒定，
- * 因此不再需要让按钮脱离 48px 宽度的绝对定位技巧。
+ * 集成页正文：占满内容页剩余高度并自行滚动。
+ * 侧栏宽度较窄，说明文案与「一键安装」按钮纵向堆叠。
  */
-.sidebar--collapsed {
-  width: 48px;
-  min-width: 48px;
-  align-items: center;
-}
-
-.sidebar__rail-list {
+.integrations-panel {
   flex: 1;
-  width: 100%;
+  min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 0;
+  gap: 8px;
+  padding: 8px 10px 12px;
 }
 
-.sidebar__rail-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.integrations-install-all {
   width: 100%;
-  padding: 6px 0;
-  flex-shrink: 0;
-}
-
-/*
- * 活动栏选中态：用圆角底色块表示，不再画左边缘的竖线。
- *
- * 竖线（--accent）在浅色下是一条饱和蓝，贴在卡片左边缘非常扎眼，
- * 而且栏宽只有 48px，一条 2px 蓝线几乎顶满图标左侧的留白，
- * 看起来像"边框没画干净"而不是选中指示。
- *
- * 项目图标三档圆角底色：
- *   未选中 --bg-subtle（极浅，给图标一点承托）
- *   悬停   --bg-hover
- *   选中   --bg-active（最深）
- * 选中态再叠加字色提亮，双重表达且不引入额外颜色。
- *
- * 底部的设置按钮**不加**未选中底色：它是一枚功能性图标按钮，
- * 与项目列表不是一类东西，常驻底色会让它读起来像"已选中"。
- */
-.sidebar__rail-button {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  transition: background-color 0.12s ease;
-}
-
-.sidebar__rail-button:hover {
-  background: var(--bg-hover);
-}
-
-.sidebar__rail-button.is-active {
-  background: var(--bg-active);
-}
-
-.rail-project {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color 0.12s ease;
-}
-
-.rail-project:hover {
-  background: var(--bg-hover);
-}
-
-/* 选中：最深一档的圆角底色块，字色同步提亮 */
-.rail-project.is-active {
-  background: var(--bg-active);
-}
-
-.rail-project__badge {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  line-height: 1;
-}
-
-.rail-project.is-active .rail-project__badge {
-  color: var(--text-primary);
-}
-
-/*
- * 状态点贴在徽标右下角，收起态下仍能一眼看出是否有 agent 在等待输入。
- * 描边取 --bg-subtle（即图标块自身的底色）作为"挖空"环，
- * 把圆点从徽标笔画上分离出来；取 --bg-app 会与块内底色对不上。
- */
-.rail-project__dot {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: 1.5px solid var(--bg-subtle);
-}
-
-.rail-project__dot.is-idle {
-  background: var(--status-idle);
-}
-
-.rail-project__dot.is-working {
-  background: var(--status-working);
-  animation: pulse 1.8s ease-in-out infinite;
-}
-
-.rail-project__dot.is-blocked {
-  background: var(--status-blocked);
 }
 
 /* ===== 设置弹窗 ===== */
@@ -1810,7 +1676,7 @@
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -1829,8 +1695,8 @@
 }
 
 .settings-nav__icon {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2224,20 +2090,10 @@
   color: var(--text-muted);
 }
 
-/* 集成页头部：说明文案 + 一键安装按钮 */
-.integrations-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
+/* 集成页说明文案 */
 .integrations-intro {
-  flex: 1;
-  min-width: 0;
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--text-muted);
 }

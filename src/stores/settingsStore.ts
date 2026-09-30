@@ -1,5 +1,5 @@
 /**
- * settings store —— 主题、语言、字号、侧栏状态（Renderer 侧镜像）。
+ * settings store —— 主题、语言、字号、代理与集成引导状态（Renderer 侧镜像）。
  *
  * 真值源在 Main 进程（userData/settings.json），此处做乐观更新 +
  * 统一设置入口，切换后由 Main 回推最终值。
@@ -11,7 +11,6 @@ import {
   sendSetTheme,
   sendSetLanguage,
   sendSetFontSize,
-  sendSetSidebar,
   sendSetProxyUrl,
   sendSetAgentProxy,
 } from '../ipc/client';
@@ -21,7 +20,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   language: 'zh-CN',
   fontSize: 13,
-  sidebarCollapsed: false,
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: false,
@@ -65,7 +63,6 @@ interface SettingsStore {
   setTheme: (theme: ThemePreference) => void;
   setLanguage: (language: Language) => void;
   setFontSize: (fontSize: number) => void;
-  setSidebarCollapsed: (collapsed: boolean) => void;
   setProxyUrl: (url: string) => void;
   setAgentProxy: (command: string, enabled: boolean) => void;
 }
@@ -111,11 +108,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     sendSetFontSize(fontSize);
   },
 
-  setSidebarCollapsed: (collapsed) => {
-    set((s) => ({ settings: { ...s.settings, sidebarCollapsed: collapsed } }));
-    sendSetSidebar(collapsed);
-  },
-
   setProxyUrl: (url) => {
     set((s) => ({ settings: { ...s.settings, proxyUrl: url } }));
     sendSetProxyUrl(url);
@@ -140,9 +132,4 @@ export function useResolvedTheme(): ResolvedTheme {
   const theme = useSettingsStore((s) => s.settings.theme);
   const systemPrefersDark = useSettingsStore((s) => s.systemPrefersDark);
   return resolveTheme(theme, systemPrefersDark);
-}
-
-/** 侧栏是否折叠。 */
-export function useSidebarCollapsed(): boolean {
-  return useSettingsStore((s) => s.settings.sidebarCollapsed);
 }

@@ -80,12 +80,15 @@ export function ProjectGroup({ group, focusedPaneId }: ProjectGroupProps) {
     const rect = addButtonRef.current?.getBoundingClientRect();
     if (rect) {
       /*
-       * 「+」按钮贴近侧栏右缘，浮窗若左对齐按钮会溢出窗口，
-       * 因此改为右对齐按钮并夹在窗口内（至少留 8px 边距）。
+       * 弹出框水平居中于侧栏内容页（.sidebar__panel），而不是贴靠「+」按钮。
+       * 垂直方向仍锚定在「+」按钮下方；左右再夹在窗口内，至少留 8px 边距。
        */
+      const panel = addButtonRef.current?.closest('.sidebar__panel');
+      const panelRect = panel instanceof HTMLElement ? panel.getBoundingClientRect() : null;
+      const centerX = panelRect ? panelRect.left + panelRect.width / 2 : rect.right;
       const left = Math.max(
         8,
-        Math.min(rect.right - PICKER_WIDTH, window.innerWidth - PICKER_WIDTH - 8),
+        Math.min(centerX - PICKER_WIDTH / 2, window.innerWidth - PICKER_WIDTH - 8),
       );
       setAnchor({ top: rect.bottom + 4, left });
     }

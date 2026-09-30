@@ -268,11 +268,6 @@ export class IpcRouter {
         .setFontSize(payload.fontSize)
         .then((settings) => this.pushSettings(settings));
     });
-    ipcMain.on(IPC.SET_SIDEBAR, (_event, payload: { collapsed: boolean }) => {
-      void this.settings
-        .setSidebarCollapsed(payload.collapsed)
-        .then((settings) => this.pushSettings(settings));
-    });
     ipcMain.on(IPC.SET_PROXY_URL, (_event, payload: { url: string }) => {
       void this.settings.setProxyUrl(payload.url).then((settings) => this.pushSettings(settings));
     });

@@ -65,7 +65,6 @@ export type ControlMessage =
     })
   | (IpcEnvelope<{ language: Language }> & { type: 'control:set-language'; version: 1 })
   | (IpcEnvelope<{ fontSize: number }> & { type: 'control:set-font-size'; version: 1 })
-  | (IpcEnvelope<{ collapsed: boolean }> & { type: 'control:set-sidebar'; version: 1 })
   | (IpcEnvelope<{ url: string }> & { type: 'control:set-proxy-url'; version: 1 })
   | (IpcEnvelope<{ command: string; enabled: boolean }> & {
       type: 'control:set-agent-proxy';
