@@ -122,7 +122,7 @@ POSIX 解析逻辑中与平台无关的部分（扩展名补齐、目录判定�
 - ✅ **scrollback 搜索**：Ctrl+F / ⌘F 打开搜索栏，输入即搜 + 上/下一个 + 匹配计数（SearchAddon）
 - ✅ **终端复制粘贴**：Windows/Linux 为 Ctrl+Shift+C/V，macOS 为 ⌘C/⌘V（navigator.clipboard）
 - ✅ **更多 agent manifest**：24 个 agent 均有识别规则（词边界匹配命令名/品牌）；状态判定仍为通用关键词
-- ✅ **应用图标**：`build/icon.png`（512×512，`npm run icon` 可重新生成），
+- ✅ **应用图标**：`build/icon.png`（512×512，为图标真源，`npm run icon` 同步给渲染层），
   已接入 win/mac/linux 三端 `icon` 配置；构建产物内嵌 12 档尺寸 PNG 资源（已验证）
 
 ### 低优先（远期）

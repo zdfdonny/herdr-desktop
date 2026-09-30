@@ -165,7 +165,7 @@ npm run dev
 | `npm run build` | 构建到 `dist/` 与 `dist-electron/` |
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm run test:unix` | Unix 平台解析逻辑单元测试 |
-| `npm run icon` | 重新生成应用图标 |
+| `npm run icon` | 把 `build/icon.png` 同步给渲染层（换图标后执行） |
 | `npm run dist:win` | 打 Windows 安装包 |
 | `npm run dist:mac` | 打 macOS 安装包 |
 | `npm run dist:linux` | 打 Linux 安装包 |

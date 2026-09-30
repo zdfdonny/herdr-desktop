@@ -185,12 +185,11 @@
 }
 
 /*
- * 应用图标：与应用图标同造型（彩色渐变圆角底 + 白色提示符）。
+ * 应用图标：直接使用应用图标 build/icon.png（见 icons.tsx 的 IconLogo）。
  *
- * 旧版图标是 #171717 深色底，和深色主题的顶栏几乎同色、贴上去会「隐形」，
- * 当时靠一圈半透明内描边勾轮廓救场。现在图标自带高饱和渐变底，
- * 深浅主题下都能自己立住，那圈描边已去掉，免得把渐变边缘压灰。
- * 图标颜色固定在 SVG 内部，不跟随这里的 color。
+ * 图标自带蓝色圆角底，深浅主题下都能自己立住，因此不加描边、不加圆角：
+ * 位图边缘已经有抗锯齿的圆角，再叠一层圆角或描边会在边缘挤出深色缝。
+ * 图标颜色固定在位图内部，不跟随这里的 color。
  */
 .topbar__brand-mark {
   display: flex;
@@ -200,9 +199,13 @@
   color: var(--text-secondary);
 }
 
-.topbar__brand-mark svg {
+.topbar__brand-mark img {
   display: block;
   flex-shrink: 0;
+  /* 位图是 512 见方的圆角方块，等比缩放即可；不做圆角裁切以免切掉抗锯齿边 */
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .topbar__brand-name {
@@ -298,13 +301,12 @@
   color: var(--text-primary);
 }
 
-/* 图标统一继承文字颜色并保持笔画清晰 */
+/* 图标统一继承文字颜色并保持笔画清晰（品牌标记是位图，见 .topbar__brand-mark img） */
 .icon-button svg,
 .sidebar__settings-icon svg,
 .settings-nav__icon svg,
 .settings-nav__search-icon svg,
-.settings-content__close svg,
-.topbar__brand-mark svg {
+.settings-content__close svg {
   display: block;
   flex-shrink: 0;
 }

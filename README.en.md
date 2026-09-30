@@ -179,7 +179,7 @@ npm run dev
 | `npm run build` | Build to `dist/` and `dist-electron/` |
 | `npm run typecheck` | TypeScript type check |
 | `npm run test:unix` | Unit tests for the Unix platform layer |
-| `npm run icon` | Regenerate the app icon |
+| `npm run icon` | Sync `build/icon.png` to the renderer (run after replacing the icon) |
 | `npm run dist:win` | Package for Windows |
 | `npm run dist:mac` | Package for macOS |
 | `npm run dist:linux` | Package for Linux |

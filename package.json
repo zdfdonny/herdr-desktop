@@ -33,7 +33,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "icon": "node scripts/gen-icon.js",
+    "icon": "node scripts/sync-icon.js",
     "test:unix": "esbuild electron/platform/unix.ts --bundle --platform=node --format=esm --outfile=.tmp-unix.mjs && node scripts/test-unix-platform.mjs",
     "test:layout": "esbuild src/stores/layoutStore.ts --bundle --platform=node --format=esm --outfile=.tmp-layout.mjs && node scripts/test-layout-store.mjs",
     "test:sort": "esbuild src/stores/agentSort.ts --bundle --platform=node --format=esm --outfile=.tmp-agentsort.mjs && esbuild src/stores/agentsStore.ts --bundle --platform=node --format=esm --outfile=.tmp-agentpresets.mjs && node scripts/test-agent-sort.mjs",
