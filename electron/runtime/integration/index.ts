@@ -105,7 +105,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     configFile: 'settings.json',
     event: 'SessionStart',
     shape: 'direct',
-    timeoutSec: 10,
+    timeout: 10,
   }),
   devin: jsonHooksTarget({
     agent: 'devin',
@@ -115,7 +115,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     configFile: 'config.json',
     event: 'SessionStart',
     shape: 'nested',
-    timeoutSec: 10,
+    timeout: 10,
     stateEvents: DEVIN_STATE_EVENTS,
     removedEvents: LIFECYCLE_STATE_EVENTS,
   }),
@@ -127,7 +127,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     configFile: 'settings.json',
     event: 'SessionStart',
     shape: 'nested',
-    timeoutSec: 10,
+    timeout: 10,
   }),
   qodercli: jsonHooksTarget({
     agent: 'qodercli',
@@ -138,7 +138,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'SessionStart',
     shape: 'nested',
     matcher: '*',
-    timeoutSec: 10,
+    timeout: 10,
   }),
   qwen: jsonHooksTarget({
     agent: 'qwen',
@@ -149,7 +149,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'SessionStart',
     shape: 'nested',
     matcher: '*',
-    timeoutSec: 10,
+    timeout: 10000,
   }),
   letta: jsonHooksTarget({
     agent: 'letta',
@@ -159,7 +159,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     configFile: 'settings.json',
     event: 'SessionStart',
     shape: 'nested',
-    timeoutSec: 10,
+    timeout: 10000,
     quiet: true,
   }),
   cursor: jsonHooksTarget({
@@ -180,7 +180,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     configFile: 'hooks.json',
     event: 'SessionStart',
     shape: 'flat',
-    timeoutSec: 10,
+    timeout: 10000,
     stateEvents: MASTRACODE_STATE_EVENTS,
     removedEvents: LIFECYCLE_STATE_EVENTS,
     encodedCommand: true,
@@ -263,7 +263,8 @@ interface JsonHooksTargetOptions {
   event: string;
   shape: JsonShape;
   matcher?: string;
-  timeoutSec?: number;
+  /** hook 执行超时；claude/codex/copilot 等以秒计，qwen/letta/mastracode 以毫秒计（herdr 写 10000）。 */
+  timeout?: number;
   quiet?: boolean;
   withVersion?: boolean;
   stateEvents?: Array<[string, string]>;
@@ -405,6 +406,12 @@ function ensureHooksObject(root: Record<string, any>): Record<string, any> {
   return root.hooks;
 }
 
+/** 卸载时用：仅当 root.hooks 已是对象时返回它，否则返回 null（避免新建空 hooks）。 */
+function hooksObjectIfPresent(root: Record<string, any>): Record<string, any> | null {
+  if (!root.hooks || typeof root.hooks !== 'object' || Array.isArray(root.hooks)) return null;
+  return root.hooks;
+}
+
 function hookMatches(hook: any, command: string): boolean {
   return (
     hook &&
@@ -417,31 +424,31 @@ function ensureNestedHook(
   hooks: Record<string, any>,
   event: string,
   command: string,
-  opts: { matcher?: string; timeoutSec?: number; quiet?: boolean },
+  opts: { matcher?: string; timeout?: number; quiet?: boolean },
 ): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
   if (entries.some((e: any) => Array.isArray(e.hooks) && e.hooks.some((h: any) => hookMatches(h, command)))) {
     return;
   }
   const invocation: Record<string, any> = { type: 'command', command };
-  if (opts.timeoutSec !== undefined) invocation.timeout = opts.timeoutSec;
+  if (opts.timeout !== undefined) invocation.timeout = opts.timeout;
   if (opts.quiet) invocation.quiet = true;
   const entry: Record<string, any> = { hooks: [invocation] };
   if (opts.matcher !== undefined) entry.matcher = opts.matcher;
   entries.push(entry);
 }
 
-function ensureFlatHook(hooks: Record<string, any>, event: string, command: string, timeoutSec: number): void {
+function ensureFlatHook(hooks: Record<string, any>, event: string, command: string, timeout: number): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
   if (entries.some((e: any) => hookMatches(e, command))) return;
-  entries.push({ type: 'command', command, timeout: timeoutSec, description: 'Report agent state to Herdr' });
+  entries.push({ type: 'command', command, timeout: timeout, description: 'Report agent state to Herdr' });
 }
 
-function ensureDirectHook(hooks: Record<string, any>, event: string, command: string, timeoutSec: number): void {
+function ensureDirectHook(hooks: Record<string, any>, event: string, command: string, timeout: number): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
   const field = isWindows ? 'powershell' : 'bash';
   if (entries.some((e: any) => hookMatches(e, command))) return;
-  entries.push({ type: 'command', [field]: command, timeoutSec });
+  entries.push({ type: 'command', [field]: command, timeoutSec: timeout });
 }
 
 function ensureSimpleHook(hooks: Record<string, any>, event: string, command: string): void {
@@ -455,11 +462,11 @@ function ensureHook(
   shape: JsonShape,
   event: string,
   command: string,
-  opts: { matcher?: string; timeoutSec?: number; quiet?: boolean },
+  opts: { matcher?: string; timeout?: number; quiet?: boolean },
 ): void {
   if (shape === 'nested') ensureNestedHook(hooks, event, command, opts);
-  else if (shape === 'flat') ensureFlatHook(hooks, event, command, opts.timeoutSec ?? 10);
-  else if (shape === 'direct') ensureDirectHook(hooks, event, command, opts.timeoutSec ?? 10);
+  else if (shape === 'flat') ensureFlatHook(hooks, event, command, opts.timeout ?? 10);
+  else if (shape === 'direct') ensureDirectHook(hooks, event, command, opts.timeout ?? 10);
   else ensureSimpleHook(hooks, event, command);
 }
 
@@ -520,7 +527,7 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
         const command = commandFor(opts, path, action);
         ensureHook(hooks, opts.shape, event, command, {
           matcher: opts.matcher,
-          timeoutSec: opts.timeoutSec,
+          timeout: opts.timeout,
           quiet: opts.quiet,
         });
       }
@@ -535,14 +542,17 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       if (!dir) return;
       const configPath = join(dir, opts.configFile);
       const root = await readJson(configPath);
-      const hooks = ensureHooksObject(root);
-      for (const [event, action] of events) {
-        removeHook(hooks, event, commandFor(opts, path ?? '', action));
+      const hooks = hooksObjectIfPresent(root);
+      if (hooks) {
+        let changed = false;
+        for (const [event, action] of events) {
+          changed = removeHook(hooks, event, commandFor(opts, path ?? '', action)) || changed;
+        }
+        for (const [event, action] of opts.removedEvents ?? []) {
+          changed = removeHook(hooks, event, commandFor(opts, path ?? '', action)) || changed;
+        }
+        if (changed) await writeJsonKey(configPath, 'hooks', hooks);
       }
-      for (const [event, action] of opts.removedEvents ?? []) {
-        removeHook(hooks, event, commandFor(opts, path ?? '', action));
-      }
-      await writeJsonKey(configPath, 'hooks', root.hooks);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
@@ -573,10 +583,10 @@ function claudeTarget(): HookTarget {
       const settings = await readJson(settingsPath);
       const hooks = ensureHooksObject(settings);
       for (const matcher of ['startup', 'resume']) {
-        ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { matcher, timeoutSec: 10 });
+        ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { matcher, timeout: 10 });
       }
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
-        ensureNestedHook(hooks, event, hookCommand(path, action), { matcher: '*', timeoutSec: 10 });
+        ensureNestedHook(hooks, event, hookCommand(path, action), { matcher: '*', timeout: 10 });
       }
       await writeJsonKey(settingsPath, 'hooks', settings.hooks);
     },
@@ -586,12 +596,14 @@ function claudeTarget(): HookTarget {
       if (!dir) return;
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
-      const hooks = ensureHooksObject(settings);
-      removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
-      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
-        removeHook(hooks, event, hookCommand(path ?? '', action));
+      const hooks = hooksObjectIfPresent(settings);
+      if (hooks) {
+        let changed = removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
+        for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+          changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
+        }
+        if (changed) await writeJsonKey(settingsPath, 'hooks', hooks);
       }
-      await writeJsonKey(settingsPath, 'hooks', settings.hooks);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
@@ -621,9 +633,9 @@ function codexTarget(): HookTarget {
       const hooksPath = join(dir, 'hooks.json');
       const hooksRoot = await readJson(hooksPath);
       const hooks = ensureHooksObject(hooksRoot);
-      ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { timeoutSec: 10 });
+      ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { timeout: 10 });
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
-        ensureNestedHook(hooks, event, hookCommand(path, action), { timeoutSec: 10 });
+        ensureNestedHook(hooks, event, hookCommand(path, action), { timeout: 10 });
       }
       await writeJsonKey(hooksPath, 'hooks', hooksRoot.hooks);
 
@@ -637,12 +649,14 @@ function codexTarget(): HookTarget {
       if (!dir) return;
       const hooksPath = join(dir, 'hooks.json');
       const hooksRoot = await readJson(hooksPath);
-      const hooks = ensureHooksObject(hooksRoot);
-      removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
-      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
-        removeHook(hooks, event, hookCommand(path ?? '', action));
+      const hooks = hooksObjectIfPresent(hooksRoot);
+      if (hooks) {
+        let changed = removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
+        for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+          changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
+        }
+        if (changed) await writeJsonKey(hooksPath, 'hooks', hooks);
       }
-      await writeJsonKey(hooksPath, 'hooks', hooksRoot.hooks);
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
@@ -905,8 +919,11 @@ function piExtensionDir(): string | null {
 }
 
 function ompExtensionDir(): string | null {
-  const env = process.env.PI_CODING_AGENT_DIR?.trim();
-  const base = env ? expandTilde(env) : expandTilde(process.env.PI_CONFIG_DIR?.trim() || homeJoin('.omp'));
+  // 对应 herdr omp_extension_dir：PI_CODING_AGENT_DIR 直接接 extensions（无 agent 段），
+  // 否则用 PI_CONFIG_DIR/~/.omp 再接 agent/extensions。
+  const piDir = process.env.PI_CODING_AGENT_DIR?.trim();
+  if (piDir) return join(expandTilde(piDir), 'extensions');
+  const base = expandTilde(process.env.PI_CONFIG_DIR?.trim() || homeJoin('.omp'));
   return join(base, 'agent', 'extensions');
 }
 
@@ -1181,7 +1198,8 @@ function kiloTarget(): HookTarget {
   });
 }
 
-const HERMES_PLUGIN_NAME = 'herdr-agent-state';
+/** 插件名需与 assets/hermes/plugin.yaml 的 name 及插件目录名保持一致。 */
+const HERMES_PLUGIN_NAME = 'herdr-desktop-agent-state';
 
 /**
  * 在 hermes config.yaml 里启用/禁用插件（对应 herdr ensure_hermes_plugin_enabled）。
