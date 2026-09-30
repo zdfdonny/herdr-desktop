@@ -216,6 +216,8 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     const handle = createTerminal(container, {
       fontSize,
       theme: resolvedTheme,
+      // 主题颜色查询（OSC 10/11、CSI ? 2031 h）的响应回写到 PTY
+      onQueryResponse: (data) => writeTerminal(pane.paneId, data),
     });
     handleRef.current = handle;
 

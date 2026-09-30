@@ -91,6 +91,61 @@ function readCssVar(name: string): string | null {
   return value.length > 0 ? value : null;
 }
 
+/** 渲染进程判断平台：仅用于绕开 Windows ConPTY 的 OSC 过滤。 */
+const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+
+/**
+ * 把 `#RRGGBB` 转成 OSC 颜色报告的 `rgb:RRRR/GGGG/BBBB` 格式。
+ * 8 位分量按 `cc * 0x101` 扩展到 16 位（即重复两次）。
+ */
+function hexToRgbColon(hex: string): string {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!m) return 'rgb:0000/0000/0000';
+  const expand = (c: string) => c.toLowerCase() + c.toLowerCase();
+  return `rgb:${expand(m[1])}/${expand(m[2])}/${expand(m[3])}`;
+}
+
+/**
+ * 根据背景色亮度判断是否为深色（用于颜色方案报告 997 的取值）。
+ * 与 opentui 的 inferThemeModeFromBackgroundColor 保持一致：阈值 128。
+ */
+function isDarkBackground(hex: string): boolean {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!m) return true;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 <= 128;
+}
+
+/**
+ * 向 PTY 写入一条 OSC 序列。
+ * Windows 上 ConPTY 会把 `ESC ]` 开头的 OSC 整条吞掉，需在 ESC 与 ] 之间插入
+ * NUL 字节绕过其过滤器；非 Windows（forkpty）直接写标准形式。
+ */
+function writeOscToPty(write: (data: string) => void, body: string): void {
+  if (isWindows) {
+    write(`\x1b\x00]${body}`);
+    return;
+  }
+  write(`\x1b]${body}`);
+}
+
+/**
+ * 构造一条「997 颜色方案报告 + OSC 10 前景 + OSC 11 背景」的完整应答。
+ *
+ * 三者必须拼成**一个**字节串、一次性写回 PTY：opentui 收到 997 后 queueMicrotask
+ * 重查调色板，若颜色应答分属不同 PTY 写，微任务会在颜色到达前先跑完。
+ */
+function buildThemeResponse(scheme: 1 | 2, foreground: string, background: string): string {
+  const osc = isWindows ? '\x1b\x00]' : '\x1b]';
+  return (
+    `\x1b[?997;${scheme}n` +
+    `${osc}10;${hexToRgbColon(foreground)}\x07` +
+    `${osc}11;${hexToRgbColon(background)}\x07`
+  );
+}
+
 /**
  * 构造 xterm 主题。
  *
@@ -117,6 +172,8 @@ export function createTerminal(
     fontSize?: number;
     fontFamily?: string;
     theme?: ResolvedTheme;
+    /** 主题颜色查询的响应需要回写 PTY 时调用，由 TerminalPane 注入为 writeTerminal(paneId, data)。 */
+    onQueryResponse?: (data: string) => void;
   },
 ): TerminalHandle {
   const terminal = new Terminal({
@@ -161,6 +218,58 @@ export function createTerminal(
     terminal.loadAddon(webgl);
   } catch {
     webgl = null;
+  }
+
+  /*
+   * 应答 opencode 在启动时发来的主题颜色查询。
+   *
+   * opencode（opentui）启动时发送 `CSI ? 2031 h` 启用颜色方案报告，并（非 Windows）
+   * 自己发 `OSC 10;?` / `OSC 11;?` 查询前景/背景色。宿主需：
+   * - 收到 2031 h 时回「997 颜色方案报告 + OSC 10/11 颜色」；
+   * - 收到 OSC 10/11 查询时直接回颜色。
+   *
+   * Windows 上 ConPTY 会吞掉 opencode 自己发出的 OSC 查询，因此 2031 h 触发的
+   * 主动推送是主要路径，且必须用 `ESC NUL ]` 绕过 ConPTY 的 OSC 过滤器。
+   */
+  const respond = options?.onQueryResponse;
+
+  const pushTheme = (scheme: 1 | 2): void => {
+    if (!respond) return;
+    const fg = terminal.options.theme?.foreground ?? FALLBACK_FG.dark;
+    const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
+    respond(buildThemeResponse(scheme, fg, bg));
+  };
+
+  if (respond) {
+    // OSC 10：前景色查询
+    terminal.parser.registerOscHandler(10, (data) => {
+      if (data === '?' || data === '') {
+        const fg = terminal.options.theme?.foreground ?? FALLBACK_FG.dark;
+        writeOscToPty(respond, `10;${hexToRgbColon(fg)}\x07`);
+        return true;
+      }
+      return false;
+    });
+
+    // OSC 11：背景色查询
+    terminal.parser.registerOscHandler(11, (data) => {
+      if (data === '?' || data === '') {
+        const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
+        writeOscToPty(respond, `11;${hexToRgbColon(bg)}\x07`);
+        return true;
+      }
+      return false;
+    });
+
+    // CSI ? 2031 h：opencode 启用颜色方案报告
+    terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+      if (params.length === 1 && params[0] === 2031) {
+        const bg = terminal.options.theme?.background ?? FALLBACK_BG.dark;
+        pushTheme(isDarkBackground(bg) ? 1 : 2);
+        return true;
+      }
+      return false;
+    });
   }
 
   try {
