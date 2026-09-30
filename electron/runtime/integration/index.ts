@@ -713,17 +713,66 @@ function codexTarget(): HookTarget {
   };
 }
 
+/** 解析 TOML 表头（如 [features]、[[hooks]]）；非表头行返回 null（对应 herdr toml_table_header）。 */
+function tomlTableHeader(line: string): string | null {
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith('[')) return null;
+  const isArrayTable = trimmed.startsWith('[[');
+  const close = trimmed.indexOf(isArrayTable ? ']]' : ']');
+  if (close < 0) return null;
+  const headerEnd = close + (isArrayTable ? 2 : 1);
+  const header = trimmed.slice(0, headerEnd);
+  const rest = trimmed.slice(headerEnd).trimStart();
+  if (rest && !rest.startsWith('#')) return null;
+  return header;
+}
+
+/** 判断 TOML 行是否是 `key = ...`（对应 herdr is_toml_key）。 */
+function isTomlKey(line: string, key: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('#') || !trimmed.startsWith(key)) return false;
+  return trimmed.slice(key.length).trimStart().startsWith('=');
+}
+
 function codexConfigWithHook(content: string): string {
-  let result = content.replace(/\r?\n$/, '');
-  if (!/^\s*\[features\]/m.test(result)) result += '\n\n[features]';
-  if (!/^\s*hooks\s*=\s*true/m.test(result)) {
-    const lines = result.split('\n');
-    const idx = lines.findIndex((line) => /^\s*\[features\]/.test(line));
-    if (idx >= 0) lines.splice(idx + 1, 0, 'hooks = true');
-    else lines.push('hooks = true');
-    result = lines.join('\n');
+  // 对应 herdr build_codex_config_with_hooks：删除废弃的 codex_hooks，并在 [features] 段内设置 hooks = true。
+  const trailingNewline = content.endsWith('\n');
+  const lines = content.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+  let inFeatures = false;
+  let featuresHeaderIndex = -1;
+  let hooksIndex = -1;
+  const deprecated: number[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const header = tomlTableHeader(lines[i]);
+    if (header !== null) {
+      inFeatures = header === '[features]';
+      if (inFeatures && featuresHeaderIndex < 0) featuresHeaderIndex = i;
+      continue;
+    }
+    if (!inFeatures) continue;
+    if (isTomlKey(lines[i], 'codex_hooks')) deprecated.push(i);
+    else if (isTomlKey(lines[i], 'hooks')) hooksIndex = i;
   }
-  return `${result}\n`;
+
+  if (hooksIndex >= 0) lines[hooksIndex] = 'hooks = true';
+  for (let i = deprecated.length - 1; i >= 0; i -= 1) lines.splice(deprecated[i], 1);
+
+  if (hooksIndex < 0) {
+    if (featuresHeaderIndex >= 0) {
+      lines.splice(featuresHeaderIndex + 1, 0, 'hooks = true');
+    } else {
+      let result = content.replace(/\r?\n$/, '');
+      if (result) result += '\n\n';
+      result += '[features]\nhooks = true';
+      return `${result}\n`;
+    }
+  }
+
+  const result = lines.join('\n');
+  return trailingNewline || result === '' ? `${result}\n` : result;
 }
 
 // ---------------------------------------------------------------------------
@@ -881,8 +930,11 @@ function antigravityTarget(): HookTarget {
       if (!dir) return;
       const hooksPath = join(dir, 'hooks.json');
       const root = await readJson(hooksPath);
-      delete root['herdr-desktop'];
-      await writeJson(hooksPath, root);
+      // 对应 herdr：只有真正移除了 herdr 块才写回，避免无改动时重排用户配置。
+      if ('herdr-desktop' in root) {
+        delete root['herdr-desktop'];
+        await writeJson(hooksPath, root);
+      }
       await fs.rm(path ?? '', { force: true }).catch(() => undefined);
     },
   };
