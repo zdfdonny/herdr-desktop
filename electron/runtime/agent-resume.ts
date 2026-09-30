@@ -116,6 +116,86 @@ export function sessionRefFromReport(
   return agentSessionId != null ? sessionRefId(agentSessionId) : null;
 }
 
+/** 规范化会话启动来源（对应 herdr `normalize_session_start_source`）。 */
+export function normalizeSessionStartSource(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (
+    trimmed === 'startup' ||
+    trimmed === 'resume' ||
+    trimmed === 'clear' ||
+    trimmed === 'compact' ||
+    trimmed === 'branch' ||
+    trimmed === 'new' ||
+    trimmed === 'fork' ||
+    trimmed === 'select'
+  ) {
+    return trimmed;
+  }
+  return null;
+}
+
+/** 会话替换允许表（对应 herdr `session_report_allows_session_replacement`）。 */
+const SESSION_REPLACEMENT_ALLOWED = new Set([
+  'herdr:claude\u0000claude\u0000clear',
+  'herdr:claude\u0000claude\u0000resume',
+  'herdr:claude\u0000claude\u0000compact',
+  'herdr:codex\u0000codex\u0000startup',
+  'herdr:codex\u0000codex\u0000clear',
+  'herdr:codex\u0000codex\u0000resume',
+  'herdr:codex\u0000codex\u0000compact',
+  'herdr:mastracode\u0000mastracode\u0000startup',
+  'herdr:hermes\u0000hermes\u0000startup',
+  'herdr:hermes\u0000hermes\u0000new',
+  'herdr:hermes\u0000hermes\u0000resume',
+  'herdr:opencode\u0000opencode\u0000select',
+  'herdr:pi\u0000pi\u0000new',
+  'herdr:pi\u0000pi\u0000resume',
+  'herdr:pi\u0000pi\u0000fork',
+  'herdr:grok\u0000grok\u0000new',
+  'herdr:omp\u0000omp\u0000startup',
+  'herdr:omp\u0000omp\u0000new',
+  'herdr:omp\u0000omp\u0000resume',
+  'herdr:omp\u0000omp\u0000fork',
+  'herdr:qwen\u0000qwen\u0000startup',
+  'herdr:qwen\u0000qwen\u0000clear',
+  'herdr:qwen\u0000qwen\u0000resume',
+  'herdr:qwen\u0000qwen\u0000compact',
+  'herdr:qwen\u0000qwen\u0000branch',
+  'herdr:antigravity\u0000antigravity\u0000',
+]);
+
+export function sessionReportAllowsSessionReplacement(
+  source: string,
+  agent: string,
+  sessionStartSource: string | null,
+): boolean {
+  return SESSION_REPLACEMENT_ALLOWED.has(`${source}\u0000${agent}\u0000${sessionStartSource ?? ''}`);
+}
+
+/**
+ * 上报的会话是否应替换当前会话（对应 herdr `set_agent_session_ref_for_session_start`
+ * 里的 same-owner 冲突分支：同一 agent 的 id 会话不同时，只有替换表允许才替换）。
+ */
+export function shouldReplacePaneAgentSession(
+  current: PaneAgentSession | null,
+  reported: PaneAgentSession,
+  sessionStartSource: string | null | undefined,
+): boolean {
+  if (!current) return true;
+  const conflictingSameOwner =
+    current.source === reported.source &&
+    current.agent === reported.agent &&
+    current.kind === 'id' &&
+    reported.kind === 'id' &&
+    current.value !== reported.value;
+  if (!conflictingSameOwner) return true;
+  return sessionReportAllowsSessionReplacement(
+    reported.source,
+    reported.agent,
+    normalizeSessionStartSource(sessionStartSource),
+  );
+}
+
 /**
  * 从启动参数反推会话（对应 herdr `persisted_session_from_launch_args`）。
  *

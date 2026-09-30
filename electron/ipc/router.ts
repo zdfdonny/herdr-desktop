@@ -579,12 +579,18 @@ export class IpcRouter {
       report.sessionPath ?? null,
     );
     if (ref) {
-      this.session.setPaneAgentSession(paneId, {
+      const session = {
         source: report.source,
         agent: report.agent,
         kind: ref.kind,
         value: ref.value,
-      });
+      };
+      // 会话替换决策（对应 herdr session_report_allows_session_replacement）：
+      // 同一 agent 的 id 会话不同时，只有替换表允许才覆盖当前会话。
+      const current = this.session.getPane(paneId)?.agentSession ?? null;
+      if (agentResume.shouldReplacePaneAgentSession(current, session, report.sessionStartSource)) {
+        this.session.setPaneAgentSession(paneId, session);
+      }
     }
 
     if (report.state) {
