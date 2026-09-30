@@ -19,7 +19,7 @@ import { promises as fs, existsSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { promisify, isDeepStrictEqual } from 'node:util';
 import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
 import { isWindows } from '../../platform';
 import type { HookStatus } from '../../../shared/protocol';
@@ -211,6 +211,10 @@ export function hookStatuses(): Record<string, HookStatus> {
   if (result.opencode === 'installed' && !opencodeTuiIntegrationIsValid()) {
     result.opencode = 'outdated';
   }
+  // grok：脚本文件存在但 herdr-desktop.json 配置漂移时，按 herdr 记为 outdated。
+  if (result.grok === 'installed' && !grokHookConfigIsValid()) {
+    result.grok = 'outdated';
+  }
   return result;
 }
 
@@ -323,15 +327,19 @@ function commandFor(opts: { encodedCommand?: boolean }, path: string, action: st
     : hookCommand(path, action);
 }
 
-/** 读取 JSON（用 jsonc-parser 容忍 JSONC 注释与尾逗号）。 */
+/** 读取 JSON（用 jsonc-parser 容忍 JSONC 注释与尾逗号）；解析失败或根非对象时抛错，避免静默覆盖用户配置。 */
 async function readJson(path: string): Promise<Record<string, any>> {
   const text = await readText(path);
-  if (!text) return {};
+  if (!text.trim()) return {};
   const errors: ParseError[] = [];
   const value = parse(text, errors, { allowTrailingComma: true }) as unknown;
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, any>)
-    : {};
+  if (errors.length > 0) {
+    throw new Error(`failed to parse JSON config at ${path}`);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`JSON config at ${path} must be a JSON object`);
+  }
+  return value as Record<string, any>;
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -787,16 +795,17 @@ function kimiConfigWithHook(
   hookPath: string,
   events: Array<[event: string, matcher: string | null, action: string]>,
 ): string {
-  if (content.includes(KIMI_BLOCK_BEGIN)) return content;
+  // 对应 herdr build_kimi_config_with_hooks：总是先移除旧块再重建，确保重装同步最新事件。
+  let result = removeKimiBlock(content).replace(/\r?\n$/, '');
+  if (result) result += '\n\n';
   const rows = [KIMI_BLOCK_BEGIN];
   for (const [event, matcher, action] of events) {
     rows.push('[[hooks]]', `event = "${event}"`);
     if (matcher) rows.push(`matcher = ${tomlString(matcher)}`);
-    rows.push(`command = ${tomlString(hookCommand(hookPath, action))}`, 'timeout = 10');
+    rows.push(`command = ${tomlString(hookCommand(hookPath, action))}`, 'timeout = 10', '');
   }
   rows.push(KIMI_BLOCK_END);
-  const trimmed = content.replace(/\r?\n$/, '');
-  return `${trimmed}\n\n${rows.join('\n')}\n`;
+  return `${result}${rows.join('\n')}\n`;
 }
 
 function removeKimiBlock(content: string): string {
@@ -855,6 +864,34 @@ function antigravityTarget(): HookTarget {
 // grok —— ~/.grok/hooks/ 脚本 + herdr-desktop.json
 // ---------------------------------------------------------------------------
 
+/** 生成 Herdr 独占的 grok hook 配置（对应 herdr grok_hook_config）。 */
+function grokHookConfig(path: string): Record<string, any> {
+  return {
+    hooks: {
+      SessionStart: [{ hooks: [{ type: 'command', command: grokHookCommand(path), timeout: 10 }] }],
+    },
+  };
+}
+
+/** 校验 grok hook 配置是否与期望完全一致；漂移则视为需更新（对应 herdr grok_hook_config_is_valid）。 */
+function grokHookConfigIsValid(): boolean {
+  const dir = envOrHome('GROK_HOME', ['.grok']);
+  const path = join(dir, 'hooks', HOOK_SCRIPT_NAME);
+  let content: string;
+  try {
+    content = readFileSync(join(dir, 'hooks', 'herdr-desktop.json'), 'utf8');
+  } catch {
+    return false;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  return isDeepStrictEqual(parsed, grokHookConfig(path));
+}
+
 function grokTarget(): HookTarget {
   return {
     configDir: () => envOrHome('GROK_HOME', ['.grok']),
@@ -863,11 +900,8 @@ function grokTarget(): HookTarget {
       return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
     },
     isInstalled() {
-      const dir = this.configDir();
-      return (
-        scriptInstalled(this.hookPath()) &&
-        (dir ? existsSync(join(dir, 'hooks', 'herdr-desktop.json')) : false)
-      );
+      // 与 herdr 一致：以脚本文件是否存在判定 not-installed；配置漂移由 hookStatuses 降级为 outdated。
+      return scriptInstalled(this.hookPath());
     },
     async install(_reportUrl: string) {
       const dir = this.configDir();
@@ -875,13 +909,7 @@ function grokTarget(): HookTarget {
       if (!dir || !path) return;
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('grok', isWindows), 'utf8');
-
-      const config = {
-        hooks: {
-          SessionStart: [{ hooks: [{ type: 'command', command: grokHookCommand(path), timeout: 10 }] }],
-        },
-      };
-      await writeJson(join(dir, 'hooks', 'herdr-desktop.json'), config);
+      await writeJson(join(dir, 'hooks', 'herdr-desktop.json'), grokHookConfig(path));
     },
     async uninstall() {
       const dir = this.configDir();
