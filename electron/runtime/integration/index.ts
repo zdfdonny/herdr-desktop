@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify, isDeepStrictEqual } from 'node:util';
-import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
+import { parse, parseTree, modify, applyEdits, type ParseError, type Node } from 'jsonc-parser';
 import { isWindows } from '../../platform';
 import type { HookStatus } from '../../../shared/protocol';
 import {
@@ -44,12 +44,73 @@ const HOOK_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-state.ps1' : 'herdr-de
 /** qwen / letta 用会话专用脚本名（对应 herdr 的 `*_HOOK_INSTALL_NAME`）。 */
 const SESSION_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-session.ps1' : 'herdr-desktop-agent-session.sh';
 
-/** 全生命周期状态事件（对应 herdr 的多事件 state 上报）。 */
-const LIFECYCLE_STATE_EVENTS: Array<[event: string, action: string]> = [
+/** 各智能体旧版事件（安装/卸载时一并移除，对应 herdr *_REMOVED_*_EVENTS）。 */
+
+/** claude 旧版事件（对应 herdr claude_settings.rs HOOK_REMOVALS；SessionStart/session 单独处理）。 */
+const CLAUDE_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['PostToolUse', 'working'],
+  ['PostToolUseFailure', 'working'],
+  ['SubagentStop', 'working'],
+  ['PermissionRequest', 'blocked'],
+  ['SessionStart', 'idle'],
   ['UserPromptSubmit', 'working'],
   ['PreToolUse', 'working'],
+  ['Stop', 'idle'],
+  ['SessionEnd', 'release'],
+];
+
+/** devin 旧版事件（对应 herdr DEVIN_REMOVED_LIFECYCLE_HOOK_EVENTS）。 */
+const DEVIN_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['UserPromptSubmit', 'working'],
+  ['PreToolUse', 'working'],
+  ['PostToolUse', 'working'],
   ['PermissionRequest', 'blocked'],
   ['Stop', 'idle'],
+  ['SessionEnd', 'release'],
+];
+
+/** droid 旧版事件（对应 herdr DROID_REMOVED_LIFECYCLE_HOOK_EVENTS）。 */
+const DROID_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['SessionStart', 'idle'],
+  ['UserPromptSubmit', 'working'],
+  ['PreToolUse', 'working'],
+  ['PostToolUse', 'working'],
+  ['Notification', 'blocked'],
+  ['Stop', 'idle'],
+  ['SubagentStop', 'working'],
+  ['PreCompact', 'working'],
+  ['SessionEnd', 'release'],
+];
+
+/** qodercli 旧版事件（对应 herdr QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS）。 */
+const QODERCLI_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['SessionStart', 'idle'],
+  ['UserPromptSubmit', 'working'],
+  ['PreToolUse', 'working'],
+  ['PostToolUse', 'working'],
+  ['PostToolUseFailure', 'working'],
+  ['SubagentStart', 'working'],
+  ['SubagentStop', 'working'],
+  ['PreCompact', 'working'],
+  ['Notification', 'blocked'],
+  ['PermissionRequest', 'blocked'],
+  ['Stop', 'idle'],
+  ['SessionEnd', 'release'],
+];
+
+/** mastracode 旧版事件（对应 herdr MASTRACODE_REMOVED_HOOK_EVENTS）。 */
+const MASTRACODE_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['SessionStart', 'idle'],
+  ['SessionEnd', 'release'],
+];
+
+/** cursor 旧版 simple hooks（对应 herdr install_cursor 的移除列表，均用 session 命令）。 */
+const CURSOR_REMOVED_SIMPLE_EVENTS: Array<[string, string]> = [
+  ['beforeSubmitPrompt', 'session'],
+  ['beforeShellExecution', 'session'],
+  ['beforeMCPExecution', 'session'],
+  ['stop', 'session'],
+  ['sessionEnd', 'session'],
 ];
 
 /** devin 的额外事件（对应 herdr DEVIN_HOOK_EVENTS）：每个事件都带会话引用。 */
@@ -117,7 +178,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     shape: 'nested',
     timeout: 10,
     stateEvents: DEVIN_STATE_EVENTS,
-    removedEvents: LIFECYCLE_STATE_EVENTS,
+    removedEvents: DEVIN_REMOVED_STATE_EVENTS,
   }),
   droid: jsonHooksTarget({
     agent: 'droid',
@@ -128,6 +189,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'SessionStart',
     shape: 'nested',
     timeout: 10,
+    removedEvents: DROID_REMOVED_STATE_EVENTS,
   }),
   qodercli: jsonHooksTarget({
     agent: 'qodercli',
@@ -139,6 +201,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     shape: 'nested',
     matcher: '*',
     timeout: 10,
+    removedEvents: QODERCLI_REMOVED_STATE_EVENTS,
   }),
   qwen: jsonHooksTarget({
     agent: 'qwen',
@@ -171,6 +234,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     event: 'sessionStart',
     shape: 'simple',
     withVersion: true,
+    removedEvents: CURSOR_REMOVED_SIMPLE_EVENTS,
   }),
   mastracode: jsonHooksTarget({
     agent: 'mastracode',
@@ -182,7 +246,7 @@ const HOOK_TARGETS: Record<string, HookTarget> = {
     shape: 'flat',
     timeout: 10000,
     stateEvents: MASTRACODE_STATE_EVENTS,
-    removedEvents: LIFECYCLE_STATE_EVENTS,
+    removedEvents: MASTRACODE_REMOVED_STATE_EVENTS,
     encodedCommand: true,
   }),
   antigravity: antigravityTarget(),
@@ -327,7 +391,7 @@ function commandFor(opts: { encodedCommand?: boolean }, path: string, action: st
     : hookCommand(path, action);
 }
 
-/** 读取 JSON（用 jsonc-parser 容忍 JSONC 注释与尾逗号）；解析失败或根非对象时抛错，避免静默覆盖用户配置。 */
+/** 读取 JSON（用 jsonc-parser 容忍 JSONC 注释与尾逗号）；解析失败、根非对象或存在重复键时抛错，避免静默覆盖用户配置。 */
 async function readJson(path: string): Promise<Record<string, any>> {
   const text = await readText(path);
   if (!text.trim()) return {};
@@ -339,7 +403,31 @@ async function readJson(path: string): Promise<Record<string, any>> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`JSON config at ${path} must be a JSON object`);
   }
+  const tree = parseTree(text, [], { allowTrailingComma: true });
+  if (tree) rejectDuplicateKeys(tree, path);
   return value as Record<string, any>;
+}
+
+/** 递归拒绝 JSON 对象中的重复键（对应 herdr claude_settings.rs reject_duplicate_keys）。 */
+function rejectDuplicateKeys(node: Node, path: string): void {
+  if (node.type === 'object') {
+    const names = new Set<string>();
+    for (const prop of node.children ?? []) {
+      if (prop.type === 'property') {
+        const keyNode = prop.children?.[0];
+        if (keyNode && keyNode.type === 'string' && typeof keyNode.value === 'string') {
+          if (names.has(keyNode.value)) {
+            throw new Error(`JSON config at ${path} contains duplicate key "${keyNode.value}"`);
+          }
+          names.add(keyNode.value);
+        }
+        const valueNode = prop.children?.[1];
+        if (valueNode) rejectDuplicateKeys(valueNode, path);
+      }
+    }
+  } else if (node.type === 'array') {
+    for (const child of node.children ?? []) rejectDuplicateKeys(child, path);
+  }
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -466,7 +554,7 @@ function ensureNestedHook(
 function ensureFlatHook(hooks: Record<string, any>, event: string, command: string, timeout: number): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
   if (entries.some((e: any) => hookMatches(e, command))) return;
-  entries.push({ type: 'command', command, timeout: timeout, description: 'Report agent state to Herdr' });
+  entries.push({ type: 'command', command, timeout: timeout, description: 'Report MastraCode agent state to Herdr' });
 }
 
 function ensureDirectHook(hooks: Record<string, any>, event: string, command: string, timeout: number): void {
@@ -610,10 +698,10 @@ function claudeTarget(): HookTarget {
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
       const hooks = ensureHooksObject(settings);
-      // 先移除旧版（startup/resume 两条 SessionStart + 生命周期状态事件），
+      // 先移除旧版（startup/resume 两条 SessionStart + 旧版生命周期事件），
       // 再写入 herdr 的 session-only 版本。
       removeHook(hooks, 'SessionStart', hookCommand(path, 'session'));
-      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+      for (const [event, action] of CLAUDE_REMOVED_STATE_EVENTS) {
         removeHook(hooks, event, hookCommand(path, action));
       }
       ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), {
@@ -631,7 +719,7 @@ function claudeTarget(): HookTarget {
       const hooks = hooksObjectIfPresent(settings);
       if (hooks) {
         let changed = removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
-        for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+        for (const [event, action] of CLAUDE_REMOVED_STATE_EVENTS) {
           changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
         }
         if (changed) await writeJsonKey(settingsPath, 'hooks', hooks);
@@ -651,8 +739,9 @@ const CODEX_STATE_EVENTS: Array<[string, string]> = [
   ['Stop', 'idle'],
   ['Interrupt', 'idle'],
 ];
-/** codex 旧版曾安装、现已移除的事件（PreToolUse/PermissionRequest）。 */
+/** codex 旧版曾安装、现已移除的事件（对应 herdr install_codex 的移除列表）。 */
 const CODEX_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['SessionStart', 'idle'],
   ['PreToolUse', 'working'],
   ['PermissionRequest', 'blocked'],
 ];
@@ -883,7 +972,27 @@ function removeKimiBlock(content: string): string {
 }
 
 function tomlString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\u0000-\u001f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}"`;
+  // 对应 herdr toml_basic_string：常用控制字符用短转义，其余用 \uXXXX。
+  let result = '"';
+  for (const ch of value) {
+    switch (ch) {
+      case '"': result += '\\"'; break;
+      case '\\': result += '\\\\'; break;
+      case '\b': result += '\\b'; break;
+      case '\t': result += '\\t'; break;
+      case '\n': result += '\\n'; break;
+      case '\f': result += '\\f'; break;
+      case '\r': result += '\\r'; break;
+      default:
+        if (ch <= '\u001f' || ch === '\u007f') {
+          result += `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`;
+        } else {
+          result += ch;
+        }
+    }
+  }
+  result += '"';
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1396,7 +1505,7 @@ function updateHermesEnabled(content: string, enabled: boolean): string {
   }
 
   // 内联列表：plugins: [a, b]
-  const inline = lines[pluginsIdx].match(/^plugins\s*:\s*\[([^\]]*)\]/);
+  const inline = lines[pluginsIdx].match(/^plugins\s*:\s*\[([^\]]*)\](.*)$/);
   if (inline) {
     const items = inline[1]
       .split(',')
@@ -1405,9 +1514,10 @@ function updateHermesEnabled(content: string, enabled: boolean): string {
     const idx = items.indexOf(HERMES_PLUGIN_NAME);
     if (enabled && idx < 0) items.push(HERMES_PLUGIN_NAME);
     if (!enabled && idx >= 0) items.splice(idx, 1);
-    lines[pluginsIdx] = items.length
-      ? `plugins: [${items.map((s) => `'${s}'`).join(', ')}]`
-      : 'plugins: []';
+    // 保留行内注释（对应 herdr yaml_inline_comment）。
+    const comment = inline[2].trim();
+    const list = items.length ? `[${items.map((s) => `'${s}'`).join(', ')}]` : '[]';
+    lines[pluginsIdx] = `plugins: ${list}${comment ? ` ${comment}` : ''}`;
     return lines.join('\n');
   }
 
