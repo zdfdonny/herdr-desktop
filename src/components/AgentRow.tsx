@@ -15,7 +15,7 @@ import { useT } from '../i18n';
 import { focusPane, closePane, respawnPane } from '../ipc/client';
 import { useLayoutStore, viewOfPane } from '../stores/layoutStore';
 import { useUiStore } from '../stores/uiStore';
-import { activateAndReviveView } from './viewActivation';
+import { activateAndReviveView, focusSurvivorBeforeClose } from './viewActivation';
 
 interface AgentRowProps {
   agent: ProjectGroupAgent;
@@ -61,6 +61,20 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
       confirmLabel: t('agent.restart'),
       onConfirm: () => respawnPane(agent.paneId, true),
     });
+  };
+
+  /**
+   * 关闭该 agent。
+   *
+   * 关闭聚焦的 agent 时，先把焦点挪到仍存活的 pane（同视图兄弟，或同项目
+   * 第一个），focusPane 会顺带恢复停止态；这样关闭后选中的标签不会停在
+   * 「已停止」。关闭非聚焦 agent 则不动焦点。与 SplitView 的 pane 关闭按钮一致。
+   */
+  const handleClose = () => {
+    if (focused) {
+      focusSurvivorBeforeClose(agent.paneId);
+    }
+    closePane(agent.paneId);
   };
 
   return (
@@ -113,7 +127,7 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
         className="agent-row__close"
         onClick={(e) => {
           e.stopPropagation();
-          closePane(agent.paneId);
+          handleClose();
         }}
         title={t('agent.close')}
         aria-label={t('agent.close')}

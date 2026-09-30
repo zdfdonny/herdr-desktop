@@ -571,8 +571,12 @@ interface LayoutStore {
    * 关闭视图（标签）。调用方需先关闭其中的 pane（见 ViewTabs.closeTab）；
    * 这里负责把视图从布局移除，并把它所含的 pane 记入 hiddenPaneIds，
    * 防止快照间隙里 reconcile 把它们重新铺成新视图。
+   *
+   * `nextActiveViewId`：关闭的是激活视图时，显式指定下一个要激活的视图。
+   * ViewTabs 会传入「同项目剩余的第一个标签」，同项目没有剩余时传 null
+   *（内容区随后显示空状态，避免短暂切到其它项目的视图）。缺省退回全局第一个。
    */
-  closeView: (viewId: string) => void;
+  closeView: (viewId: string, nextActiveViewId?: string | null) => void;
   /**
    * 重命名视图标签。
    * 传入空白字符串视为「恢复默认名」（"New tab"），
@@ -673,7 +677,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       return true;
     },
 
-    closeView: (viewId) => {
+    closeView: (viewId, nextActiveViewId) => {
       const { views, activeViewId } = get();
       const idx = views.findIndex((v) => v.id === viewId);
       if (idx < 0) return;
@@ -683,15 +687,20 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       const next = views.filter((v) => v.id !== viewId);
       let nextActive = activeViewId;
       if (activeViewId === viewId) {
-        /*
-         * 关闭激活标签后直接选中第一个标签，而不是「下一个/上一个」。
-         *
-         * 主进程 closePane 会把焦点交给剩余 panes 里的第一个（session 的 Map
-         * 插入序），随后的 reconcile 焦点跟随也会把激活项指到第一个视图；
-         * 若这里先选 next[idx]（倒数第二个），会与 reconcile 的「第一个」打架，
-         * 用户会看到标签先跳到倒数第二个、再跳回第一个。这里直接选第一个即可消除跳变。
-         */
-        nextActive = next[0]?.id ?? null;
+        if (nextActiveViewId !== undefined) {
+          // 调用方显式指定：同项目剩余的第一个标签，或 null（同项目无剩余 → 空状态）
+          nextActive = nextActiveViewId;
+        } else {
+          /*
+           * 未显式指定时退回全局第一个标签，而不是「下一个/上一个」。
+           *
+           * 主进程 closePane 会把焦点交给剩余 panes 里的第一个（session 的 Map
+           * 插入序），随后的 reconcile 焦点跟随也会把激活项指到第一个视图；
+           * 若这里先选 next[idx]（倒数第二个），会与 reconcile 的「第一个」打架，
+           * 用户会看到标签先跳到倒数第二个、再跳回第一个。这里直接选第一个即可消除跳变。
+           */
+          nextActive = next[0]?.id ?? null;
+        }
       }
       commit(next, nextActive);
     },

@@ -58,26 +58,30 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
    */
   const closeTab = (view: View) => {
     const closingActive = activeViewId === view.id;
+    /*
+     * 提前确定关闭激活标签后的下一个标签：按 `views` prop（当前项目过滤后的
+     * 标签顺序）取第一个剩余标签。同项目没有剩余标签时传 null，closeView 会
+     * 清空激活项，等 Main 快照把 focusedPaneId 清空后内容区显示空状态。
+     */
+    const nextView = closingActive
+      ? views.find((v) => v.id !== view.id) ?? null
+      : null;
+
     for (const id of viewPaneIds(view)) {
       closePane(id);
     }
-    useLayoutStore.getState().closeView(view.id);
+    useLayoutStore.getState().closeView(view.id, nextView?.id ?? null);
 
-    if (closingActive) {
+    if (closingActive && nextView) {
       /*
-       * 关闭激活标签后，标签栏会跳到当前项目的第一个标签。这里按 `views` prop
-       * （当前项目过滤后的标签顺序）取新的第一个标签，而非 store 的全局
-       * views[0]——后者可能属于其它项目。然后补一次「激活 + 恢复」，避免
-       * 跳过去的标签停在「已停止」。
+       * 补一次「激活 + 恢复」：closeView 只把 activeViewId 切到新标签，
+       * 不会像手动点标签那样恢复停止态智能体，导致跳过去的标签停在「已停止」。
        */
-      const nextView = views.find((v) => v.id !== view.id) ?? null;
-      if (nextView) {
-        const firstId = viewPaneIds(nextView)[0] ?? null;
-        if (firstId) {
-          activateAndReviveView(nextView, firstId);
-        } else {
-          useLayoutStore.getState().activateView(nextView.id);
-        }
+      const firstId = viewPaneIds(nextView)[0] ?? null;
+      if (firstId) {
+        activateAndReviveView(nextView, firstId);
+      } else {
+        useLayoutStore.getState().activateView(nextView.id);
       }
     }
   };

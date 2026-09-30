@@ -88,7 +88,7 @@ export class Session {
     this.projects.delete(projectId);
 
     if (this.focusedPaneId && paneIds.includes(this.focusedPaneId)) {
-      this.focusedPaneId = this.panes.keys().next().value ?? null;
+      this.setFocus(this.panes.keys().next().value ?? null);
     }
     this.bump();
     return paneIds;
@@ -279,10 +279,20 @@ export class Session {
   }
 
   closePane(paneId: string): void {
+    const closing = this.panes.get(paneId);
     this.panes.delete(paneId);
     this.agents.delete(paneId);
     if (this.focusedPaneId === paneId) {
-      this.focusedPaneId = this.panes.keys().next().value ?? null;
+      /*
+       * 焦点转移按「项目」进行，而不是随手交给 Map 里第一个 pane：
+       * 关闭当前焦点 agent/tab 后，优先聚焦同项目剩余的第一个 pane
+       *（即该项目下最早创建、仍在的标签）；同项目没有剩余 pane 时清空焦点，
+       * 让内容区显示空状态，避免跳到其它项目。
+       */
+      const nextId = closing
+        ? [...this.panes.values()].find((p) => p.projectId === closing.projectId)?.paneId ?? null
+        : null;
+      this.setFocus(nextId);
     }
     this.bump();
   }
@@ -374,14 +384,26 @@ export class Session {
     this.bump();
   }
 
-  focusPane(paneId: string): void {
-    if (!this.panes.has(paneId)) return;
+  /**
+   * 统一设置焦点：同时维护 focusedPaneId 与每个 pane/agent 的 focused 标记。
+   *
+   * closePane / removeProject 这类「焦点被动转移」的路径此前只改 focusedPaneId，
+   * 没同步 pane.focused，导致新聚焦 pane 的终端不会自动获得键盘焦点。
+   * 现在收敛到这里，避免两处漂移。
+   */
+  private setFocus(paneId: string | null): void {
+    this.focusedPaneId = paneId;
     for (const p of this.panes.values()) {
       p.focused = p.paneId === paneId;
-      const a = this.agents.get(p.paneId);
-      if (a) a.focused = p.paneId === paneId;
     }
-    this.focusedPaneId = paneId;
+    for (const a of this.agents.values()) {
+      a.focused = a.paneId === paneId;
+    }
+  }
+
+  focusPane(paneId: string): void {
+    if (!this.panes.has(paneId)) return;
+    this.setFocus(paneId);
     this.bump();
   }
 

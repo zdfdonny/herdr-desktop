@@ -24,14 +24,13 @@ import {
   findSplitNode,
   flattenLayout,
   DIVIDER_SIZE,
-  viewOfPane,
-  viewPaneIds,
   type LayoutNode,
   type FlatLeaf,
   type FlatDivider,
   type SplitDirection,
 } from '../stores/layoutStore';
 import { focusPane, closePane } from '../ipc/client';
+import { focusSurvivorBeforeClose } from './viewActivation';
 import { useT } from '../i18n';
 import { TerminalPane } from './TerminalPane';
 import { WebPane } from './WebPane';
@@ -196,19 +195,13 @@ function PaneCell({ pane, focused }: { pane: PaneState; focused: boolean }) {
    * 关闭本 pane。
    *
    * 若关的是**聚焦**的 pane，先在同一视图（分屏）里找一个兄弟 pane 把焦点挪过去，
-   * 再关。否则 Main 的 closePane 会把焦点随手丢给 panes 集合里第一个 pane——
+   * 再关；没有兄弟时聚焦同项目第一个 pane（focusPane 会顺带恢复停止态）。
+   * 否则 Main 的 closePane 会把焦点随手丢给 panes 集合里第一个 pane——
    * 它可能在另一个 tab，导致 reconcile 的焦点跟随把标签跳到那个 tab 去。
    */
   const handleClose = () => {
     if (focused) {
-      const store = useLayoutStore.getState();
-      const view = viewOfPane(store.views, pane.paneId);
-      if (view) {
-        const nextFocus = viewPaneIds(view).find((id) => id !== pane.paneId);
-        if (nextFocus) {
-          focusPane(nextFocus);
-        }
-      }
+      focusSurvivorBeforeClose(pane.paneId);
     }
     closePane(pane.paneId);
   };

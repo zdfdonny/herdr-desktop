@@ -8,9 +8,12 @@
  * 语义：把焦点挪进目标视图，并恢复该视图（分屏）里**所有**停止态的智能体，
  * 而不是只恢复被点选的那一个——否则分屏的其他格子会停在「已停止」，
  * 布局丢失时还会被拆成各自独立的 tab。
+ *
+ * 也提供「关闭聚焦 pane 前先转移焦点到幸存 pane」的辅助函数，让关闭动作
+ * 选中的新标签如果原本是停止态，也能被 focusPane 自动拉起。
  */
 
-import { useLayoutStore, viewPaneIds, type View } from '../stores/layoutStore';
+import { useLayoutStore, viewOfPane, viewPaneIds, type View } from '../stores/layoutStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { focusPane, respawnPane } from '../ipc/client';
 
@@ -28,5 +31,33 @@ export function activateAndReviveView(view: View, focusedPaneId: string): void {
     if (pane && pane.running === false) {
       respawnPane(id);
     }
+  }
+}
+
+/**
+ * 关闭聚焦的 pane 前，把焦点挪到一个仍存活的 pane，并借 focusPane 自动恢复停止态。
+ *
+ * 这样「关闭当前焦点智能体」后，被选中的标签如果原本是停止态，也会被拉起，
+ * 符合「选中标签后自动恢复停止态智能体」的预期。优先级：
+ * 1. 同一视图（分屏）里的兄弟 pane → 当前标签继续存活；
+ * 2. 同项目剩余的第一个 pane → 选中该项目下的第一个标签；
+ * 3. 都没有 → 不动焦点，交给 Main 的 closePane 清空焦点（内容区显示空状态）。
+ */
+export function focusSurvivorBeforeClose(paneId: string): void {
+  const store = useLayoutStore.getState();
+  const view = viewOfPane(store.views, paneId);
+  const sibling = view ? viewPaneIds(view).find((id) => id !== paneId) : undefined;
+  if (sibling) {
+    focusPane(sibling);
+    return;
+  }
+
+  // 无兄弟（整个标签只剩这一个 pane）：聚焦同项目剩余的第一个 pane
+  const panes = useSessionStore.getState().state.panes;
+  const closing = panes.find((p) => p.paneId === paneId);
+  if (!closing) return;
+  const next = panes.find((p) => p.projectId === closing.projectId && p.paneId !== paneId);
+  if (next) {
+    focusPane(next.paneId);
   }
 }
