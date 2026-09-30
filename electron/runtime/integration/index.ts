@@ -15,7 +15,7 @@
  * （终端检测不再覆盖 status）。
  */
 
-import { promises as fs, existsSync, readFileSync, statSync } from 'node:fs';
+import { promises as fs, existsSync, readFileSync, statSync, lstatSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -346,7 +346,7 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeConfigFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-/** 用户配置写入前的安全预检：目标存在且非普通文件时抛错（对应 herdr check_config_target）。 */
+/** 用户配置写入前的安全预检：目标存在且非普通文件、或存在多个硬链接时抛错（对应 herdr check_config_target）。 */
 function checkConfigTarget(path: string): void {
   let st: ReturnType<typeof statSync>;
   try {
@@ -358,15 +358,32 @@ function checkConfigTarget(path: string): void {
   if (!st.isFile()) {
     throw new Error(`cannot update ${path}: not a regular file`);
   }
+  if (st.nlink > 1) {
+    throw new Error(`cannot update ${path}: config has multiple hard links`);
+  }
+}
+
+/** 若目标本身是符号链接，解析到真实路径（保留符号链接）；否则原样返回。 */
+function resolveConfigTarget(path: string): string {
+  try {
+    if (lstatSync(path).isSymbolicLink()) {
+      return realpathSync(path);
+    }
+  } catch {
+    // 不存在或无法读取，原样返回
+  }
+  return path;
 }
 
 /** 原子写用户配置（临时文件 + rename，对应 herdr write_config）。 */
 async function writeConfigFile(path: string, contents: string): Promise<void> {
   checkConfigTarget(path);
-  const tmp = join(dirname(path), `.herdr-desktop-config-${process.pid}-${Date.now()}.tmp`);
+  // 跟随符号链接写到真实目标，保留用户的符号链接。
+  const target = resolveConfigTarget(path);
+  const tmp = join(dirname(target), `.herdr-desktop-config-${process.pid}-${Date.now()}.tmp`);
   await fs.writeFile(tmp, contents, 'utf8');
   try {
-    await fs.rename(tmp, path);
+    await fs.rename(tmp, target);
   } catch (error) {
     await fs.rm(tmp, { force: true }).catch(() => undefined);
     throw error;
@@ -838,6 +855,17 @@ function antigravityTarget(): HookTarget {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      checkConfigTarget(join(dir, 'hooks.json'));
+      // 对应 herdr install_antigravity_cli：配置目录必须已存在（由 antigravity cli 首次启动创建）。
+      let isDir = false;
+      try {
+        isDir = statSync(dir).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) {
+        throw new Error(`antigravity cli config directory not found at ${dir}. install antigravity cli first`);
+      }
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('antigravity', isWindows), 'utf8');
 
@@ -864,6 +892,13 @@ function antigravityTarget(): HookTarget {
 // grok —— ~/.grok/hooks/ 脚本 + herdr-desktop.json
 // ---------------------------------------------------------------------------
 
+/** grok 配置目录：GROK_CONFIG_DIR 覆盖 → GROK_HOME → ~/.grok（对应 herdr grok_dir）。 */
+function grokDir(): string {
+  const override = process.env.GROK_CONFIG_DIR?.trim();
+  if (override) return expandTilde(override);
+  return envOrHome('GROK_HOME', ['.grok']);
+}
+
 /** 生成 Herdr 独占的 grok hook 配置（对应 herdr grok_hook_config）。 */
 function grokHookConfig(path: string): Record<string, any> {
   return {
@@ -875,7 +910,7 @@ function grokHookConfig(path: string): Record<string, any> {
 
 /** 校验 grok hook 配置是否与期望完全一致；漂移则视为需更新（对应 herdr grok_hook_config_is_valid）。 */
 function grokHookConfigIsValid(): boolean {
-  const dir = envOrHome('GROK_HOME', ['.grok']);
+  const dir = grokDir();
   const path = join(dir, 'hooks', HOOK_SCRIPT_NAME);
   let content: string;
   try {
@@ -894,7 +929,7 @@ function grokHookConfigIsValid(): boolean {
 
 function grokTarget(): HookTarget {
   return {
-    configDir: () => envOrHome('GROK_HOME', ['.grok']),
+    configDir: grokDir,
     hookPath() {
       const dir = this.configDir();
       return dir ? join(dir, 'hooks', HOOK_SCRIPT_NAME) : null;
@@ -907,6 +942,16 @@ function grokTarget(): HookTarget {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      // 对应 herdr install_grok：配置目录必须已存在（由 grok cli 首次启动创建）。
+      let isDir = false;
+      try {
+        isDir = statSync(dir).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) {
+        throw new Error(`grok config directory not found at ${dir}. install grok cli first`);
+      }
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('grok', isWindows), 'utf8');
       await writeJson(join(dir, 'hooks', 'herdr-desktop.json'), grokHookConfig(path));
@@ -929,6 +974,10 @@ function extensionTarget(opts: {
   configDir: () => string | null;
   asset: string;
   fileName: string;
+  /** 该目录必须已存在（对应 herdr 各扩展/插件目录预检）。 */
+  requireDir?: () => string | null;
+  /** 错误提示里的 agent 名。 */
+  agentLabel?: string;
 }): HookTarget {
   return {
     configDir: opts.configDir,
@@ -943,6 +992,19 @@ function extensionTarget(opts: {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      const required = opts.requireDir?.();
+      if (required) {
+        let isDir = false;
+        try {
+          isDir = statSync(required).isDirectory();
+        } catch {
+          isDir = false;
+        }
+        if (!isDir) {
+          const label = opts.agentLabel ?? 'agent';
+          throw new Error(`${label} directory not found at ${required}. install ${label} first`);
+        }
+      }
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path, opts.asset, 'utf8');
     },
@@ -957,6 +1019,11 @@ function piTarget(): HookTarget {
     configDir: () => piExtensionDir(),
     asset: PI_ASSET,
     fileName: 'herdr-desktop-agent-state.ts',
+    requireDir: () => {
+      const d = piExtensionDir();
+      return d ? dirname(d) : null;
+    },
+    agentLabel: 'pi',
   });
 }
 
@@ -965,6 +1032,11 @@ function ompTarget(): HookTarget {
     configDir: () => ompExtensionDir(),
     asset: OMP_ASSET,
     fileName: 'herdr-desktop-omp-agent-state.ts',
+    requireDir: () => {
+      const d = ompExtensionDir();
+      return d ? dirname(d) : null;
+    },
+    agentLabel: 'omp',
   });
 }
 
@@ -1249,6 +1321,8 @@ function kiloTarget(): HookTarget {
     configDir: () => homeJoin('.config', 'kilo'),
     asset: KILO_ASSET,
     fileName: join('plugin', 'herdr-desktop-agent-state.js'),
+    requireDir: () => homeJoin('.config', 'kilo'),
+    agentLabel: 'kilo',
   });
 }
 
@@ -1322,8 +1396,22 @@ function updateHermesEnabled(content: string, enabled: boolean): string {
   return content;
 }
 
+/** hermes 目录：HERMES_HOME → Windows HOME(≠USERPROFILE)/.hermes → LOCALAPPDATA/hermes → ~/.hermes（对应 herdr hermes_dir）。 */
+function hermesDir(): string {
+  const env = process.env.HERMES_HOME?.trim();
+  if (env) return expandTilde(env);
+  if (isWindows) {
+    const home = process.env.HOME?.trim();
+    const profile = process.env.USERPROFILE?.trim();
+    if (home && home !== profile) return join(home, '.hermes');
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) return join(localAppData, 'hermes');
+  }
+  return homeJoin('.hermes');
+}
+
 function hermesTarget(): HookTarget {
-  const dir = () => homeJoin('.hermes');
+  const dir = hermesDir;
   const pluginDir = () => join(dir(), 'plugins', 'herdr-desktop-agent-state');
   const configPath = () => join(dir(), 'config.yaml');
   return {
