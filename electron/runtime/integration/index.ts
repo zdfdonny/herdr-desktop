@@ -508,6 +508,16 @@ function scriptInstalled(path: string | null): boolean {
   }
 }
 
+/** Unix 上把 hook 脚本设为可执行（对应 herdr make_executable；Windows 上为 no-op）。 */
+async function makeExecutable(path: string): Promise<void> {
+  if (isWindows) return;
+  try {
+    await fs.chmod(path, 0o755);
+  } catch {
+    // 某些文件系统不支持 chmod，忽略
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 通用 JSON hooks 结构（对应 herdr config_edit.rs）
 // ---------------------------------------------------------------------------
@@ -624,9 +634,12 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      // 写资产前先预检配置目标（对应 herdr check_config_targets）。
+      checkConfigTarget(join(dir, opts.configFile));
       const scriptDir = opts.scriptSubdir ? join(dir, opts.scriptSubdir) : dir;
       await fs.mkdir(scriptDir, { recursive: true });
       await fs.writeFile(path, hookScriptContent(opts.agent, isWindows), 'utf8');
+      await makeExecutable(path);
 
       const configPath = join(dir, opts.configFile);
       const root = await readJson(configPath);
@@ -692,8 +705,11 @@ function claudeTarget(): HookTarget {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      // 写资产前先预检配置目标（对应 herdr check_config_targets）。
+      checkConfigTarget(join(dir, 'settings.json'));
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('claude', isWindows), 'utf8');
+      await makeExecutable(path);
 
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
@@ -760,8 +776,12 @@ function codexTarget(): HookTarget {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      // 写资产前先预检配置目标（对应 herdr check_config_targets）。
+      checkConfigTarget(join(dir, 'hooks.json'));
+      checkConfigTarget(join(dir, 'config.toml'));
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path, hookScriptContent('codex', isWindows), 'utf8');
+      await makeExecutable(path);
 
       const hooksPath = join(dir, 'hooks.json');
       const hooksRoot = await readJson(hooksPath);
@@ -884,8 +904,11 @@ function kimiTarget(): HookTarget {
       const dir = this.configDir();
       const path = this.hookPath();
       if (!dir || !path) return;
+      // 写资产前先预检配置目标（对应 herdr check_config_targets）。
+      checkConfigTarget(join(dir, 'config.toml'));
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('kimi', isWindows), 'utf8');
+      await makeExecutable(path);
 
       const configPath = join(dir, 'config.toml');
       const content = await readText(configPath);
@@ -1026,6 +1049,7 @@ function antigravityTarget(): HookTarget {
       }
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('antigravity', isWindows), 'utf8');
+      await makeExecutable(path);
 
       const hooksPath = join(dir, 'hooks.json');
       const root = await readJson(hooksPath);
@@ -1115,6 +1139,7 @@ function grokTarget(): HookTarget {
       }
       await fs.mkdir(join(dir, 'hooks'), { recursive: true });
       await fs.writeFile(path, hookScriptContent('grok', isWindows), 'utf8');
+      await makeExecutable(path);
       await writeJson(join(dir, 'hooks', 'herdr-desktop.json'), grokHookConfig(path));
     },
     async uninstall() {
@@ -1528,7 +1553,24 @@ function updateHermesEnabled(content: string, enabled: boolean): string {
   const enabledIdx = sub.findIndex((l) => /^\s{2}enabled\s*:/.test(l));
 
   if (enabledIdx >= 0) {
-    const listStart = pluginsIdx + 1 + enabledIdx + 1;
+    const enabledLine = pluginsIdx + 1 + enabledIdx;
+    // 内联 enabled: [a, b] 形态（对应 herdr 的 yaml_flow_sequence_items）。
+    const inlineEnabled = lines[enabledLine].match(/^\s{2}enabled\s*:\s*\[([^\]]*)\](.*)$/);
+    if (inlineEnabled) {
+      const items = inlineEnabled[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean);
+      const idx = items.indexOf(HERMES_PLUGIN_NAME);
+      if (enabled && idx < 0) items.push(HERMES_PLUGIN_NAME);
+      if (!enabled && idx >= 0) items.splice(idx, 1);
+      const comment = inlineEnabled[2].trim();
+      const list = items.length ? `[${items.map((s) => `'${s}'`).join(', ')}]` : '[]';
+      lines[enabledLine] = `  enabled: ${list}${comment ? ` ${comment}` : ''}`;
+      return lines.join('\n');
+    }
+    // 块形态：enabled:\n    - x
+    const listStart = enabledLine + 1;
     let listEnd = listStart;
     while (listEnd < end && /^\s{2,}-\s/.test(lines[listEnd])) listEnd += 1;
     const itemIdx =
