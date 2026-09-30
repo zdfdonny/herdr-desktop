@@ -87,14 +87,6 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
   const resolvedTheme = useResolvedTheme();
-  /*
-   * 始终持有最新主题值，供「终端重建」的 effect 读取。
-   *
-   * 那个 effect 的依赖里不能出现 resolvedTheme（否则切主题会重建终端），
-   * 但它又必须在重建后拿到**当前**主题，所以用 ref 传递。
-   */
-  const resolvedThemeRef = useRef(resolvedTheme);
-  resolvedThemeRef.current = resolvedTheme;
   const fontSize = useSettingsStore((s) => s.settings.fontSize);
   const t = useT();
   // 旧快照可能缺 running 字段，按运行中处理
@@ -224,15 +216,6 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     const handle = createTerminal(container, {
       fontSize,
       theme: resolvedTheme,
-      /*
-       * 主题颜色查询（仅 opencode）的响应回写到 PTY。
-       *
-       * 是否真正启用由 createTerminal 按 command 判定：只有 opencode 走
-       * OSC 适配，其余 agent / 普通 shell 走标准路径，避免 OSC 序列被
-       * 行编辑器当输入、在提示符后显示成乱码。
-       */
-      onQueryResponse: (data) => writeTerminal(pane.paneId, data),
-      command: pane.command ?? null,
     });
     handleRef.current = handle;
 
@@ -241,18 +224,6 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
      * 强制重启（restartSeq 递增重建终端）后，终端 panel 直接可输入。
      */
     if (pane.focused) handle.terminal.focus();
-
-    /*
-     * 终端重建后补一次主题应用。
-     *
-     * 这里必须主动补：重建（换 pane、改字号、respawn）后新实例注册的是全新的
-     * OSC handler，而已经跑起来的 opencode **不会**再发一次 `CSI ? 2031 h`，
-     * 所以没有任何东西会去触发那次握手，主题就停在旧值上。
-     *
-     * 用 ref 取最新主题而非把 resolvedTheme 加进依赖：加进去会让切主题重建
-     * 整个终端（丢滚动缓冲、重连 PTY），代价远大于收益。
-     */
-    handle.applyTheme(resolvedThemeRef.current);
 
     // 搜索匹配计数
     const resultsSub = handle.search.onDidChangeResults((e) => {
@@ -440,26 +411,6 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     const rafId = requestAnimationFrame(apply);
     return () => cancelAnimationFrame(rafId);
   }, [resolvedTheme]);
-
-  /*
-   * command 后到时补挂 OSC 主题查询 handler。
-   *
-   * 创建 xterm 的那次 effect 只依赖 [pane.paneId, fontSize, running, restartSeq]，
-   * 刻意不含 pane.command —— 把 command 加进去会在快照刷新时重建整个终端
-   * （丢滚动缓冲、重连 PTY）。但 createTerminal 需要 command 才能判断是否
-   * 启用 OSC 适配，而挂载那一刻 command 未必已经到达：Renderer 按 SessionState
-   * 快照投影，布局里先出现 pane、随后快照才带上 command 是可能的，
-   * 旧版 session.json 恢复出的 pane 更是直接缺这个字段。
-   *
-   * 漏判的后果是永久性的：该 pane 不注册 handler、applyTheme 也不再推送 997，
-   * 表现为"分屏下有的 opencode 跟得上主题、有的永远停在启动时的配色"。
-   *
-   * 所以这里单独补一条轻量 effect：command 变化时把它交给 handle，
-   * 由 handle 决定是否需要补挂 handler 并补一次主题协商（不重建终端）。
-   */
-  useEffect(() => {
-    handleRef.current?.setCommand(pane.command ?? null);
-  }, [pane.command, pane.paneId]);
 
   /*
    * 停止态（恢复出的 pane，进程未运行）不再显示「智能体已停止」整页提示：
