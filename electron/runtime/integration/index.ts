@@ -559,8 +559,11 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
 }
 
 // ---------------------------------------------------------------------------
-// claude —— ~/.claude/settings.json（SessionStart + 状态事件，matcher）
+// claude —— ~/.claude/settings.json（SessionStart，session-only）
 // ---------------------------------------------------------------------------
+
+/** claude SessionStart 的 matcher（对应 herdr SESSION_START_MATCHER）。 */
+const CLAUDE_SESSION_START_MATCHER = '^(startup|resume|clear|compact|fork)$';
 
 function claudeTarget(): HookTarget {
   return {
@@ -582,12 +585,16 @@ function claudeTarget(): HookTarget {
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
       const hooks = ensureHooksObject(settings);
-      for (const matcher of ['startup', 'resume']) {
-        ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { matcher, timeout: 10 });
-      }
+      // 先移除旧版（startup/resume 两条 SessionStart + 生命周期状态事件），
+      // 再写入 herdr 的 session-only 版本。
+      removeHook(hooks, 'SessionStart', hookCommand(path, 'session'));
       for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
-        ensureNestedHook(hooks, event, hookCommand(path, action), { matcher: '*', timeout: 10 });
+        removeHook(hooks, event, hookCommand(path, action));
       }
+      ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), {
+        matcher: CLAUDE_SESSION_START_MATCHER,
+        timeout: 10,
+      });
       await writeJsonKey(settingsPath, 'hooks', settings.hooks);
     },
     async uninstall() {
@@ -613,6 +620,18 @@ function claudeTarget(): HookTarget {
 // codex —— ~/.codex/hooks.json + config.toml
 // ---------------------------------------------------------------------------
 
+/** codex 状态事件（对应 herdr install_codex：UserPromptSubmit/Stop/Interrupt）。 */
+const CODEX_STATE_EVENTS: Array<[string, string]> = [
+  ['UserPromptSubmit', 'working'],
+  ['Stop', 'idle'],
+  ['Interrupt', 'idle'],
+];
+/** codex 旧版曾安装、现已移除的事件（PreToolUse/PermissionRequest）。 */
+const CODEX_REMOVED_STATE_EVENTS: Array<[string, string]> = [
+  ['PreToolUse', 'working'],
+  ['PermissionRequest', 'blocked'],
+];
+
 function codexTarget(): HookTarget {
   return {
     configDir: () => envOrHome('CODEX_HOME', ['.codex']),
@@ -633,8 +652,12 @@ function codexTarget(): HookTarget {
       const hooksPath = join(dir, 'hooks.json');
       const hooksRoot = await readJson(hooksPath);
       const hooks = ensureHooksObject(hooksRoot);
+      // 先移除旧版 PreToolUse/PermissionRequest，再写入 herdr 的事件集。
+      for (const [event, action] of CODEX_REMOVED_STATE_EVENTS) {
+        removeHook(hooks, event, hookCommand(path, action));
+      }
       ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), { timeout: 10 });
-      for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+      for (const [event, action] of CODEX_STATE_EVENTS) {
         ensureNestedHook(hooks, event, hookCommand(path, action), { timeout: 10 });
       }
       await writeJsonKey(hooksPath, 'hooks', hooksRoot.hooks);
@@ -652,7 +675,10 @@ function codexTarget(): HookTarget {
       const hooks = hooksObjectIfPresent(hooksRoot);
       if (hooks) {
         let changed = removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
-        for (const [event, action] of LIFECYCLE_STATE_EVENTS) {
+        for (const [event, action] of CODEX_STATE_EVENTS) {
+          changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
+        }
+        for (const [event, action] of CODEX_REMOVED_STATE_EVENTS) {
           changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
         }
         if (changed) await writeJsonKey(hooksPath, 'hooks', hooks);
