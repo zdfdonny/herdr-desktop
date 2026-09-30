@@ -45,10 +45,10 @@ const SEARCH_DECORATIONS = {
  * 刻意不做 shell 转义 / 加引号：这些 pane 绝大多数跑的是 CLI coding agent
  * （Claude Code / Codex / opencode 等），它们的输入是纯文本提示词而非 shell，
  * 加引号会把引号本身带进路径、导致 agent 读不到文件。多个文件用空格分隔，
- * 与主流终端（Windows Terminal 等）的拖放行为一致。
+ * 并在末尾补一个空格作为结束分隔，与 macOS 终端拖放文件的行为一致。
  */
 function formatInsertPaths(paths: string[]): string {
-  return paths.join(' ');
+  return `${paths.join(' ')} `;
 }
 
 /**
