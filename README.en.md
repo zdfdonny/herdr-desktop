@@ -14,25 +14,9 @@
 
 ## Screenshot
 
-### Multiple agents in split panes (dark theme)
+### Dark theme
 
 ![Herdr Desktop interface](docs/screenshot.png)
-
-Projects and agents on the left (with branch badges and status dots), the current
-view's split terminals on the right, and a tab bar along the top holding several
-workspaces at once: the "PTY 重构" tab is split into three panes, while "代码审查"
-and "DSH Web" each get a tab of their own. The four sidebar dots read working
-(Claude Code), done (Codex), waiting for input (OpenCode) and idle (Gemini CLI,
-which lives in the "代码审查" tab). The in-app status toasts appear in the
-bottom-right corner.
-
-### Embedded DeepSeek Harness
-
-![Embedded DeepSeek Harness web GUI](docs/screenshot-web.png)
-
-An agent doesn't have to be a command-line program: `DeepSeek Harness` embeds its
-web GUI directly in the pane, isolated in its own session partition and following
-the app theme.
 
 ### Light theme
 

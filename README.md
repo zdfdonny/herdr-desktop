@@ -14,22 +14,9 @@
 
 ## 截图
 
-### 多 agent 分屏（深色主题）
+### 深色主题
 
 ![Herdr Desktop 界面](docs/screenshot.png)
-
-左侧是项目与 agent 列表（带分支徽标与状态点），右侧是当前视图的分屏终端，
-顶部标签栏可以同时挂好几套工作区：图中「PTY 重构」这个标签内部三格分屏，
-「代码审查」与「DSH Web」各占一个标签。侧栏四个状态点分别是工作中（Claude Code）、
-已完成（Codex）、等待输入（OpenCode）、空闲（Gemini CLI，在「代码审查」标签里），
-右下角是状态变化时弹出的应用内提示。
-
-### 内嵌 DeepSeek Harness
-
-![内嵌 DeepSeek Harness Web GUI](docs/screenshot-web.png)
-
-agent 不一定非得是命令行程序：`DeepSeek Harness` 直接把它的 Web GUI 嵌进 pane，
-用独立的 session 分区隔离，外观跟随应用主题。
 
 ### 浅色主题
 

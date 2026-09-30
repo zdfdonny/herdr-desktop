@@ -11,11 +11,9 @@
  * 正确做法：只伪造「项目」，然后通过渲染进程真实调用 spawnAgent，
  * 让 PTY 真正跑起来、xterm 真正挂载，截到的才是真界面。
  *
- * 界面已经演进到「标签页 + 视图内分屏 + 内嵌 DSH Web」，一张图塞不下，
- * 这里产出三张：
- *   docs/screenshot.png        深色主界面：标签栏 + 视图内三格分屏 + 状态 toast
- *   docs/screenshot-web.png    内嵌 DeepSeek Harness Web GUI 的 pane
- *   docs/screenshot-light.png  浅色主题下的主界面
+ * 产出两张图：
+ *   docs/screenshot.png        深色主界面：图标栏侧栏 + 标签栏 + 视图内三格分屏 + 状态 toast
+ *   docs/screenshot-light.png  同一套界面的浅色主题
  *
  * 两个关键技巧：
  *
@@ -29,12 +27,8 @@
  *
  * 2. 状态切换靠「信号文件」，而不是 sleep 猜时间。
  *    每个演示 pane 先循环打印「工作中」帧，直到脚本创建对应信号文件，才切到
- *    最终帧。这样状态迁移时机完全由脚本决定，不受 dsh web 启动耗时影响；
+ *    最终帧。这样状态迁移时机完全由脚本决定，不受进程启动耗时影响；
  *    toast 也保证在截图瞬间还没消失（NotificationToasts 自动消失是 8s）。
- *
- * 注意：内嵌 web pane 必须在 reload **之后**再 spawn —— 认证链接只经
- * `web:ready` 下发并缓存在渲染进程的 webStore 里（刻意不持久化），reload 后
- * 拿不到链接就只会显示「正在启动」。
  *
  * 用法：
  *   npx electron-vite build
@@ -73,7 +67,6 @@ const SIGNAL_DIR = path.join(TMP_USER_DATA, 'signals');
 const LOG_PATH = path.join(os.tmpdir(), 'herdr-shot.log');
 const DOCS_DIR = path.join(__dirname, '..', 'docs');
 const OUT_MAIN = path.join(DOCS_DIR, 'screenshot.png');
-const OUT_WEB = path.join(DOCS_DIR, 'screenshot-web.png');
 const OUT_LIGHT = path.join(DOCS_DIR, 'screenshot-light.png');
 
 /** 布局持久化的 key，需与 src/stores/layoutStore.ts 的 STORAGE_KEY 一致。 */
@@ -273,9 +266,9 @@ function demoCommand(pane, signalPath) {
  * 形状必须满足 layoutStore 的 isValidTree：split 需要 id/orientation/ratio/两个
  * 子节点，pane 叶子需要 id/paneId，空位需要 id/projectId。
  *
- * 第三个视图刻意留一个空位：reconcile 会用「尚未放置的运行态 pane」填它，
- * 而稍后才 spawn 的 DSH Web pane 正是唯一未放置的 pane —— 于是它落在名为
- * 「DSH Web」的标签里，而不需要 reload（reload 会丢掉 webview 的认证链接）。
+ * 两个视图：第一个是三格分屏的工作区（截图主体），第二个放一个独立 agent，
+ * 用来体现「标签即工作区」。注意别放纯空位的视图 —— loadLayout 会把没有任何
+ * pane 的视图清掉，标签栏根本不会出现。
  */
 function buildLayout(paneIds) {
   const pane = (paneId, id) => ({ id, type: 'pane', paneId });
@@ -302,7 +295,6 @@ function buildLayout(paneIds) {
         },
       },
       { id: 'v-shot-2', name: '代码审查', tree: pane(paneIds.gemini, 'n-shot-6') },
-      { id: 'v-shot-3', name: 'DSH Web', tree: { id: 'n-shot-7', type: 'empty', projectId: 'p1' } },
     ],
     activeViewId: 'v-shot-1',
   };
@@ -340,26 +332,50 @@ async function reloadRenderer(win) {
   await sleep(1500);
 }
 
-/** 轮询渲染进程里的布尔表达式，直到为真或超时。 */
-async function pollUntil(win, expression, timeoutMs, intervalMs = 500) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      if (await exec(win, expression)) return true;
-    } catch {
-      /* 页面正在切换时可能抛错，继续轮询 */
-    }
-    await sleep(intervalMs);
-  }
-  return false;
-}
-
-/** 截图并落盘。 */
+/**
+ * 截图并落盘。
+ *
+ * capturePage 在窗口被别的窗口盖住（或被系统判定为不可见）时会抛
+ * `UnknownVizError` —— Viz 合成器压根不产帧。所以这里：先把窗口抬到最前、
+ * 关掉后台节流，再重试若干次；仍然失败就退回 CDP 的 Page.captureScreenshot，
+ * 它取的是渲染进程自己的帧，不依赖窗口是否可见。
+ */
 async function capture(win, out) {
-  const image = await win.webContents.capturePage();
-  fs.writeFileSync(out, image.toPNG());
-  const { width, height } = image.getSize();
-  log(`已写出 ${path.basename(out)} ${width}x${height} ${fs.statSync(out).size}B`);
+  win.setAlwaysOnTop(true);
+  win.show();
+  win.focus();
+  win.webContents.setBackgroundThrottling(false);
+  await sleep(900);
+
+  let image = null;
+  for (let attempt = 1; attempt <= 4 && !image; attempt += 1) {
+    try {
+      const shot = await win.webContents.capturePage();
+      if (shot.isEmpty()) log(`截图第 ${attempt} 次拿到空图，重试`);
+      else image = shot;
+    } catch (error) {
+      log(`截图第 ${attempt} 次失败：${error && error.message ? error.message : String(error)}`);
+    }
+    if (!image) await sleep(1200);
+  }
+
+  if (image) {
+    fs.writeFileSync(out, image.toPNG());
+    const { width, height } = image.getSize();
+    log(`已写出 ${path.basename(out)} ${width}x${height} ${fs.statSync(out).size}B`);
+  } else {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach('1.3');
+    const result = await dbg.sendCommand('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    fs.writeFileSync(out, Buffer.from(result.data, 'base64'));
+    log(`已写出 ${path.basename(out)}（CDP 回退）${fs.statSync(out).size}B`);
+  }
+
+  win.setAlwaysOnTop(false);
 }
 
 /** 读取标签栏现状，用于确认布局真的生效。 */
@@ -494,7 +510,7 @@ async function main() {
     await reloadRenderer(win);
     tabs = await readTabs(win);
     log(`标签栏（第 ${attempt} 次）：${JSON.stringify(tabs)}`);
-    if (tabs.length === 3 && tabs[0].name === 'PTY 重构' && tabs[2].name === 'DSH Web') break;
+    if (tabs.length === 2 && tabs[0].name === 'PTY 重构' && tabs[1].name === '代码审查') break;
   }
 
   /* --- 4. 发信号：所有 pane 切到最终帧 --- */
@@ -505,47 +521,10 @@ async function main() {
   await sleep(3200);
   log('最终帧已输出');
 
-  /* --- 5. 主界面截图 --- */
+  /* --- 5. 深色主界面截图 --- */
   await capture(win, OUT_MAIN);
 
-  /* --- 6. DSH Web pane：必须放在 reload 之后 --- */
-  const webPaneId = await exec(
-    win,
-    `new Promise((resolve) => {
-       const api = window.herdrDesktop;
-       const timer = setTimeout(() => resolve(null), 90000);
-       const off = api.onMessage((message) => {
-         if (message.type !== 'web:ready') return;
-         clearTimeout(timer);
-         off();
-         resolve(message.payload.paneId);
-       });
-       api.sendControl({
-         type: 'control:spawn-web-agent',
-         version: 1,
-         payload: { projectId: 'p1', label: 'DeepSeek Harness' },
-       });
-     })`,
-  );
-  if (!webPaneId) throw new Error('dsh web 未在 90s 内就绪');
-  log(`web pane 就绪：${webPaneId}`);
-
-  // 等 <webview> 把 DSH Web GUI 真正渲染出来
-  const loaded = await pollUntil(
-    win,
-    `(() => {
-       const view = document.querySelector('webview');
-       if (!view) return false;
-       try { return view.isLoading() === false; } catch { return false; }
-     })()`,
-    60000,
-  );
-  log(`webview 加载完成=${loaded}`);
-  await sleep(4000);
-  log(`web 标签栏：${JSON.stringify(await readTabs(win))}`);
-  await capture(win, OUT_WEB);
-
-  /* --- 7. 浅色主题下的终端视图 --- */
+  /* --- 6. 浅色主题：同一套界面换主题再截一张 --- */
   await exec(
     win,
     `window.herdrDesktop.sendControl({
@@ -555,9 +534,8 @@ async function main() {
      })`,
   );
   /*
-   * 切回第一个标签：直接点标签，而不是只发 focus-pane。
-   * 焦点跟随只保证 focusedPaneId 落到该视图，视图激活并不总会跟着走
-   * （第一次截图里画面就停在 DSH Web 上），点标签是确定有效的用户动作。
+   * 点一下第一个标签并聚焦 Claude：确认当前视图就是那套三格分屏，
+   * 侧栏高亮也与画面一致（点标签是确定有效的用户动作，比只发 focus-pane 稳）。
    */
   const switched = await exec(
     win,
@@ -568,7 +546,6 @@ async function main() {
      })()`,
   );
   log(`切回终端标签=${switched}`);
-  // 再聚焦 Claude，让侧栏高亮与当前视图一致
   await exec(
     win,
     `window.herdrDesktop.sendControl({
@@ -577,16 +554,17 @@ async function main() {
        payload: { paneId: ${JSON.stringify(paneIds.claude)} },
      })`,
   );
-  await sleep(2500);
+  // 等主题切换生效：xterm 要重建 WebGL addon，toast 也还在生命周期内
+  await sleep(3000);
   await capture(win, OUT_LIGHT);
 
   /*
    * 收尾：主动关掉所有 pane。
-   * app.exit() 不会走 before-quit，PTY 与 dsh web 子进程不会被自动回收，
-   * 会留下若干孤儿 powershell / node 进程（还会占住 stdout 句柄让调用方
+   * app.exit() 不会走 before-quit，PTY 子进程不会被自动回收，
+   * 会留下若干孤儿 powershell 进程（还会占住 stdout 句柄让调用方
    * 迟迟等不到 EOF）。走正常关 pane 路径让运行时结束整棵进程树。
    */
-  const allPaneIds = [...Object.values(paneIds), webPaneId];
+  const allPaneIds = [...Object.values(paneIds)];
   await exec(
     win,
     `(() => {
