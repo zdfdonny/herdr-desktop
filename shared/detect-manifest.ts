@@ -6,7 +6,7 @@
  */
 
 import type { AgentDetectManifest, DetectedState } from './state';
-import { evaluateManifest } from './detect/engine';
+import { evaluateManifest, type ManifestDetection } from './detect/engine';
 import { MANIFESTS } from './detect/manifests';
 
 // 供测试直接校验 manifest 注册表与求值引擎
@@ -155,18 +155,18 @@ export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(
 );
 
 /**
- * 从一段终端快照文本 + 已识别 agent 名推断状态。
+ * 检测并返回完整信号（state + visible_* + skip_state_update），
+ * 对应 herdr 的 `detect_agent_with_osc`（返回 AgentDetection）。
  *
- * 简化实现：优先匹配 blocked → working → done 的关键词，否则回落 idle/unknown。
- * 输入应来自底部缓冲（见 agent-detector 的 bottomBuffer），
- * 并尽量用词边界与更具体的「需要输入」信号降低误报。
+ * - 有专属 manifest 的 agent：visible_* 由命中规则的标志精确返回；
+ * - 无 manifest 的 agent：走通用关键词兜底，visible_* 由状态近似推导。
  */
-export function detectStatus(
+export function detectWithSignals(
   agentName: string | null,
   snapshot: string,
   oscTitle = '',
   oscProgress = '',
-): DetectedState {
+): ManifestDetection {
   const lower = snapshot.toLowerCase();
 
   // 特定 agent 的专属 manifest（每 agent 一个文件，见 shared/detect/manifests/）。
@@ -176,7 +176,7 @@ export function detectStatus(
       screen: snapshot,
       oscTitle,
       oscProgress,
-    }).state;
+    });
   }
 
   // blocked：需要人工输入/确认的信号（含各 agent 的权限确认文案）
@@ -188,7 +188,7 @@ export function detectStatus(
       lower,
     )
   ) {
-    return 'blocked';
+    return { state: 'blocked', visibleIdle: false, visibleBlocker: true, visibleWorking: false, skipStateUpdate: false };
   }
 
   /*
@@ -204,10 +204,25 @@ export function detectStatus(
     ) ||
     /(?:■|⬝){4,}/.test(snapshot)
   ) {
-    return 'working';
+    return { state: 'working', visibleIdle: false, visibleBlocker: false, visibleWorking: true, skipStateUpdate: false };
   }
 
-  return agentName ? 'idle' : 'unknown';
+  const state: DetectedState = agentName ? 'idle' : 'unknown';
+  return { state, visibleIdle: false, visibleBlocker: false, visibleWorking: false, skipStateUpdate: false };
+}
+
+/**
+ * 从一段终端快照文本 + 已识别 agent 名推断状态（只返回状态，忽略 visible 信号）。
+ *
+ * 输入应来自底部缓冲（见 agent-detector 的 bottomBuffer）。
+ */
+export function detectStatus(
+  agentName: string | null,
+  snapshot: string,
+  oscTitle = '',
+  oscProgress = '',
+): DetectedState {
+  return detectWithSignals(agentName, snapshot, oscTitle, oscProgress).state;
 }
 
 /** 从终端标题/快照中粗略识别 agent 名。 */

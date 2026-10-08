@@ -5,7 +5,7 @@
  * 使用 shared/detect-manifest 的声明式规则。
  */
 
-import { detectStatus, detectAgentName, detectSessionId, parseAgentLabel } from '../../shared/detect-manifest';
+import { detectWithSignals, detectAgentName, detectSessionId, parseAgentLabel } from '../../shared/detect-manifest';
 import { ScreenBuffer } from '../../shared/screen-buffer';
 import type { DetectedState } from '../../shared/state';
 
@@ -151,20 +151,18 @@ export function detectFromSnapshot(
   // antigravity 等 TUI 底部不打印品牌名，靠启动命令识别；纯 shell 命令 parse 为 null。
   const commandAgent = fallbackName ? parseAgentLabel(fallbackName) : null;
   const detectionAgent = commandAgent ?? detectedName;
-  const status = detectStatus(detectionAgent, bottom, oscTitle, oscProgress);
+  const detection = detectWithSignals(detectionAgent, bottom, oscTitle, oscProgress);
+  const status = detection.state;
   const name = detectedName ?? fallbackName ?? null;
   const title = extractTitle(currentScreen);
   // 会话 id 用全量缓冲兜底：它通常在会话启动时打印一次，随后滚出当前屏幕。
   const sessionId = detectSessionId(normalizeCarriageReturns(stripAnsi(snapshot)));
-  /*
-   * 可见信号：由状态近似推导（manifest 引擎可按命中规则返回更细的 visible_*，
-   * 这里简化为 status 映射；blocked→visibleBlocker、working→visibleWorking、
-   * idle→visibleIdle）。
-   */
-  const visibleBlocker = status === 'blocked';
-  const visibleIdle = status === 'idle';
-  const visibleWorking = status === 'working';
-  const skipStateUpdate = false;
+  // 可见信号由 manifest 命中规则精确返回（对应 herdr AgentDetection.visible_*）；
+  // 无 manifest 的 agent 走通用兜底，visible_* 由状态近似推导。
+  const visibleBlocker = detection.visibleBlocker;
+  const visibleIdle = detection.visibleIdle;
+  const visibleWorking = detection.visibleWorking;
+  const skipStateUpdate = detection.skipStateUpdate;
   return {
     name,
     detectedName,

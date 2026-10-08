@@ -417,5 +417,20 @@ function setHook(t, source, agent, state, seq, now) {
   check('16.11 kilo esc interrupt → working', detectStatus('kilo', 'esc interrupt', '', ''), 'working');
 }
 
+// ---------------------------------------------------------------------------
+// 17. visible 信号精确性（manifest 命中规则的 visible_* 标志，非状态近似）
+// ---------------------------------------------------------------------------
+{
+  // codex weak_blocker：state=blocked 但无 visibleBlocker（不应覆盖 hook 状态）
+  const weak = detectFromSnapshot('[y/n]\n', 'codex');
+  check('17.1 codex weak_blocker state=blocked', weak.status, 'blocked');
+  check('17.2 codex weak_blocker 无 visibleBlocker', weak.visibleBlocker, false);
+
+  // codex live_strong_blocker：state=blocked 且 visibleBlocker=true（可见阻断）
+  const strong = detectFromSnapshot('press enter to confirm or esc to cancel\n', 'codex');
+  check('17.3 codex strong_blocker state=blocked', strong.status, 'blocked');
+  check('17.4 codex strong_blocker visibleBlocker=true', strong.visibleBlocker, true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
