@@ -159,7 +159,9 @@ export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(
  * 对应 herdr 的 `detect_agent_with_osc`（返回 AgentDetection）。
  *
  * - 有专属 manifest 的 agent：visible_* 由命中规则的标志精确返回；
- * - 无 manifest 的 agent：走通用关键词兜底，visible_* 由状态近似推导。
+ * - 无 manifest 的 agent（omp/mastracode）：对应 herdr fallback_explain——
+ *   已知 agent 回落 idle、未知 agent 回落 unknown，**不做屏幕关键词猜测**
+ *   （没有 manifest 就没有可靠的屏幕证据，状态交给 hook 权威）。
  */
 export function detectWithSignals(
   agentName: string | null,
@@ -167,8 +169,6 @@ export function detectWithSignals(
   oscTitle = '',
   oscProgress = '',
 ): ManifestDetection {
-  const lower = snapshot.toLowerCase();
-
   // 特定 agent 的专属 manifest（每 agent 一个文件，见 shared/detect/manifests/）。
   // 避免通用关键词误命中常驻界面（如 antigravity idle footer / claude 响应正文）。
   if (agentName && MANIFESTS[agentName]) {
@@ -179,34 +179,7 @@ export function detectWithSignals(
     });
   }
 
-  // blocked：需要人工输入/确认的信号（含各 agent 的权限确认文案）
-  if (
-    /\b(?:blocked|waiting for (?:input|you|confirmation|approval)|needs (?:your )?(?:attention|input|confirmation)|press (?:enter|any key)|approve\b|permission (?:requested|required)|\[y\/n\]|\(y\/n\)|allow\?|deny\?)\b/.test(
-      lower,
-    ) ||
-    /\b(?:permission required|action required|enter to confirm|press enter to confirm|allow command\?|yes \(y\))\b/.test(
-      lower,
-    )
-  ) {
-    return { state: 'blocked', visibleIdle: false, visibleBlocker: true, visibleWorking: false, skipStateUpdate: false };
-  }
-
-  /*
-   * working：各 agent 的工作中信号。不只有英文关键词，还覆盖：
-   * - opencode 等：esc/ctrl+c/press esc to interrupt
-   * - codex 等：`(12s • … to interrupt)` 计时后缀
-   * - opencode 的进度条 ■■■■ / ⬝⬝⬝⬝
-   */
-  if (
-    /\b(?:working|thinking|generating|in progress|running)\b/.test(lower) ||
-    /(?:esc (?:again )?to interrupt|ctrl\+c to interrupt|press esc to interrupt|to interrupt\))/.test(
-      lower,
-    ) ||
-    /(?:■|⬝){4,}/.test(snapshot)
-  ) {
-    return { state: 'working', visibleIdle: false, visibleBlocker: false, visibleWorking: true, skipStateUpdate: false };
-  }
-
+  // fallback（对应 herdr fallback_explain）：已知 agent → idle，未知 → unknown。
   const state: DetectedState = agentName ? 'idle' : 'unknown';
   return { state, visibleIdle: false, visibleBlocker: false, visibleWorking: false, skipStateUpdate: false };
 }

@@ -432,5 +432,14 @@ function setHook(t, source, agent, state, seq, now) {
   check('17.4 codex strong_blocker visibleBlocker=true', strong.visibleBlocker, true);
 }
 
+// ---------------------------------------------------------------------------
+// 18. 无 manifest 的 agent 回落 idle（对应 herdr fallback_explain：不猜屏幕关键词）
+// ---------------------------------------------------------------------------
+{
+  check('18.1 omp 无 manifest → idle（忽略 working 关键词）', detectStatus('omp', 'Working...', '', ''), 'idle');
+  check('18.2 mastracode 无 manifest → idle（忽略 blocked 关键词）', detectStatus('mastracode', 'blocked waiting for confirmation', '', ''), 'idle');
+  check('18.3 未知 agent → unknown', detectStatus(null, 'Working...', '', ''), 'unknown');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
