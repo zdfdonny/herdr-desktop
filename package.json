@@ -2,7 +2,7 @@
   "name": "herdr-desktop",
   "productName": "Herdr",
   "desktopName": "herdr-desktop.desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Multi-agent management desktop app - the runtime your coding agents live on.",
   "license": "MIT",
   "author": {
