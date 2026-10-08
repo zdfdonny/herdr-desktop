@@ -6,7 +6,7 @@
  */
 
 import { create } from 'zustand';
-import type { SessionState, Project, AgentState } from '@shared/state';
+import type { SessionState, Project, AgentInfo } from '@shared/state';
 import { compareAgentsByCreatedAt } from './agentSort';
 
 interface SessionStore {
@@ -43,11 +43,11 @@ export interface ProjectGroup {
 }
 
 /**
- * 侧栏 agent 行的视图模型：AgentState + 来自 pane 的运行标记。
+ * 侧栏 agent 行的视图模型：AgentInfo + 来自 pane 的运行标记。
  *
  * running=false 表示这是恢复出的（进程已死的）pane，行会显示停止态。
  */
-export interface ProjectGroupAgent extends AgentState {
+export interface ProjectGroupAgent extends AgentInfo {
   running: boolean;
 }
 

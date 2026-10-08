@@ -1,0 +1,47 @@
+/**
+ * qodercli manifest —— 对应 herdr `src/detect/manifests/qodercli.toml`。
+ */
+
+import type { AgentManifest } from '../engine';
+
+export const qodercliManifest: AgentManifest = {
+  id: 'qodercli',
+  rules: [
+    {
+      id: 'confirmation_or_input_blocker',
+      state: 'blocked',
+      priority: 300,
+      region: 'whole_recent',
+      visibleBlocker: true,
+      any: [
+        {
+          contains: ['waiting for user confirmation'],
+          any: [{ contains: ['yes'] }, { contains: ['no'] }, { contains: ['allow'] }, { contains: ['reject'] }],
+        },
+        { contains: ['awaiting approval'], any: [{ contains: ['allow'] }, { contains: ['reject'] }] },
+        { contains: ['permission required'] },
+        { contains: ['allow once or always?'] },
+        { contains: ['asking user'] },
+        { contains: ['enter your response'] },
+        { contains: ['review your answers:'] },
+        { contains: ['shell awaiting input'] },
+      ],
+    },
+    {
+      id: 'cancel_hint_working',
+      state: 'working',
+      priority: 100,
+      region: 'whole_recent',
+      visibleWorking: true,
+      contains: ['(esc to cancel,'],
+    },
+    {
+      id: 'spinner_working',
+      state: 'working',
+      priority: 90,
+      region: 'whole_recent',
+      visibleWorking: true,
+      lineRegex: [String.raw`^\s*[\u2800-\u28ff]\s+.*\p{L}`],
+    },
+  ],
+};

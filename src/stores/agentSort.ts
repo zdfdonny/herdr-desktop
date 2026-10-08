@@ -7,17 +7,17 @@
  * 2. 便于单独测试排序规则（见 scripts/test-agent-sort.mjs）。
  */
 
-import type { AgentState } from '@shared/state';
+import type { AgentInfo } from '@shared/state';
 
 /** 创建时间排序共用的最小字段集。 */
-type SortableAgent = Pick<AgentState, 'createdAt'> & { paneId: string };
+type SortableAgent = Pick<AgentInfo, 'createdAt'> & { paneId: string };
 
 /**
  * 侧栏 agent 行的显示名。
  *
  * 与 AgentRow 渲染时用的表达式保持一致。
  */
-export function agentDisplayName(agent: Pick<AgentState, 'label' | 'name'>): string {
+export function agentDisplayName(agent: Pick<AgentInfo, 'label' | 'name'>): string {
   return agent.label ?? agent.name ?? 'agent';
 }
 

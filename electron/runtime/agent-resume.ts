@@ -272,6 +272,17 @@ export function resumePlanForPane(
 }
 
 /**
+ * 该 source/agent/sessionRef 是否能生成恢复命令（对应 herdr `plan(...).is_some()`）。
+ *
+ * 供终端状态机的会话所有权仲裁使用（foreground_agent_confirms_session_owner）：
+ * 只有「官方来源 + 有对应恢复 tail」的组合才被认定为该会话的合法持有者。
+ */
+export function canResume(source: string, agent: string, sessionRef: AgentSessionRef): boolean {
+  if (!isOfficialAgentSource(source, agent)) return false;
+  return resumeTail(agent, sessionRef) !== null;
+}
+
+/**
  * 按 agent 分型的恢复命令尾（不含 argv[0]）。
  *
  * 直接对应 herdr `agent_resume.rs` 的 `plan` 表：

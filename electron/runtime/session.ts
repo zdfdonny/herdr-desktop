@@ -1,8 +1,10 @@
 /**
  * 会话拓扑管理 —— 对应 herdr `src/workspace/` + `src/app/state.rs`。
  *
- * 维护 project / pane / agent 的结构状态，对外产出纯 SessionState 快照。
- * 本模块只持有数据（SessionState），不持有 PTY 句柄（由 PtyManager 持有）。
+ * 维护 project / pane 的结构状态；agent 的**状态**（status/seq/completion）不在此落库，
+ * 而是由每个 pane 的 `TerminalState` 仲裁后在 `snapshot()` 里投影（对应 herdr 的
+ * `AgentInfo` 由 terminal state + pane state 投影而来）。本模块只持有数据，
+ * 不持有 PTY 句柄（由 PtyManager 持有）。
  *
  * 层级：Project（项目）→ Agent（agent pane）。
  * 必须先添加项目，才能在该项目内创建 agent。
@@ -13,12 +15,15 @@ import type {
   SessionState,
   Project,
   PaneState,
-  AgentState,
+  AgentInfo,
   PaneAgentSession,
   AddProjectParams,
   SpawnAgentParams,
   SpawnWebAgentParams,
+  AgentStatus,
 } from '../../shared/state';
+import { paneAgentStatus, isCompletionTransition } from '../../shared/agent-status';
+import { TerminalState, type TerminalStateMutation } from './terminal-state';
 
 /** Web agent 的默认展示标签。 */
 const WEB_AGENT_LABEL = 'DeepSeek Harness';
@@ -27,31 +32,40 @@ const WEB_AGENT_NAME = 'dsh';
 
 let projectCounter = 0;
 let paneCounter = 0;
-let stateChangeCounter = 0;
 
-function nextId(prefix: string): string {
-  const n = counterFor(prefix);
-  return `${prefix}-${n}-${Date.now().toString(36)}`;
+function nextId(prefix: 'project' | 'pane'): string {
+  if (prefix === 'project') {
+    projectCounter += 1;
+    return `project-${projectCounter}-${Date.now().toString(36)}`;
+  }
+  paneCounter += 1;
+  return `pane-${paneCounter}-${Date.now().toString(36)}`;
 }
 
-function counterFor(prefix: string): number {
-  switch (prefix) {
-    case 'project':
-      projectCounter += 1;
-      return projectCounter;
-    case 'pane':
-      paneCounter += 1;
-      return paneCounter;
-    default:
-      stateChangeCounter += 1;
-      return stateChangeCounter;
-  }
+/**
+ * agent 的「身份/展示」字段（对齐 herdr 里 pane.agent / terminal.agent_name / 元数据层）。
+ *
+ * 状态（status/seq/completion）**不**存这里，由 TerminalState 仲裁后投影。
+ * - name：检测到的显示名（检测不到时回退到启动命令，见 detectFromSnapshot）。
+ * - title：终端标题。
+ * - label：用户创建时指定的标签（无则 null；注意与 PaneState.label 的「命令兜底」不同）。
+ * - createdAt：创建时间，用于项目内稳定排序。
+ */
+interface AgentMeta {
+  name: string | null;
+  title: string | null;
+  label: string | null;
+  createdAt: number;
 }
 
 export class Session {
   private projects = new Map<string, Project>();
   private panes = new Map<string, PaneState>();
-  private agents = new Map<string, AgentState>();
+  private terminals = new Map<string, TerminalState>();
+  /** 未看完成标记（对应 herdr `pane.seen` 的补集；不落盘，恢复后一律视为已看）。 */
+  private seen = new Map<string, boolean>();
+  private meta = new Map<string, AgentMeta>();
+  private nextStateChangeSeq = 0;
   private revision = 0;
   private focusedPaneId: string | null = null;
 
@@ -83,7 +97,9 @@ export class Session {
 
     for (const paneId of paneIds) {
       this.panes.delete(paneId);
-      this.agents.delete(paneId);
+      this.terminals.delete(paneId);
+      this.seen.delete(paneId);
+      this.meta.delete(paneId);
     }
     this.projects.delete(projectId);
 
@@ -127,7 +143,6 @@ export class Session {
       label: params.label ?? params.command,
       cwd: params.cwd ?? project.path,
       focused: true,
-      // 记录启动命令，重启应用后可据此一键恢复
       command: params.command,
       args: params.args ?? [],
       running: true,
@@ -135,30 +150,16 @@ export class Session {
       agentSession: null,
     };
     this.panes.set(paneId, pane);
-
-    const agent: AgentState = {
-      paneId,
-      projectId: project.projectId,
+    this.terminals.set(paneId, new TerminalState(paneId));
+    this.seen.set(paneId, true);
+    this.meta.set(paneId, {
       name: null,
-      label: params.label ?? null,
       title: null,
-      status: 'unknown',
-      stateChangeSeq: 0,
-      focused: true,
+      label: params.label ?? null,
       createdAt: Date.now(),
-    };
-    this.agents.set(paneId, agent);
+    });
 
-    // 取消其他 pane 的 focused
-    for (const p of this.panes.values()) {
-      if (p.paneId !== paneId) {
-        p.focused = false;
-        const a = this.agents.get(p.paneId);
-        if (a) a.focused = false;
-      }
-    }
-    this.focusedPaneId = paneId;
-    // 新建 agent 时自动展开所属项目分组
+    this.setFocus(paneId);
     project.collapsed = false;
     this.bump();
     return pane;
@@ -168,7 +169,7 @@ export class Session {
    * 在指定项目内创建 DeepSeek Harness Web agent。
    *
    * 与 createAgent（PTY）不同：web agent 没有终端可检测，
-   * 直接置 name='dsh'、status='idle'；启动命令固定为 `dsh web` 供恢复重放。
+   * 因此 TerminalState 的 fallback 直接置 idle；启动命令固定为 `dsh web` 供恢复重放。
    * 项目不存在时抛错（与 createAgent 一致）。
    */
   createWebAgent(params: SpawnWebAgentParams): PaneState {
@@ -192,29 +193,20 @@ export class Session {
       agentSession: null,
     };
     this.panes.set(paneId, pane);
-
-    const agent: AgentState = {
-      paneId,
-      projectId: project.projectId,
+    const terminal = new TerminalState(paneId);
+    // web pane 无终端检测，fallback 直接 idle（保持既有「web agent 常驻 idle」语义）。
+    terminal.fallbackState = 'idle';
+    terminal.state = 'idle';
+    this.terminals.set(paneId, terminal);
+    this.seen.set(paneId, true);
+    this.meta.set(paneId, {
       name: WEB_AGENT_NAME,
-      label: params.label ?? null,
       title: null,
-      status: 'idle',
-      stateChangeSeq: 0,
-      focused: true,
+      label: params.label ?? null,
       createdAt: Date.now(),
-    };
-    this.agents.set(paneId, agent);
+    });
 
-    // 取消其他 pane 的 focused
-    for (const p of this.panes.values()) {
-      if (p.paneId !== paneId) {
-        p.focused = false;
-        const a = this.agents.get(p.paneId);
-        if (a) a.focused = false;
-      }
-    }
-    this.focusedPaneId = paneId;
+    this.setFocus(paneId);
     project.collapsed = false;
     this.bump();
     return pane;
@@ -239,27 +231,32 @@ export class Session {
   }
 
   /**
-   * 记录 pane 的 agent 会话引用（官方集成上报，对应 herdr 的 hook 上报）。
+   * 直接持久化 pane 的 agent 会话引用（对应 herdr `set_persisted_agent_session`）。
    *
-   * 调用方（router）负责校验来源与会话值，这里只做幂等落库：
-   * 相同引用不重复触发结构变更，避免上报洪峰反复刷快照。
+   * 用于「非 hook 权威」的会话来源：从启动参数反推（如 `codex resume <id>`）或
+   * 终端输出兜底识别。幂等落库：相同引用不重复触发结构变更。
    */
   setPaneAgentSession(paneId: string, session: PaneAgentSession | null): void {
-    const pane = this.panes.get(paneId);
-    if (!pane) return;
-    const current = pane.agentSession ?? null;
-    if (current === session) return;
-    if (
-      current &&
-      session &&
-      current.source === session.source &&
-      current.agent === session.agent &&
-      current.kind === session.kind &&
-      current.value === session.value
-    ) {
-      return;
-    }
-    pane.agentSession = session;
+    const terminal = this.terminals.get(paneId);
+    if (!terminal) return;
+    const current = terminal.currentSessionForPersistence();
+    const same =
+      current === null && session === null
+        ? true
+        : current !== null &&
+          session !== null &&
+          current.source === session.source &&
+          current.agent === session.agent &&
+          current.kind === session.kind &&
+          current.value === session.value;
+    if (same) return;
+    terminal.persistedAgentSession = session
+      ? {
+          source: session.source,
+          agent: session.agent,
+          sessionRef: { kind: session.kind, value: session.value },
+        }
+      : null;
     this.bump();
   }
 
@@ -268,9 +265,9 @@ export class Session {
     return this.panes.get(paneId);
   }
 
-  /** 读取单个 agent 的当前状态（不存在返回 null）。 */
-  getAgentStatus(paneId: string): AgentState['status'] | null {
-    return this.agents.get(paneId)?.status ?? null;
+  /** 读取 pane 的终端状态机（不存在返回 undefined）。 */
+  getTerminal(paneId: string): TerminalState | undefined {
+    return this.terminals.get(paneId);
   }
 
   /** 该 pane 是否当前聚焦（用于 done/seen 判定）。 */
@@ -278,10 +275,26 @@ export class Session {
     return this.focusedPaneId === paneId;
   }
 
+  /**
+   * 更新 agent 的检测展示字段（name/title，对应 herdr 元数据/presentation 层）。
+   *
+   * 状态不在这里改：状态一律经 TerminalState 仲裁后在 snapshot 投影。
+   */
+  updateAgentPresentation(paneId: string, name: string | null, title: string | null): void {
+    const meta = this.meta.get(paneId);
+    if (!meta) return;
+    if (meta.name === name && meta.title === title) return;
+    meta.name = name;
+    meta.title = title;
+    this.bump();
+  }
+
   closePane(paneId: string): void {
     const closing = this.panes.get(paneId);
     this.panes.delete(paneId);
-    this.agents.delete(paneId);
+    this.terminals.delete(paneId);
+    this.seen.delete(paneId);
+    this.meta.delete(paneId);
     if (this.focusedPaneId === paneId) {
       /*
        * 焦点转移按「项目」进行，而不是随手交给 Map 里第一个 pane：
@@ -300,13 +313,11 @@ export class Session {
   /**
    * 从持久化快照恢复会话（应用启动时调用）。
    *
-   * 恢复的是**元数据**：项目、pane、agent 的结构关系。
+   * 恢复的是**元数据**：项目、pane、agent 的结构关系与身份字段（name/label/title/createdAt）。
    * PTY 进程不可能跨重启存活，因此所有 pane 的 running 一律置为 false，
-   * agent 状态归为 idle（保留 label/title 供辨识）。
+   * agent 状态归为 idle（TerminalState 新建、fallback unknown；web pane fallback idle）。
    *
-   * **不恢复聚焦**：启动时不选中任何 agent，主区域显示初始空状态；
-   * 用户点击侧栏中的 agent 行才会选中并自动恢复（见 router.focusPane）。
-   * 持久化文件里的 focusedPaneId 因此成为被忽略的遗留字段。
+   * **不恢复聚焦**：启动时不选中任何 agent，主区域显示初始空状态。
    *
    * 防御性归一化：旧版本 session.json 缺 command 字段的 pane 无法重启，直接丢弃。
    */
@@ -323,7 +334,7 @@ export class Session {
       });
     }
 
-    // pane：只恢复带 command 的（可重启）；running 一律 false
+    // pane + terminal + seen：只恢复带 command 的（可重启）；running 一律 false
     for (const pane of saved.panes ?? []) {
       if (!pane?.paneId || !pane.command) continue;
       if (!this.projects.has(pane.projectId)) continue; // 孤儿 pane，丢弃
@@ -331,29 +342,49 @@ export class Session {
         ...pane,
         args: pane.args ?? [],
         running: false,
-        /*
-         * 重启计数按「本次会话内」计，恢复时归零。
-         * 不归零也不会出错（渲染端只比较前后值是否变化），
-         * 但归零让语义保持单纯：它数的是这次运行期间重启了几次。
-         */
         restartSeq: 0,
         focused: false,
-        // 旧版本快照缺 kind/webUrl：按 PTY 处理，webUrl 归 null
         kind: pane.kind === 'web' ? 'web' : 'pty',
         webUrl: typeof pane.webUrl === 'string' ? pane.webUrl : null,
-        agentSession: normalizePaneAgentSession(pane.agentSession),
+      });
+      this.seen.set(pane.paneId, true);
+
+      const terminal = new TerminalState(pane.paneId);
+      if (pane.kind === 'web') {
+        terminal.fallbackState = 'idle';
+        terminal.state = 'idle';
+      }
+      // 恢复持久化的会话引用（来源合法性在生成恢复计划时再判）
+      const session = normalizePaneAgentSession(pane.agentSession);
+      if (session) {
+        terminal.persistedAgentSession = {
+          source: session.source,
+          agent: session.agent,
+          sessionRef: { kind: session.kind, value: session.value },
+        };
+      }
+      this.terminals.set(pane.paneId, terminal);
+    }
+
+    // agent 身份/展示字段：从旧快照的 agents 里读回（status 已过时，丢弃）
+    for (const agent of saved.agents ?? []) {
+      if (!agent?.paneId || !this.panes.has(agent.paneId)) continue;
+      this.meta.set(agent.paneId, {
+        name: typeof agent.name === 'string' ? agent.name : null,
+        title: typeof agent.title === 'string' ? agent.title : null,
+        label: typeof agent.label === 'string' ? agent.label : null,
+        createdAt: typeof agent.createdAt === 'number' ? agent.createdAt : Date.now(),
       });
     }
 
-    // agent：跟随 pane 恢复；状态归 idle（快照里的状态已过时）
-    for (const agent of saved.agents ?? []) {
-      if (!agent?.paneId || !this.panes.has(agent.paneId)) continue;
-      this.agents.set(agent.paneId, {
-        ...agent,
-        status: 'idle',
-        focused: false,
-        // 旧版本快照缺 createdAt：兜底为当前时间，保证字段始终存在
-        createdAt: typeof agent.createdAt === 'number' ? agent.createdAt : Date.now(),
+    // 兜底：pane 存在但旧快照缺 agents 条目时，补一份空 meta
+    for (const pane of this.panes.values()) {
+      if (this.meta.has(pane.paneId)) continue;
+      this.meta.set(pane.paneId, {
+        name: null,
+        title: null,
+        label: pane.label ?? null,
+        createdAt: Date.now(),
       });
     }
 
@@ -371,12 +402,7 @@ export class Session {
     this.bump();
   }
 
-  /**
-   * 递增 pane 的重启计数（运行中强制重启使用）。
-   *
-   * 渲染端据此重建终端并重新走两阶段启动的 attach 步骤——
-   * 见 shared/state.ts 中 restartSeq 的说明。
-   */
+  /** 递增 pane 的重启计数（运行中强制重启使用）。 */
   bumpPaneRestart(paneId: string): void {
     const pane = this.panes.get(paneId);
     if (!pane) return;
@@ -385,82 +411,126 @@ export class Session {
   }
 
   /**
-   * 统一设置焦点：同时维护 focusedPaneId 与每个 pane/agent 的 focused 标记。
-   *
-   * closePane / removeProject 这类「焦点被动转移」的路径此前只改 focusedPaneId，
-   * 没同步 pane.focused，导致新聚焦 pane 的终端不会自动获得键盘焦点。
-   * 现在收敛到这里，避免两处漂移。
+   * 统一设置焦点：同时维护 focusedPaneId 与每个 pane 的 focused 标记。
    */
   private setFocus(paneId: string | null): void {
     this.focusedPaneId = paneId;
     for (const p of this.panes.values()) {
       p.focused = p.paneId === paneId;
     }
-    for (const a of this.agents.values()) {
-      a.focused = a.paneId === paneId;
-    }
   }
 
   focusPane(paneId: string): void {
     if (!this.panes.has(paneId)) return;
     this.setFocus(paneId);
+    // 聚焦即「已看」：done 投影立即回落 idle（等价 herdr 里 seen=true）。
+    this.seen.set(paneId, true);
     this.bump();
   }
 
   /**
-   * 更新 agent 检测结果。
+   * 应用一次 TerminalState 变更（对应 herdr `actions.rs` 的 completion_reset /
+   * seq bump / apply_pane_state_change 三段编排）。
    *
-   * 状态发生变化时返回 `{ from, to }`，供调用方判断是否需要通知；
-   * 无变化返回 null。
+   * 返回投影后的状态跳变（from/to），供调用方决定是否通知；无可见变化返回 null。
    */
-  updateAgent(
+  applyStateChange(
     paneId: string,
-    patch: { name: string | null; title: string | null; status: AgentState['status'] },
-  ): { from: AgentState['status']; to: AgentState['status'] } | null {
-    const agent = this.agents.get(paneId);
-    if (!agent) return null;
-    const changed =
-      agent.name !== patch.name ||
-      agent.title !== patch.title ||
-      agent.status !== patch.status;
-    if (!changed) return null;
-    const from = agent.status;
-    agent.name = patch.name;
-    agent.title = patch.title;
-    agent.status = patch.status;
-    agent.stateChangeSeq = ++stateChangeCounter;
-    this.bump();
-    return { from, to: patch.status };
-  }
+    mutation: TerminalStateMutation,
+    forceSuppressCompletion: boolean,
+  ): { from: AgentStatus; to: AgentStatus } | null {
+    const terminal = this.terminals.get(paneId);
+    if (!terminal) return null;
+    const change = mutation.effectiveStateChange;
 
-  /**
-   * 由官方集成 hook 直接设置 agent 状态（对应 herdr 的 HookStateReported）。
-   *
-   * 与 updateAgent（终端检测）不同：这里只改 status，不动 name/title，
-   * 来源是 hook 上报的权威状态。状态无变化时返回 null。
-   */
-  setAgentStatus(
-    paneId: string,
-    status: AgentState['status'],
-  ): { from: AgentState['status']; to: AgentState['status'] } | null {
-    const agent = this.agents.get(paneId);
-    if (!agent) return null;
-    if (agent.status === status) return null;
-    const from = agent.status;
-    agent.status = status;
-    agent.stateChangeSeq = ++stateChangeCounter;
-    this.bump();
-    return { from, to: status };
+    // completion reset：会话引用变化或 agent 身份变化时，上一次完成不再有效。
+    const completionReset =
+      mutation.sessionRefChanged ||
+      (change !== null && change.previousAgentLabel !== change.agentLabel);
+    if (completionReset) {
+      terminal.lastAgentCompletionSeq = null;
+    }
+
+    if (change === null) {
+      return null;
+    }
+
+    const previousSeen = this.seen.get(paneId) ?? true;
+    const suppressAcquisitionCompletion = terminal.finishAgentProcessAcquisition();
+    const suppressCompletion =
+      forceSuppressCompletion ||
+      (change.state === 'idle' && suppressAcquisitionCompletion);
+
+    if (change.previousState !== change.state) {
+      this.nextStateChangeSeq += 1;
+      terminal.lastAgentStateChangeSeq = this.nextStateChangeSeq;
+      terminal.lastAgentCompletionSeq =
+        !suppressCompletion && isCompletionTransition(change.previousState, change.state)
+          ? this.nextStateChangeSeq
+          : null;
+    }
+
+    // seen 转移（对应 herdr apply_pane_state_change）：
+    // 非 idle → seen=true；完成跳变 → seen = 是否聚焦（desktop 无 tab/终端焦点，
+    // 用 focusedPaneId 近似 herdr 的 active_tab && outer_terminal_focus）。
+    const focused = this.focusedPaneId === paneId;
+    if (change.state !== 'idle') {
+      this.seen.set(paneId, true);
+    } else if (!suppressCompletion && isCompletionTransition(change.previousState, change.state)) {
+      this.seen.set(paneId, !focused);
+    }
+    const seen = this.seen.get(paneId) ?? true;
+
+    const from = paneAgentStatus(change.previousState, previousSeen);
+    const to = paneAgentStatus(terminal.state, seen);
+    if (from === to) return null;
+    return { from, to };
   }
 
   snapshot(): SessionState {
+    const panes = [...this.panes.values()].map((pane) => ({
+      ...pane,
+      agentSession: this.projectAgentSession(pane.paneId),
+    }));
+    const agents = [...this.panes.values()].map((pane) => this.projectAgent(pane));
     return {
       projects: [...this.projects.values()].sort((a, b) => a.createdAt - b.createdAt),
-      panes: [...this.panes.values()],
-      agents: [...this.agents.values()],
+      panes,
+      agents,
       focusedPaneId: this.focusedPaneId,
       revision: this.revision,
     };
+  }
+
+  private projectAgent(pane: PaneState): AgentInfo {
+    const terminal = this.terminals.get(pane.paneId);
+    const meta = this.meta.get(pane.paneId);
+    const seen = this.seen.get(pane.paneId) ?? true;
+    const state = terminal ? terminal.state : 'unknown';
+    return {
+      paneId: pane.paneId,
+      projectId: pane.projectId,
+      name: meta?.name ?? null,
+      label: meta?.label ?? null,
+      title: meta?.title ?? null,
+      status: paneAgentStatus(state, seen),
+      stateChangeSeq: terminal?.lastAgentStateChangeSeq ?? 0,
+      completionSeq: terminal?.lastAgentCompletionSeq ?? null,
+      focused: pane.focused,
+      createdAt: meta?.createdAt ?? Date.now(),
+      launchPending: terminal?.managedAgentLaunchPending() ?? false,
+      interactiveReady: terminal?.managedAgentInteractiveReady() ?? false,
+      screenDetectionSkipped: terminal?.fullLifecycleHookAuthorityActive() ?? false,
+    };
+  }
+
+  private projectAgentSession(paneId: string): PaneAgentSession | null {
+    const terminal = this.terminals.get(paneId);
+    if (!terminal) return null;
+    const session = terminal.currentSessionForPersistence();
+    return session
+      ? { source: session.source, agent: session.agent, kind: session.kind, value: session.value }
+      : null;
   }
 
   private findProjectByPath(path: string): Project | undefined {

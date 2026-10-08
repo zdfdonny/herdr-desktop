@@ -1,0 +1,122 @@
+/**
+ * grok manifest —— 对应 herdr `src/detect/manifests/grok.toml`。
+ */
+
+import type { AgentManifest } from '../engine';
+
+export const grokManifest: AgentManifest = {
+  id: 'grok',
+  rules: [
+    {
+      id: 'osc_title_blocked',
+      state: 'blocked',
+      priority: 1300,
+      region: 'osc_title',
+      visibleBlocker: true,
+      contains: ['Action Required'],
+    },
+    {
+      id: 'option_dialog_blocked',
+      state: 'blocked',
+      priority: 1200,
+      region: 'whole_recent',
+      visibleBlocker: true,
+      lineRegex: [String.raw`^\s*\u2503\s+[0-9a-z]+\s+\([\u25cf\u25cb]\)\s`],
+    },
+    {
+      id: 'permission_hints_blocked',
+      state: 'blocked',
+      priority: 1190,
+      region: 'bottom_non_empty_lines(2)',
+      visibleBlocker: true,
+      contains: [':select', 'ctrl+o:yolo', 'ctrl+c:cancel'],
+    },
+    {
+      id: 'question_dialog_hints_blocked',
+      state: 'blocked',
+      priority: 1185,
+      region: 'bottom_non_empty_lines(2)',
+      visibleBlocker: true,
+      contains: ['tab:scrollback', 'shift+x:dismiss'],
+    },
+    {
+      id: 'permission_scope_selector',
+      state: 'blocked',
+      priority: 1180,
+      region: 'whole_recent',
+      visibleBlocker: true,
+      contains: ['yes, proceed', 'no, reject'],
+      any: [{ contains: ['use ← → to choose permission whitelist scope'] }, { contains: ['←/→:scope'] }],
+    },
+    {
+      id: 'osc_progress_working',
+      state: 'working',
+      priority: 1150,
+      region: 'osc_progress',
+      visibleWorking: true,
+      regex: [String.raw`^4;1;-1$`],
+    },
+    {
+      id: 'osc_title_idle',
+      state: 'idle',
+      priority: 1100,
+      region: 'osc_title',
+      visibleIdle: true,
+      regex: [String.raw`(?:^| - )grok$`],
+      not: [{ regex: [String.raw`[\u2800-\u28ff]`] }],
+    },
+    {
+      id: 'osc_title_working',
+      state: 'working',
+      priority: 1000,
+      region: 'osc_title',
+      visibleWorking: true,
+      regex: [String.raw`(?:^|\s)[\u2801-\u28ff](?:\s|$)`],
+    },
+    {
+      id: 'osc_progress_idle',
+      state: 'idle',
+      priority: 950,
+      region: 'osc_progress',
+      visibleIdle: true,
+      regex: [String.raw`^4;0;0$`],
+    },
+    {
+      id: 'spinner_status_working',
+      state: 'working',
+      priority: 1160,
+      region: 'whole_recent',
+      visibleWorking: true,
+      lineRegex: [String.raw`^\s*[\u2801-\u28ff]\s.*\[stop\]\s*$`],
+    },
+    {
+      id: 'esc_cancel_hints_working',
+      state: 'working',
+      priority: 1155,
+      region: 'bottom_non_empty_lines(2)',
+      visibleWorking: true,
+      contains: ['ctrl+.:shortcuts'],
+      any: [{ contains: ['esc:cancel'] }, { contains: ['ctrl+c:cancel'] }],
+    },
+    {
+      id: 'waiting_tool_working',
+      state: 'working',
+      priority: 1140,
+      region: 'whole_recent',
+      visibleWorking: true,
+      any: [
+        { all: [{ contains: ['ctrl+c:cancel', 'ctrl+enter:interject'] }, { contains: ['waiting'] }] },
+        { lineRegex: [String.raw`^\s*[\u2801-\u28ff]\s+(Run|Read|Search|List)\b`] },
+      ],
+    },
+    {
+      id: 'prompt_hints_idle',
+      state: 'idle',
+      priority: 100,
+      region: 'bottom_non_empty_lines(2)',
+      visibleIdle: true,
+      contains: ['ctrl+.:shortcuts'],
+      not: [{ contains: ['esc:cancel'] }, { contains: ['ctrl+c:cancel'] }],
+    },
+  ],
+};

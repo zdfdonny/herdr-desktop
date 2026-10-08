@@ -5,7 +5,12 @@
  * 用正则匹配终端快照来判定 agent 状态，而不是解析 agent 的内部协议。
  */
 
-import type { AgentDetectManifest } from './state';
+import type { AgentDetectManifest, DetectedState } from './state';
+import { evaluateManifest } from './detect/engine';
+import { MANIFESTS } from './detect/manifests';
+
+// 供测试直接校验 manifest 注册表与求值引擎
+export { evaluateManifest, MANIFESTS };
 
 /**
  * 各 agent 的识别关键词（命令名/品牌）。
@@ -40,6 +45,108 @@ const AGENT_IDENTITY: Array<[agent: string, pattern: string]> = [
   ['muse', '\\bmuse\\b'],
 ];
 
+/** canonical agent 名集合（与 AGENT_IDENTITY 的 agent 列一致）。 */
+const AGENT_LABELS = new Set(AGENT_IDENTITY.map(([agent]) => agent));
+
+/**
+ * 别名 → canonical 名（对齐 herdr `lookup_agent`）。
+ *
+ * 唯一与 herdr 的差异：desktop 的 canonical 名是 `antigravity`（herdr 用 `agy`），
+ * 因此 `agy` / `antigravity-cli` 归一到 `antigravity`。
+ */
+const AGENT_ALIASES: Record<string, string> = {
+  'claude-code': 'claude',
+  'cursor-agent': 'cursor',
+  'devin-cli': 'devin',
+  'devin cli': 'devin',
+  agy: 'antigravity',
+  'antigravity-cli': 'antigravity',
+  '.cline': 'cline',
+  'mastra-code': 'mastracode',
+  'mastra code': 'mastracode',
+  opencode2: 'opencode',
+  'open-code': 'opencode',
+  'github-copilot': 'copilot',
+  ghcs: 'copilot',
+  'kimi-code': 'kimi',
+  'kimi code': 'kimi',
+  'kiro-cli': 'kiro',
+  'amp-local': 'amp',
+  'grok-build': 'grok',
+  'hermes-agent': 'hermes',
+  'kilo-code': 'kilo',
+  'kilo code': 'kilo',
+  qoderclicn: 'qodercli',
+  qoder: 'qodercli',
+  qodercn: 'qodercli',
+  'qwen-code': 'qwen',
+  'qwen code': 'qwen',
+  'letta-code': 'letta',
+  'letta code': 'letta',
+  'muse-code': 'muse',
+  'muse-cli': 'muse',
+};
+
+/** 对应 herdr `normalized_agent_lookup_name`：trim + 小写 + 去可执行后缀。 */
+function normalizedAgentLookupName(name: string): string {
+  let n = name.trim().toLowerCase();
+  for (const suffix of ['.exe', '.cmd', '.bat', '.ps1', '.js']) {
+    if (n.endsWith(suffix)) {
+      n = n.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return n;
+}
+
+/** 对应 herdr `path_basename`：取路径最后一段。 */
+function pathBasename(path: string): string {
+  const parts = path.split(/[\\/]/).filter((p) => p.length > 0);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
+}
+
+/**
+ * 把上报/检测到的 agent 标签归一化为 canonical 名（对应 herdr `parse_agent_label`）。
+ *
+ * 未知标签返回 null。desktop 的检测层直接产出 canonical 字符串，
+ * 因此这里不像 herdr 那样返回枚举，而是返回 canonical 字符串本身。
+ */
+export function parseAgentLabel(label: string): string | null {
+  const name = pathBasename(normalizedAgentLookupName(label));
+  if (AGENT_LABELS.has(name)) return name;
+  return AGENT_ALIASES[name] ?? null;
+}
+
+/**
+ * 完整生命周期 hook 权威白名单（对应 herdr `full_lifecycle_hook_authority`）。
+ *
+ * 这些集成的 hook 活着时对状态拥有权威，屏幕检测只作回退。
+ */
+export function fullLifecycleHookAuthority(source: string, agentLabel: string): boolean {
+  return (
+    (source === 'herdr:pi' && agentLabel === 'pi') ||
+    (source === 'herdr:omp' && agentLabel === 'omp') ||
+    (source === 'herdr:mastracode' && agentLabel === 'mastracode') ||
+    (source === 'herdr:opencode' && agentLabel === 'opencode') ||
+    (source === 'herdr:kilo' && agentLabel === 'kilo') ||
+    (source === 'herdr:kimi' && agentLabel === 'kimi')
+  );
+}
+
+/**
+ * 仅上报会话身份的集成（对应 herdr `session_identity_only_integration`）。
+ *
+ * 这些来源不持有状态权威，只提供会话引用。
+ */
+export function sessionIdentityOnlyIntegration(source: string, agentLabel: string): boolean {
+  return (
+    (source === 'herdr:hermes' && agentLabel === 'hermes') ||
+    (source === 'herdr:qwen' && agentLabel === 'qwen') ||
+    (source === 'herdr:letta' && agentLabel === 'letta') ||
+    (source === 'herdr:antigravity' && agentLabel === 'antigravity')
+  );
+}
+
 export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(
   ([agent, pattern]) => ({
     agent,
@@ -57,8 +164,20 @@ export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(
 export function detectStatus(
   agentName: string | null,
   snapshot: string,
-): 'idle' | 'working' | 'blocked' | 'done' | 'unknown' {
+  oscTitle = '',
+  oscProgress = '',
+): DetectedState {
   const lower = snapshot.toLowerCase();
+
+  // 特定 agent 的专属 manifest（每 agent 一个文件，见 shared/detect/manifests/）。
+  // 避免通用关键词误命中常驻界面（如 antigravity idle footer / claude 响应正文）。
+  if (agentName && MANIFESTS[agentName]) {
+    return evaluateManifest(MANIFESTS[agentName], {
+      screen: snapshot,
+      oscTitle,
+      oscProgress,
+    }).state;
+  }
 
   // blocked：需要人工输入/确认的信号（含各 agent 的权限确认文案）
   if (

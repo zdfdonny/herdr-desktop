@@ -13,6 +13,7 @@ import { PtyManager } from '../runtime/pty-manager';
 import { WebAgentManager } from '../runtime/web-agent-manager';
 import { SettingsStore } from '../runtime/settings';
 import { detectFromSnapshot } from '../runtime/agent-detector';
+import { parseAgentLabel } from '../../shared/detect-manifest';
 import { detectGitBranch } from '../runtime/git';
 import { saveState, loadState, flushState } from '../runtime/persist';
 import * as agentResume from '../runtime/agent-resume';
@@ -62,13 +63,6 @@ export class IpcRouter {
   /** hook 上报端点（官方集成 hook 把会话引用报回 Main）。 */
   private reportServer = new ReportServer();
   /**
-   * 由官方集成 hook 持有状态权威的 pane（对应 herdr 的 hook_authority）。
-   *
-   * 一旦 hook 上报过状态，终端检测只更新 name/title，不再覆盖 status，
-   * 避免「hook 报 working、终端检测又报 idle」的抖动。关闭/respawn 时清除。
-   */
-  private hookAuthority = new Set<string>();
-  /**
    * agent 状态通知冷却：同一 pane + 状态 在冷却窗口内只通知一次。
    *
    * 终端检测会因屏幕重绘抖动（blocked → working → blocked），每次重新进入
@@ -76,15 +70,6 @@ export class IpcRouter {
    * 键为 `${paneId}:${status}`，值为最近一次通知的时间戳。
    */
   private agentStatusNotifyCooldown = new Map<string, number>();
-  /**
-   * 未看完成的 pane 集合（对应 herdr 的 seen=false）。
-   *
-   * herdr 语义：检测层只有 idle/working/blocked/unknown；「done」是由
-   * `pane_agent_status(state, seen)` 推导的——agent 在后台从 working/blocked
-   * 回到 idle 时记为未看（seen=false）→ 显示 done；用户聚焦该 pane 后记为
-   * 已看（seen=true）→ 显示 idle。本集合存的是「未看」的 pane。
-   */
-  private unseenPanes = new Set<string>();
 
   /**
    * 标题栏配色回调，由主进程在创建窗口后注入。
@@ -573,29 +558,41 @@ export class IpcRouter {
       report.sessionId ?? null,
       report.sessionPath ?? null,
     );
-    if (ref) {
-      const session = {
-        source: report.source,
-        agent: report.agent,
-        kind: ref.kind,
-        value: ref.value,
-      };
-      // 会话替换决策（对应 herdr session_report_allows_session_replacement）：
-      // 同一 agent 的 id 会话不同时，只有替换表允许才覆盖当前会话。
-      const current = this.session.getPane(paneId)?.agentSession ?? null;
-      if (agentResume.shouldReplacePaneAgentSession(current, session, report.sessionStartSource)) {
-        this.session.setPaneAgentSession(paneId, session);
-      }
+    const terminal = this.session.getTerminal(paneId);
+    if (!terminal) {
+      this.pushSnapshot();
+      return;
     }
 
-    if (report.state) {
-      this.hookAuthority.add(paneId);
-      // hook 上报的状态也要过一遍 done 推导（后台完成 → done），与终端路径一致
-      const derived = this.deriveStatus(paneId, report.state);
-      const transition = this.session.setAgentStatus(paneId, derived);
-      if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
-        this.notifyAgentStatus(paneId, transition.to, report.message ?? undefined);
+    if (report.state && report.state !== 'done') {
+      // 状态上报（对应 herdr handle_pane_report_agent → HookStateReported）：
+      // setHookAuthorityAt 内部携带 session ref 完成会话锚定，不单独走 session 路径，
+      // 避免同一 seq 被 setAgentSessionRefForSessionStart 与 setHookAuthorityAt 重复消费。
+      const mutation = terminal.setHookAuthorityAt(
+        report.source,
+        report.agent,
+        report.state,
+        report.message ?? null,
+        ref,
+        report.seq ?? null,
+        Date.now(),
+      );
+      if (mutation) {
+        const transition = this.session.applyStateChange(paneId, mutation, false);
+        if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
+          this.notifyAgentStatus(paneId, transition.to, report.message ?? undefined);
+        }
       }
+    } else if (ref) {
+      // 仅会话上报（对应 herdr handle_pane_report_agent_session → AgentSessionReported）。
+      terminal.setAgentSessionRefForSessionStart(
+        report.source,
+        report.agent,
+        ref,
+        report.seq ?? null,
+        report.sessionStartSource ?? null,
+        Date.now(),
+      );
     }
 
     this.pushSnapshot();
@@ -657,8 +654,8 @@ export class IpcRouter {
     this.pendingSpawns.delete(paneId);
     this.pendingSizes.delete(paneId);
     this.revivingPanes.delete(paneId);
-    this.hookAuthority.delete(paneId);
-    this.unseenPanes.delete(paneId);
+    // 运行中强制重启：重置 agent 运行时身份（对应 herdr clear_agent_runtime_identity_after_respawn）
+    this.session.getTerminal(paneId)?.clearAgentRuntimeIdentityAfterRespawn();
   }
 
   /**
@@ -697,12 +694,18 @@ export class IpcRouter {
    */
   private resumeParamsFor(pane: PaneState): SpawnAgentParams | null {
     if (!agentResume.RESUME_AGENTS_ON_RESTORE) return null;
-    const session = pane.agentSession ?? null;
-    if (!session || !pane.command) return null;
+    // 会话引用由 TerminalState 仲裁后投影（不再直接读 pane.agentSession）
+    const current = this.session.getTerminal(pane.paneId)?.currentSessionForPersistence() ?? null;
+    if (!current || !pane.command) return null;
 
     // 命令首 token 是真实可执行文件，cursor 等平台差异由 pty-manager 处理。
     const executable = pane.command.trim().split(/\s+/)[0];
-    const plan = agentResume.resumePlanForPane(executable, session);
+    const plan = agentResume.resumePlanForPane(executable, {
+      source: current.source,
+      agent: current.agent,
+      kind: current.kind,
+      value: current.value,
+    });
     if (!plan) return null;
 
     return {
@@ -756,6 +759,20 @@ export class IpcRouter {
     }
 
     this.revivingPanes.delete(paneId);
+
+    /*
+     * 进程检测等价物（对应 herdr 的 set_detected_agent_process_at）：
+     * desktop 没有独立的进程名检测，这里用启动命令首 token 识别 agent，
+     * 使 full-lifecycle hook 权威（如 opencode）能在 TUI 不打印 agent 名时仍生效。
+     */
+    const terminal = this.session.getTerminal(paneId);
+    if (terminal) {
+      const commandName = params.command.trim().split(/\s+/)[0];
+      const detectedAgent = parseAgentLabel(commandName);
+      if (detectedAgent) {
+        terminal.setDetectedAgentProcessAt(detectedAgent, Date.now());
+      }
+    }
 
     /*
      * 工作目录失效时 pane 仍会启动（回退到主目录），但用户需要知道
@@ -889,23 +906,13 @@ export class IpcRouter {
     this.pendingSpawns.delete(paneId);
     this.pendingSizes.delete(paneId);
     this.revivingPanes.delete(paneId);
-    this.hookAuthority.delete(paneId);
-    this.unseenPanes.delete(paneId);
     this.session.closePane(paneId);
     this.pushSnapshot();
   }
 
   private focusPane(paneId: string): void {
+    // 聚焦即「已看」：Session.focusPane 会置 seen=true，done 投影自动回落 idle。
     this.session.focusPane(paneId);
-    /*
-     * 聚焦即视为「已看」：清除 done（未看完成）标记，并把当前 done 状态
-     * 立即回落为 idle——不能只清标记，否则要等下一次 PTY 数据才重新推导，
-     * 而空闲的已完成 agent 没有新输出，绿点会一直不灰。
-     */
-    this.unseenPanes.delete(paneId);
-    if (this.session.getAgentStatus(paneId) === 'done') {
-      this.session.setAgentStatus(paneId, 'idle');
-    }
     /*
      * 选中即恢复：聚焦的 pane 处于停止态时自动拉起进程。
      *
@@ -922,78 +929,54 @@ export class IpcRouter {
     this.pushSnapshot();
   }
 
-  /**
-   * done 推导（对应 herdr 的 `pane_agent_status(state, seen)`）。
-   *
-   * 检测/hook 层只给出 idle/working/blocked；当 pane 在后台从 working/blocked
-   * 回到 idle 时记为「未看」→ 推导为 done；用户聚焦后记为「已看」→ 恢复 idle。
-   * 终端检测与 hook 上报两条路径都走这里，保证语义一致。
-   */
-  private deriveStatus(
-    paneId: string,
-    rawStatus: 'idle' | 'working' | 'blocked' | 'done' | 'unknown',
-  ): 'idle' | 'working' | 'blocked' | 'done' | 'unknown' {
-    if (rawStatus === 'working' || rawStatus === 'blocked') {
-      this.unseenPanes.delete(paneId);
-      return rawStatus;
-    }
-    if (rawStatus === 'idle') {
-      const prev = this.session.getAgentStatus(paneId);
-      if (prev === 'working' || prev === 'blocked') {
-        // 完成跳变：聚焦 pane 视为已看，否则未看
-        if (this.session.isFocusedPane(paneId)) {
-          this.unseenPanes.delete(paneId);
-        } else {
-          this.unseenPanes.add(paneId);
-        }
-      }
-      if (this.unseenPanes.has(paneId)) {
-        return 'done';
-      }
-    }
-    return rawStatus;
-  }
-
   private refreshAgent(paneId: string): void {
     const snapshot = this.pty.snapshot(paneId);
     const pane = this.session.getPane(paneId);
+    const terminal = this.session.getTerminal(paneId);
+    if (!terminal) return;
+
     // 终端检测不到 agent 名时回退到启动命令首 token（如 opencode 的 TUI 底部不出现名字）
     const fallbackAgent = pane?.command?.trim().split(/\s+/)[0] ?? null;
     const result = detectFromSnapshot(snapshot, fallbackAgent);
 
-    /*
-     * done 推导（对应 herdr 的 pane_agent_status(state, seen)）。
-     * 只在终端检测路径生效；hook 权威路径的状态由 hook 上报并经 deriveStatus 处理。
-     */
-    if (!this.hookAuthority.has(paneId)) {
-      result.status = this.deriveStatus(paneId, result.status);
-    }
+    // 展示字段（name/title）单独更新；状态一律经 TerminalState 仲裁后在 snapshot 投影
+    this.session.updateAgentPresentation(paneId, result.name, result.title);
 
-    /*
-     * hook 权威：官方集成 hook 已上报状态时，终端检测只更新 name/title，
-     * 不再用屏幕关键词覆盖 status，避免两者打架（对应 herdr hook_authority）。
-     */
-    const patch = this.hookAuthority.has(paneId)
-      ? { name: result.name, title: result.title, status: this.session.getAgentStatus(paneId) ?? result.status }
-      : result;
-    const transition = this.session.updateAgent(paneId, patch);
+    // 状态仲裁（对应 herdr set_detected_state_with_screen_signals_at）。
+    // agent 参数用命令派生的 detectedAgent（进程检测等价物），屏幕只提供 fallback 状态；
+    // 不能用 result.detectedName——那会因 TUI 不打印 agent 名而把 detectedAgent 清空。
+    const mutation = terminal.setDetectedStateWithScreenSignalsAt(
+      terminal.detectedAgent,
+      result.status,
+      result.visibleBlocker,
+      result.visibleIdle,
+      result.visibleWorking,
+      false,
+      Date.now(),
+    );
+    const transition = this.session.applyStateChange(paneId, mutation, false);
     if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
       this.notifyAgentStatus(paneId, transition.to);
     }
 
     /*
-     * 采集端 fallback：从终端输出识别出会话 id 时，把它持久化到 pane，
+     * 采集端 fallback：从终端输出识别出会话 id 时，把它持久化到 terminal，
      * 之后重启该 pane 就能带 `--resume`/`--session` 恢复。
      * 权威来源仍是 hook 上报（agent:report-session）；这里只做兜底，
      * 且经 sessionRefFromReport 校验官方来源，非白名单 agent 直接忽略。
      */
-    if (result.name && result.sessionId) {
-      const source = `herdr:${result.name}`;
-      const ref = agentResume.sessionRefFromReport(source, result.name, result.sessionId, null);
+    if (result.detectedName && result.sessionId) {
+      const source = `herdr:${result.detectedName}`;
+      const ref = agentResume.sessionRefFromReport(
+        source,
+        result.detectedName,
+        result.sessionId,
+        null,
+      );
       if (ref) {
         this.session.setPaneAgentSession(paneId, {
           source,
-          agent: result.name,
+          agent: result.detectedName,
           kind: ref.kind,
           value: ref.value,
         });

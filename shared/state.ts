@@ -6,7 +6,17 @@
  * 运行时侧（PtyRuntime）仅存在于 Main 进程，不进入本文件。
  */
 
-export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
+/**
+ * 三层状态模型（对齐 herdr 的 detect::AgentState / api::PaneAgentState / api::AgentStatus）：
+ *
+ * - DetectedState：检测层（屏幕/OSC）与 hook 上报产出的原始状态，4 值。
+ * - PaneAgentState：pane 级协议状态，与检测层语义一致（4 值）。
+ * - AgentStatus：最终对外状态；`done` 只由 `paneAgentStatus(state, seen)` 派生，
+ *   禁止检测层 / hook 层直接写入。
+ */
+export type DetectedState = 'idle' | 'working' | 'blocked' | 'unknown';
+export type PaneAgentState = DetectedState;
+export type AgentStatus = DetectedState | 'done';
 
 /** pane 类型：终端进程（默认）或内嵌 Web GUI。 */
 export type PaneKind = 'pty' | 'web';
@@ -49,8 +59,8 @@ export interface Project {
   createdAt: number;
 }
 
-/** 单个 agent 的运行时状态。 */
-export interface AgentState {
+/** 单个 agent 的运行时状态（对齐 herdr 的 AgentInfo）。 */
+export interface AgentInfo {
   paneId: string;
   /** 所属项目。agent 必须归属到一个项目。 */
   projectId: string;
@@ -60,12 +70,27 @@ export interface AgentState {
   label: string | null;
   /** 终端标题（去掉 ANSI 后）。 */
   title: string | null;
+  /** 最终状态（done 只由 paneAgentStatus 派生，见 shared/agent-status.ts）。 */
   status: AgentStatus;
-  /** 单调序号，用于状态排序与通知去重。 */
+  /** 单调序号，用于状态排序与通知去重（对齐 herdr state_change_seq）。 */
   stateChangeSeq: number;
+  /**
+   * 最近一次完成跳变（working/blocked → idle）的序号（对齐 herdr completion_seq）。
+   * 旧版本快照中缺失，读取方按 null 处理。
+   */
+  completionSeq?: number | null;
   focused: boolean;
   /** 创建时间戳（ms），用于项目内按创建顺序稳定排序。 */
   createdAt: number;
+  /** managed agent 仍在启动/阻塞中（对齐 herdr launch_pending）。旧版本快照缺失按 false 处理。 */
+  launchPending?: boolean;
+  /** managed agent 已交互就绪（对齐 herdr interactive_ready）。旧版本快照缺失按 false 处理。 */
+  interactiveReady?: boolean;
+  /**
+   * 完整生命周期 hook 权威激活中，屏幕检测被跳过（对齐 herdr screen_detection_skipped）。
+   * 旧版本快照缺失按 false 处理。
+   */
+  screenDetectionSkipped?: boolean;
 }
 
 export interface PaneState {
@@ -135,7 +160,7 @@ export interface PaneState {
 export interface SessionState {
   projects: Project[];
   panes: PaneState[];
-  agents: AgentState[];
+  agents: AgentInfo[];
   focusedPaneId: string | null;
   /** 每次结构变更递增，用于 Renderer 判断是否需要整体刷新。 */
   revision: number;
@@ -146,7 +171,7 @@ export interface SessionStatePatch {
   revision: number;
   upsertProjects?: Project[];
   upsertPanes?: PaneState[];
-  upsertAgents?: AgentState[];
+  upsertAgents?: AgentInfo[];
   removeProjectIds?: string[];
   removePaneIds?: string[];
   focusedPaneId?: string | null;
@@ -223,7 +248,7 @@ export interface AppSettings {
 
 /** agent 检测 manifest（继承 herdr 的声明式检测思想）。 */
 export interface AgentDetectManifest {
-  /** agent 名（与 AgentState.name 对应）。 */
+  /** agent 名（与 AgentInfo.name 对应）。 */
   agent: string;
   /** 用于在终端快照中识别该 agent 的规则。 */
   rules: AgentDetectRule[];
@@ -232,6 +257,6 @@ export interface AgentDetectManifest {
 export interface AgentDetectRule {
   /** 匹配模式，正则字符串。 */
   pattern: string;
-  /** 命中该 pattern 时应判定的状态。 */
-  status: AgentStatus;
+  /** 命中该 pattern 时应判定的检测层状态（不含 done，done 只由投影派生）。 */
+  status: DetectedState;
 }
