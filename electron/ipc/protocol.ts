@@ -21,6 +21,8 @@ export const IPC = {
   UI_OPEN_SETTINGS: 'ui:open-settings',
   /** 菜单请求添加项目（打开系统目录选择器）。 */
   UI_ADD_PROJECT: 'ui:add-project',
+  /** 菜单触发的快捷键动作（action 见 shared/shortcuts.ts）。 */
+  UI_SHORTCUT: 'ui:shortcut',
   /** DeepSeek Harness Web pane 就绪（带认证链接）。 */
   WEB_READY: 'web:ready',
   // 控制命令（Renderer → Main）
@@ -53,6 +55,14 @@ export const IPC = {
   /** 标记集成引导已完成（首次启动引导弹窗关闭后置 true）。 */
   SET_INTEGRATIONS_ONBOARDED: 'control:set-integrations-onboarded',
   NAMED: 'control:named',
+  /** 设置单个快捷键覆盖；accelerator 为 null 表示恢复默认。 */
+  SET_SHORTCUT: 'control:set-shortcut',
+  /** 清空所有快捷键覆盖。 */
+  RESET_SHORTCUTS: 'control:reset-shortcuts',
+  /** 进入改键捕获：主进程忽略菜单快捷键，让 keydown 到达渲染层。 */
+  BEGIN_SHORTCUT_CAPTURE: 'control:begin-shortcut-capture',
+  /** 结束改键捕获：恢复菜单快捷键并重建菜单。 */
+  END_SHORTCUT_CAPTURE: 'control:end-shortcut-capture',
 } as const;
 
 export type IpcType = (typeof IPC)[keyof typeof IPC];

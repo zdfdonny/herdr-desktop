@@ -118,6 +118,11 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     setSearchOpen(false);
     setSearchQuery('');
     setSearchMatch({ index: 0, count: 0 });
+    /*
+     * 关闭搜索框后把键盘焦点还给终端：搜索输入框带着 autoFocus，
+     * 卸载后焦点会丢失，xterm 的 textarea 不会自动拿回焦点。
+     */
+    handleRef.current?.terminal.focus();
   };
 
   // 创建 / 销毁 xterm 实例

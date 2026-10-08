@@ -16,7 +16,7 @@ export interface ConfirmState {
 }
 
 /** 设置弹窗的分类（与 SettingsDialog 的左侧导航一致）。 */
-export type SettingsSection = 'general' | 'proxy' | 'about';
+export type SettingsSection = 'general' | 'proxy' | 'shortcuts' | 'about';
 
 /** 左侧栏可展开的内容分区（图标栏上的两个入口）。 */
 export type SidebarSection = 'projects' | 'integrations';
@@ -41,6 +41,22 @@ interface UiStore {
   integrationsOnboardingOpen: boolean;
   openIntegrationsOnboarding: () => void;
   closeIntegrationsOnboarding: () => void;
+  /** 正在重命名的视图标签 id（null 表示无）。 */
+  renamingViewId: string | null;
+  startRenameView: (viewId: string) => void;
+  stopRenameView: () => void;
+  /** 快捷键帮助弹窗是否打开。 */
+  shortcutHelpOpen: boolean;
+  openShortcutHelp: () => void;
+  closeShortcutHelp: () => void;
+  toggleShortcutHelp: () => void;
+  /** 当前打开的模态弹窗计数（Modal 组件挂载/卸载时增减，供标题栏遮罩原生按钮）。 */
+  modalCount: number;
+  openModal: () => void;
+  closeModal: () => void;
+  /** 是否正在捕获改键组合键（供全局 pane 快捷键处理跳过，避免干扰捕获）。 */
+  shortcutCapturing: boolean;
+  setShortcutCapturing: (capturing: boolean) => void;
 }
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -61,8 +77,25 @@ export const useUiStore = create<UiStore>((set, get) => ({
   integrationsOnboardingOpen: false,
   openIntegrationsOnboarding: () => set({ integrationsOnboardingOpen: true }),
   closeIntegrationsOnboarding: () => set({ integrationsOnboardingOpen: false }),
+  renamingViewId: null,
+  startRenameView: (viewId) => set({ renamingViewId: viewId }),
+  stopRenameView: () => set({ renamingViewId: null }),
+  shortcutHelpOpen: false,
+  openShortcutHelp: () => set({ shortcutHelpOpen: true }),
+  closeShortcutHelp: () => set({ shortcutHelpOpen: false }),
+  toggleShortcutHelp: () => set({ shortcutHelpOpen: !get().shortcutHelpOpen }),
+  modalCount: 0,
+  openModal: () => set((s) => ({ modalCount: s.modalCount + 1 })),
+  closeModal: () => set((s) => ({ modalCount: Math.max(0, s.modalCount - 1) })),
+  shortcutCapturing: false,
+  setShortcutCapturing: (capturing) => set({ shortcutCapturing: capturing }),
 }));
 
 export function useSettingsOpen(): boolean {
   return useUiStore((s) => s.settingsOpen);
+}
+
+/** 当前是否有任一模态弹窗打开。 */
+export function useAnyModalOpen(): boolean {
+  return useUiStore((s) => s.modalCount > 0);
 }

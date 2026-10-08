@@ -150,6 +150,8 @@ export interface Messages {
     integrationUpdate: string;
     integrationInstallFailed: string;
     integrationInstallFailedDetail: string;
+    shortcuts: string;
+    shortcutsHint: string;
   };
   onboarding: {
     integrationsTitle: string;
@@ -197,6 +199,42 @@ export interface Messages {
     hide: string;
     hideOthers: string;
     showAll: string;
+    view: string;
+    help: string;
+  };
+  shortcuts: {
+    title: string;
+    global: string;
+    project: string;
+    tab: string;
+    pane: string;
+    terminal: string;
+    help: string;
+    settings: string;
+    addProject: string;
+    newTab: string;
+    nextTab: string;
+    previousTab: string;
+    switchTab: string;
+    switchTabN: string;
+    closeTab: string;
+    renameTab: string;
+    splitVertical: string;
+    splitHorizontal: string;
+    closePane: string;
+    focusPaneLeft: string;
+    focusPaneDown: string;
+    focusPaneUp: string;
+    focusPaneRight: string;
+    terminalCopy: string;
+    terminalPaste: string;
+    terminalSearch: string;
+    editHint: string;
+    captureHint: string;
+    reset: string;
+    resetAll: string;
+    unsafe: string;
+    conflict: string;
   };
 }
 
@@ -304,6 +342,8 @@ const zhCN: Messages = {
     integrationUpdate: '更新',
     integrationInstallFailed: '「{agent}」集成安装失败',
     integrationInstallFailedDetail: '{error}',
+    shortcuts: '快捷键',
+    shortcutsHint: '点击键位即可修改，Esc 取消',
   },
   onboarding: {
     integrationsTitle: '了解集成功能',
@@ -351,6 +391,42 @@ const zhCN: Messages = {
     hide: '隐藏 {name}',
     hideOthers: '隐藏其他',
     showAll: '全部显示',
+    view: '视图',
+    help: '帮助',
+  },
+  shortcuts: {
+    title: '键盘快捷键',
+    global: '全局',
+    project: '项目',
+    tab: '标签页',
+    pane: '窗格',
+    terminal: '终端',
+    help: '快捷键帮助',
+    settings: '设置',
+    addProject: '添加项目',
+    newTab: '新建标签',
+    nextTab: '下一个标签',
+    previousTab: '上一个标签',
+    switchTab: '切换标签',
+    switchTabN: '切换到标签 {n}',
+    closeTab: '关闭标签',
+    renameTab: '重命名标签',
+    splitVertical: '左右分屏',
+    splitHorizontal: '上下分屏',
+    closePane: '关闭窗格',
+    focusPaneLeft: '聚焦左侧窗格',
+    focusPaneDown: '聚焦下方窗格',
+    focusPaneUp: '聚焦上方窗格',
+    focusPaneRight: '聚焦右侧窗格',
+    terminalCopy: '复制选中 / 发送中断',
+    terminalPaste: '粘贴',
+    terminalSearch: '搜索终端历史',
+    editHint: '点击修改键位',
+    captureHint: '按下新按键… Esc 取消',
+    reset: '重置',
+    resetAll: '重置全部',
+    unsafe: '该键位会拦截正常输入，请加上修饰键（Ctrl / Alt / Cmd）',
+    conflict: '与「{name}」冲突',
   },
 };
 
@@ -460,6 +536,8 @@ const en: Messages = {
     integrationUpdate: 'Update',
     integrationInstallFailed: '"{agent}" integration install failed',
     integrationInstallFailedDetail: '{error}',
+    shortcuts: 'Shortcuts',
+    shortcutsHint: 'Click a key to change it; Esc cancels',
   },
   onboarding: {
     integrationsTitle: 'Meet integrations',
@@ -508,6 +586,42 @@ const en: Messages = {
     hide: 'Hide {name}',
     hideOthers: 'Hide Others',
     showAll: 'Show All',
+    view: 'View',
+    help: 'Help',
+  },
+  shortcuts: {
+    title: 'Keyboard Shortcuts',
+    global: 'Global',
+    project: 'Project',
+    tab: 'Tabs',
+    pane: 'Panes',
+    terminal: 'Terminal',
+    help: 'Shortcut help',
+    settings: 'Settings',
+    addProject: 'Add project',
+    newTab: 'New tab',
+    nextTab: 'Next tab',
+    previousTab: 'Previous tab',
+    switchTab: 'Switch tab',
+    switchTabN: 'Switch to tab {n}',
+    closeTab: 'Close tab',
+    renameTab: 'Rename tab',
+    splitVertical: 'Split vertically',
+    splitHorizontal: 'Split horizontally',
+    closePane: 'Close pane',
+    focusPaneLeft: 'Focus left pane',
+    focusPaneDown: 'Focus pane below',
+    focusPaneUp: 'Focus pane above',
+    focusPaneRight: 'Focus right pane',
+    terminalCopy: 'Copy selection / send SIGINT',
+    terminalPaste: 'Paste',
+    terminalSearch: 'Search terminal history',
+    editHint: 'Click to change',
+    captureHint: 'Press a key… Esc to cancel',
+    reset: 'Reset',
+    resetAll: 'Reset all',
+    unsafe: 'This key would intercept typing; add a modifier (Ctrl / Alt / Cmd)',
+    conflict: 'Conflicts with {name}',
   },
 };
 

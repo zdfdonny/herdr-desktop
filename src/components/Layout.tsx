@@ -14,7 +14,7 @@
 
 import type { ReactNode } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
-import { useSettingsOpen } from '../stores/uiStore';
+import { useSettingsOpen, useUiStore } from '../stores/uiStore';
 import { useLayoutStore, viewProjectId } from '../stores/layoutStore';
 import { TitleBar } from './TitleBar';
 import { Sidebar } from './Sidebar';
@@ -23,6 +23,7 @@ import { WebPane } from './WebPane';
 import { SplitView } from './SplitView';
 import { ViewTabs } from './ViewTabs';
 import { SettingsDialog } from './SettingsDialog';
+import { ShortcutHelpDialog } from './ShortcutHelpDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IntegrationsOnboardingDialog } from './IntegrationsOnboardingDialog';
 import { EmptyState } from './EmptyState';
@@ -32,6 +33,7 @@ import { isMac } from '../platform';
 export function Layout() {
   const state = useSessionStore((s) => s.state);
   const settingsOpen = useSettingsOpen();
+  const shortcutHelpOpen = useUiStore((s) => s.shortcutHelpOpen);
   const views = useLayoutStore((s) => s.views);
   const activeViewId = useLayoutStore((s) => s.activeViewId);
 
@@ -126,6 +128,7 @@ export function Layout() {
         </main>
       </div>
       {settingsOpen && <SettingsDialog />}
+      {shortcutHelpOpen && <ShortcutHelpDialog />}
       <ConfirmDialog />
       <IntegrationsOnboardingDialog />
       <NotificationToasts />

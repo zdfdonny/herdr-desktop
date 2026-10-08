@@ -13,6 +13,8 @@ import {
   sendSetFontSize,
   sendSetProxyUrl,
   sendSetAgentProxy,
+  setShortcut as sendSetShortcut,
+  resetShortcuts as sendResetShortcuts,
 } from '../ipc/client';
 import { useI18nStore } from '../i18n';
 
@@ -23,6 +25,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: false,
+  shortcuts: {},
 };
 
 /** 由偏好 + 系统外观解析出实际主题。 */
@@ -65,6 +68,8 @@ interface SettingsStore {
   setFontSize: (fontSize: number) => void;
   setProxyUrl: (url: string) => void;
   setAgentProxy: (command: string, enabled: boolean) => void;
+  setShortcut: (action: string, accelerator: string | null) => void;
+  resetShortcuts: () => void;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -124,6 +129,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       return { settings: { ...s.settings, proxyAgents } };
     });
     sendSetAgentProxy(command, enabled);
+  },
+
+  setShortcut: (action, accelerator) => {
+    set((s) => {
+      const shortcuts = { ...s.settings.shortcuts };
+      if (accelerator === null) {
+        delete shortcuts[action];
+      } else {
+        shortcuts[action] = accelerator;
+      }
+      return { settings: { ...s.settings, shortcuts } };
+    });
+    sendSetShortcut(action, accelerator);
+  },
+
+  resetShortcuts: () => {
+    set((s) => ({ settings: { ...s.settings, shortcuts: {} } }));
+    sendResetShortcuts();
   },
 }));
 

@@ -2140,8 +2140,7 @@
 }
 
 .switch:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
 }
 
 /* 代理启用列表：名称 + 启动命令 + 开关 */
@@ -2264,4 +2263,265 @@
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-mono);
+}
+
+/* ===== 快捷键（设置页 + 帮助弹窗）===== */
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.shortcuts-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.shortcut-group {
+  margin-top: 8px;
+}
+
+.shortcut-group__title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* 快捷键分区里只读行的名称（Row 组件）与可编辑行保持同一字号。 */
+.shortcut-group__list .settings-row__name {
+  font-size: 12px;
+}
+
+/* 只读行（Row）与可编辑行（.shortcut-setting）保持同一行高。 */
+.shortcut-group__list .settings-row {
+  padding: 7px 0;
+}
+
+.shortcut-help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 45%);
+  animation: settings-fade 0.12s ease;
+}
+
+.dark .shortcut-help-overlay {
+  background: rgb(0 0 0 / 60%);
+}
+
+.shortcut-help-dialog {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  animation: settings-rise 0.14s ease;
+}
+
+.shortcut-help-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 20px 22px 0;
+}
+
+.shortcut-help-dialog__icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.shortcut-help-dialog__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.shortcut-help-dialog__close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.shortcut-help-dialog__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/*
+ * 滚动容器：横向不设内边距，让滚动条贴到弹窗右边缘；
+ * 内容留白由内层 body-inner 承担（与设置页 .settings-section 的滚动条处理一致）。
+ */
+.shortcut-help-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.shortcut-help-dialog__body-inner {
+  padding: 12px 22px 20px;
+}
+
+.shortcut-help-group {
+  margin-bottom: 12px;
+}
+
+.shortcut-help-group__title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.shortcut-help-group__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shortcut-help-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.shortcut-help-row:last-child {
+  border-bottom: none;
+}
+
+.shortcut-help-row__label {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* ===== 设置页：可编辑快捷键行 ===== */
+.shortcuts-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+
+.shortcut-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.shortcut-setting:last-child {
+  border-bottom: none;
+}
+
+.shortcut-setting__label {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.shortcut-setting__control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.shortcut-setting__error {
+  max-width: 220px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--status-blocked);
+  text-align: right;
+}
+
+/* 可编辑的键位徽标：hover 提示可点击，捕获中高亮，已覆盖强调 */
+.shortcut-key--editable {
+  cursor: pointer;
+  border: none;
+  padding: 3px 9px;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.shortcut-key--editable:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.shortcut-key--capturing {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.shortcut-key--overridden {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.shortcut-setting__reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.shortcut-setting__reset:hover {
+  background: var(--bg-hover);
+  color: var(--status-blocked);
 }

@@ -13,9 +13,15 @@
  * 选中的新标签如果原本是停止态，也能被 focusPane 自动拉起。
  */
 
-import { useLayoutStore, viewOfPane, viewPaneIds, type View } from '../stores/layoutStore';
+import {
+  useLayoutStore,
+  viewOfPane,
+  viewPaneIds,
+  viewProjectId,
+  type View,
+} from '../stores/layoutStore';
 import { useSessionStore } from '../stores/sessionStore';
-import { focusPane, respawnPane } from '../ipc/client';
+import { closePane, focusPane, respawnPane } from '../ipc/client';
 
 export function activateAndReviveView(view: View, focusedPaneId: string): void {
   // 先激活视图，给出即时的视觉反馈
@@ -59,5 +65,70 @@ export function focusSurvivorBeforeClose(paneId: string): void {
   const next = panes.find((p) => p.projectId === closing.projectId && p.paneId !== paneId);
   if (next) {
     focusPane(next.paneId);
+  }
+}
+
+/** 当前项目过滤后的可见视图（与 Layout 传给 ViewTabs 的 projectViews 一致）。 */
+export function visibleProjectViews(): View[] {
+  const { views } = useLayoutStore.getState();
+  const state = useSessionStore.getState().state;
+  const focusedPane = state.panes.find((p) => p.paneId === state.focusedPaneId) ?? null;
+  const currentProjectId = focusedPane?.projectId ?? null;
+  if (!currentProjectId) return views;
+  const byId = new Map(state.panes.map((p) => [p.paneId, p]));
+  return views.filter((v) => viewProjectId(v, byId) === currentProjectId);
+}
+
+/** 当前激活的可见视图；无可见视图返回 null。 */
+export function activeProjectView(): View | null {
+  const views = visibleProjectViews();
+  if (views.length === 0) return null;
+  const { activeViewId } = useLayoutStore.getState();
+  return views.find((v) => v.id === activeViewId) ?? views[0];
+}
+
+/** 激活视图并恢复其中停止态智能体（与 ViewTabs 点标签语义一致）。 */
+export function activateViewTab(view: View): void {
+  const firstId = viewPaneIds(view)[0] ?? null;
+  if (firstId) {
+    activateAndReviveView(view, firstId);
+  } else {
+    useLayoutStore.getState().activateView(view.id);
+  }
+}
+
+/** 按可见顺序激活第 index（0-based）个视图。 */
+export function activateViewByIndex(index: number): void {
+  const view = visibleProjectViews()[index];
+  if (view) activateViewTab(view);
+}
+
+/** 按可见顺序切换到上一个/下一个视图（环形）。 */
+export function activateAdjacentView(delta: 1 | -1): void {
+  const views = visibleProjectViews();
+  if (views.length === 0) return;
+  const { activeViewId } = useLayoutStore.getState();
+  const current = Math.max(0, views.findIndex((v) => v.id === activeViewId));
+  const next = (current + delta + views.length) % views.length;
+  activateViewTab(views[next]);
+}
+
+/**
+ * 关闭一个视图标签：先关闭其内所有 pane（杀进程），再收起视图并激活相邻视图。
+ * 与 ViewTabs 的 closeTab 语义一致。
+ */
+export function closeViewTab(view: View): void {
+  const { activeViewId } = useLayoutStore.getState();
+  const visible = visibleProjectViews();
+  const closingActive = activeViewId === view.id;
+  const nextView = closingActive ? visible.find((v) => v.id !== view.id) ?? null : null;
+
+  for (const id of viewPaneIds(view)) {
+    closePane(id);
+  }
+  useLayoutStore.getState().closeView(view.id, nextView?.id ?? null);
+
+  if (closingActive && nextView) {
+    activateViewTab(nextView);
   }
 }

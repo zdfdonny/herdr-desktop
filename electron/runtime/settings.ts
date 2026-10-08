@@ -19,6 +19,7 @@ const DEFAULTS: AppSettings = {
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: false,
+  shortcuts: {},
 };
 
 function settingsPath(): string {
@@ -40,6 +41,7 @@ export class SettingsStore {
         proxyUrl: normalizeProxyUrl(parsed.proxyUrl),
         proxyAgents: normalizeProxyAgents(parsed.proxyAgents),
         integrationsOnboarded: parsed.integrationsOnboarded === true,
+        shortcuts: normalizeShortcuts(parsed.shortcuts),
       };
     } catch {
       this.settings = { ...DEFAULTS };
@@ -99,6 +101,27 @@ export class SettingsStore {
     return this.get();
   }
 
+  /** 设置单个快捷键覆盖；accelerator 为 null 表示恢复默认。 */
+  async setShortcut(action: string, accelerator: string | null): Promise<AppSettings> {
+    const key = action.trim();
+    const next = { ...this.settings.shortcuts };
+    if (key && accelerator && accelerator.trim()) {
+      next[key] = accelerator.trim();
+    } else if (key) {
+      delete next[key];
+    }
+    this.settings.shortcuts = next;
+    await this.save();
+    return this.get();
+  }
+
+  /** 清空所有快捷键覆盖。 */
+  async resetShortcuts(): Promise<AppSettings> {
+    this.settings.shortcuts = {};
+    await this.save();
+    return this.get();
+  }
+
   private async save(): Promise<void> {
     const file = settingsPath();
     const tmp = `${file}.tmp`;
@@ -137,6 +160,18 @@ function normalizeProxyAgents(value: unknown): Record<string, boolean> {
   for (const [key, enabled] of Object.entries(value as Record<string, unknown>)) {
     if (key && enabled === true) {
       result[key] = true;
+    }
+  }
+  return result;
+}
+
+/** shortcuts 归一化：只保留非空字符串值的键。 */
+function normalizeShortcuts(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, accelerator] of Object.entries(value as Record<string, unknown>)) {
+    if (key && typeof accelerator === 'string' && accelerator.trim()) {
+      result[key] = accelerator.trim();
     }
   }
   return result;

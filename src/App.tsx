@@ -19,6 +19,7 @@ import { useLayoutStore } from './stores/layoutStore';
 import { useWebStore } from './stores/webStore';
 import { t } from './i18n';
 import { Layout } from './components/Layout';
+import { dispatchShortcut, matchShortcut } from './shortcuts';
 
 export default function App() {
   const setState = useSessionStore((s) => s.setState);
@@ -106,6 +107,9 @@ export default function App() {
           });
           break;
         }
+        case 'ui:shortcut':
+          dispatchShortcut(message.payload.action, message.payload.index);
+          break;
         default:
           break;
       }
@@ -146,6 +150,26 @@ export default function App() {
     media.addEventListener('change', handler);
     return () => media.removeEventListener('change', handler);
   }, [setSystemPrefersDark]);
+
+  /*
+   * 全局快捷键兜底：焦点在终端（xterm）里时，应用菜单 accelerator 在部分平台
+   * 不触发；这里用 capture 阶段 keydown 拦截并分发，保证标签切换、分屏/聚焦窗格等
+   * 都能在终端聚焦时生效。改键捕获期间跳过，避免与 ShortcutSettingRow 的捕获监听
+   * 互相干扰。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (useUiStore.getState().shortcutCapturing) return;
+      const overrides = useSettingsStore.getState().settings.shortcuts;
+      const match = matchShortcut(e, overrides);
+      if (!match) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dispatchShortcut(match.action, match.index);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   return <Layout />;
 }

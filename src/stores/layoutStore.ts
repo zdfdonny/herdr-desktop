@@ -157,12 +157,24 @@ export function viewPaneIds(view: View): string[] {
  *
  * 正常情况下一个视图内的 pane 都属于同一项目（分屏只会在同项目内创建空位）；
  * 即使 reconcile 填空位的兜底把不同项目的 pane 塞进同一视图，取第一个也足以
- * 用于「标签栏按当前项目过滤」的展示分组。空视图（无任何 pane）返回 null。
+ * 用于「标签栏按当前项目过滤」的展示分组。
+ * 空视图（无任何 pane）回退到空位（EmptyLeaf）的 projectId——新建标签就是
+ * 一个只含空位的视图，也要能被标签栏按当前项目过滤出来。
  */
 export function viewProjectId(view: View, panesById: Map<string, PaneState>): string | null {
   for (const id of viewPaneIds(view)) {
     const projectId = panesById.get(id)?.projectId;
     if (projectId) return projectId;
+  }
+  return emptyLeafProjectId(view.tree);
+}
+
+/** 取树里第一个空位（EmptyLeaf）的 projectId，没有则返回 null。 */
+function emptyLeafProjectId(node: LayoutNode | null): string | null {
+  if (!node) return null;
+  if (node.type === 'empty') return node.projectId;
+  if (node.type === 'split') {
+    return emptyLeafProjectId(node.children[0]) ?? emptyLeafProjectId(node.children[1]);
   }
   return null;
 }
@@ -563,6 +575,8 @@ interface LayoutStore {
   lastSignature: string;
   setRatio: (nodeId: string, ratio: number) => void;
   splitPane: (paneId: string, direction: SplitDirection, projectId: string) => void;
+  /** 新建一个只含空位（等待选择智能体）的视图标签并激活。 */
+  newEmptyView: (projectId: string) => void;
   closeEmptySlot: (slotId: string) => void;
   activateView: (viewId: string) => void;
   /** 激活包含指定 pane 的视图；找不到则忽略。返回是否命中。 */
@@ -643,6 +657,12 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
         v.id === target.id ? { ...v, tree: splitAtPane(v.tree, paneId, direction, projectId) } : v,
       );
       commit(next, activeViewId);
+    },
+
+    newEmptyView: (projectId) => {
+      const { views } = get();
+      const view = makeView(makeEmptyLeaf(projectId));
+      commit([...views, view], view.id);
     },
 
     closeEmptySlot: (slotId) => {

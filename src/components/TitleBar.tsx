@@ -13,7 +13,7 @@
 
 import { useEffect } from 'react';
 import { useResolvedTheme } from '../stores/settingsStore';
-import { useSettingsOpen, useUiStore } from '../stores/uiStore';
+import { useAnyModalOpen } from '../stores/uiStore';
 import { setTitleBarTheme } from '../ipc/client';
 import { useT } from '../i18n';
 import { IconLogo } from './icons';
@@ -33,8 +33,11 @@ const OVERLAY_COLORS = {
 export function TitleBar() {
   const t = useT();
   const resolvedTheme = useResolvedTheme();
-  const settingsOpen = useSettingsOpen();
-  const onboardingOpen = useUiStore((s) => s.integrationsOnboardingOpen);
+  /*
+   * 任一 Modal 打开时都视为「有模态遮罩」：原生窗口按钮条绘制在最上层，
+   * CSS 遮罩盖不住，只能把它同步成遮罩压暗后的近似色（见 Modal 组件的 modalCount）。
+   */
+  const anyModalOpen = useAnyModalOpen();
 
   /*
    * 同步原生窗口按钮配色。
@@ -46,7 +49,6 @@ export function TitleBar() {
    * 原生 overlay 的 color 不支持透明度，只能用不透明近似色：
    * 浅色 = 45% 黑压 #fafafd（≈#8a8a8c），深色 = 60% 黑压 #0d0d0d（≈#050505）。
    */
-  const anyModalOpen = settingsOpen || onboardingOpen;
 
   useEffect(() => {
     const base = OVERLAY_COLORS[resolvedTheme];

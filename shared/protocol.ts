@@ -18,6 +18,7 @@ import type {
   ThemePreference,
   Language,
 } from './state';
+import type { ShortcutActionId } from './shortcuts';
 
 /** 统一 IPC envelope。 */
 export interface IpcEnvelope<T = unknown> {
@@ -74,7 +75,22 @@ export type ControlMessage =
       type: 'control:set-integrations-onboarded';
       version: 1;
     })
-  | (IpcEnvelope<{ kind: string; data: string }> & { type: 'control:named'; version: 1 });
+  | (IpcEnvelope<{ kind: string; data: string }> & { type: 'control:named'; version: 1 })
+  /*
+   * 改键：设置单个动作的自定义 accelerator；accelerator 为 null 表示恢复默认。
+   */
+  | (IpcEnvelope<{ action: string; accelerator: string | null }> & {
+      type: 'control:set-shortcut';
+      version: 1;
+    })
+  | (IpcEnvelope<Record<string, never>> & { type: 'control:reset-shortcuts'; version: 1 })
+  /*
+   * 改键捕获期间：begin 让主进程忽略菜单快捷键（setIgnoreMenuShortcuts(true)），
+   * 否则当前已注册的菜单 accelerator 会先于渲染层 keydown 被消费、无法捕获。
+   * end 恢复菜单快捷键并重建菜单。
+   */
+  | (IpcEnvelope<Record<string, never>> & { type: 'control:begin-shortcut-capture'; version: 1 })
+  | (IpcEnvelope<Record<string, never>> & { type: 'control:end-shortcut-capture'; version: 1 });
 
 /** Main → Renderer 的全部消息联合。 */
 export type MainToRendererMessage =
@@ -86,6 +102,7 @@ export type MainToRendererMessage =
   | { type: 'agent:availability'; payload: AgentAvailabilityPayload }
   | { type: 'ui:open-settings'; payload: Record<string, never> }
   | { type: 'ui:add-project'; payload: Record<string, never> }
+  | { type: 'ui:shortcut'; payload: { action: ShortcutActionId; index?: number } }
   | {
       type: 'web:ready';
       payload: { paneId: string; url: string };

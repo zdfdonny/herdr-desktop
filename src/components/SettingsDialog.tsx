@@ -21,7 +21,18 @@ import {
   IconInfo,
   IconSearch,
   IconClose,
+  IconKeyboard,
 } from './icons';
+import { isMac } from '../platform';
+import {
+  SHORTCUT_GROUPS,
+  SHORTCUT_GROUP_LABEL_KEYS,
+  shortcutsByGroup,
+  displayAccelerator,
+  isRemappable,
+} from '@shared/shortcuts';
+import { ShortcutSettingRow } from './ShortcutSettingRow';
+import { Modal } from './Modal';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; labelKey: MessageKey }> = [
   { value: 'system', labelKey: 'theme.system' },
@@ -97,6 +108,12 @@ const SECTIONS: Section[] = [
     keywords: ['proxy', '代理', '网络', 'network', 'http', 'socks'],
   },
   {
+    id: 'shortcuts',
+    Icon: IconKeyboard,
+    labelKey: 'settings.shortcuts',
+    keywords: ['shortcuts', '快捷键', 'keyboard', '键盘', 'keybind', '按键'],
+  },
+  {
     id: 'about',
     Icon: IconInfo,
     labelKey: 'settings.about',
@@ -112,13 +129,15 @@ export function SettingsDialog() {
   const setFontSize = useSettingsStore((s) => s.setFontSize);
   const setProxyUrl = useSettingsStore((s) => s.setProxyUrl);
   const setAgentProxy = useSettingsStore((s) => s.setAgentProxy);
+  const setShortcut = useSettingsStore((s) => s.setShortcut);
+  const resetShortcuts = useSettingsStore((s) => s.resetShortcuts);
   const closeSettings = useUiStore((s) => s.closeSettings);
+  const overrides = settings.shortcuts;
 
   const initialSection = useUiStore((s) => s.settingsSection);
   const [active, setActive] = useState<SectionId>(initialSection ?? 'general');
   const [query, setQuery] = useState('');
   const [appInfo, setAppInfo] = useState<{ version: string; platform: string } | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   /** 代理地址输入框，检测时读取其当前值（可能尚未失焦提交）。 */
   const proxyInputRef = useRef<HTMLInputElement>(null);
   /** 代理检测状态：null 表示尚未检测。 */
@@ -147,15 +166,6 @@ export function SettingsDialog() {
       .catch(() => setAppInfo(null));
   }, []);
 
-  // Esc 关闭
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeSettings();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [closeSettings]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return SECTIONS;
@@ -174,15 +184,13 @@ export function SettingsDialog() {
   }, [filtered, active]);
 
   return (
-    <div className="settings-overlay" role="presentation" onMouseDown={closeSettings}>
-      <div
-        ref={dialogRef}
-        className="settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('settings.title')}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+    <Modal
+      overlayClassName="settings-overlay"
+      dialogClassName="settings-dialog"
+      ariaLabel={t('settings.title')}
+      onOverlayMouseDown={closeSettings}
+      onClose={closeSettings}
+    >
         {/* 左侧导航 */}
         <nav className="settings-nav">
           <div className="settings-nav__search">
@@ -354,6 +362,43 @@ export function SettingsDialog() {
               </Section>
             )}
 
+            {active === 'shortcuts' && (
+              <Section title={t('settings.shortcuts')}>
+                <div className="shortcuts-toolbar">
+                  <p className="shortcuts-hint">{t('settings.shortcutsHint')}</p>
+                  {overrides && Object.keys(overrides).length > 0 && (
+                    <button type="button" className="button button--small" onClick={resetShortcuts}>
+                      {t('shortcuts.resetAll')}
+                    </button>
+                  )}
+                </div>
+                {SHORTCUT_GROUPS.map((group) => (
+                  <div key={group} className={`shortcut-group shortcut-group--${group}`}>
+                    <h3 className="shortcut-group__title">
+                      {t(SHORTCUT_GROUP_LABEL_KEYS[group])}
+                    </h3>
+                    <div className="shortcut-group__list">
+                      {shortcutsByGroup(group).map((def) =>
+                        !isRemappable(def) ? (
+                          <Row key={def.action} label={t(def.labelKey)}>
+                            <kbd className="shortcut-key">{displayAccelerator(def, isMac, overrides)}</kbd>
+                          </Row>
+                        ) : (
+                          <ShortcutSettingRow
+                            key={def.action}
+                            def={def}
+                            overrides={overrides}
+                            onCommit={(action, accelerator) => setShortcut(action, accelerator)}
+                            onReset={(action) => setShortcut(action, null)}
+                          />
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </Section>
+            )}
+
             {active === 'about' && (
               <Section title={t('settings.about')}>
                 <Row label={t('settings.version')}>
@@ -366,8 +411,7 @@ export function SettingsDialog() {
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

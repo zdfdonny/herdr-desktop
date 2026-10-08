@@ -6,7 +6,7 @@
  *
  * 标签默认名是固定的 "New tab"，不跟随内部 agent 变化；
  * 分屏后视图里有多个 agent，用第一个的名字会误导。
- * 右键标签可就地重命名，清空则恢复默认名。
+ * 右键标签（或快捷键 F2）可就地重命名，清空则恢复默认名。
  *
  * 关闭标签会**连同标签里的智能体一起关闭**（杀进程、移除会话条目）。
  */
@@ -14,10 +14,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useLayoutStore, MAX_VIEW_NAME_LENGTH, viewPaneIds, type View } from '../stores/layoutStore';
-import { closePane } from '../ipc/client';
+import { useUiStore } from '../stores/uiStore';
 import { useT } from '../i18n';
 import { IconClose } from './icons';
-import { activateAndReviveView } from './viewActivation';
+import { activateViewTab, closeViewTab } from './viewActivation';
 
 interface ViewTabsProps {
   views: View[];
@@ -28,63 +28,13 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
   const t = useT();
   const panes = useSessionStore((s) => s.state.panes);
   const byId = new Map(panes.map((p) => [p.paneId, p]));
-  /** 正在重命名的标签 id；同一时刻只有一个。 */
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  /**
-   * 激活标签：切换到该视图，并自动恢复其中停止态的智能体。
-   *
-   * 只切 activeViewId 不够：视图里的停止态 pane 仍会显示「已停止」提示，
-   * 而且 focusPaneId 还停在旧视图，下一次 reconcile 会把激活的视图又顶回旧视图。
-   * 这里把焦点给视图内第一个 pane，并恢复其余停止态 pane（见 activateAndReviveView）。
+  /*
+   * 正在重命名的标签 id 放在 uiStore 而非本地 state：
+   * 快捷键 F2 需要从组件外触发重命名，本地 state 无法被外部访问。
    */
-  const activateTab = (view: View) => {
-    const firstId = viewPaneIds(view)[0] ?? null;
-    if (firstId) {
-      activateAndReviveView(view, firstId);
-    } else {
-      useLayoutStore.getState().activateView(view.id);
-    }
-  };
-
-  /**
-   * 关闭标签：先关闭标签里所有智能体（杀进程 + 移除会话条目），
-   * 再收起视图。closeView 会把这些 pane 记入 hiddenPaneIds，
-   * 避免快照间隙里 reconcile 把正在关闭的 pane 铺成新视图。
-   *
-   * 若关的是当前激活标签，closeView 会把激活项切到第一个标签——但那只改
-   * activeViewId，不会像手动点标签那样恢复停止态智能体，导致跳过去的标签
-   * 停在「已停止」。这里在切换后补一次「激活 + 恢复」，与 activateTab 一致。
-   */
-  const closeTab = (view: View) => {
-    const closingActive = activeViewId === view.id;
-    /*
-     * 提前确定关闭激活标签后的下一个标签：按 `views` prop（当前项目过滤后的
-     * 标签顺序）取第一个剩余标签。同项目没有剩余标签时传 null，closeView 会
-     * 清空激活项，等 Main 快照把 focusedPaneId 清空后内容区显示空状态。
-     */
-    const nextView = closingActive
-      ? views.find((v) => v.id !== view.id) ?? null
-      : null;
-
-    for (const id of viewPaneIds(view)) {
-      closePane(id);
-    }
-    useLayoutStore.getState().closeView(view.id, nextView?.id ?? null);
-
-    if (closingActive && nextView) {
-      /*
-       * 补一次「激活 + 恢复」：closeView 只把 activeViewId 切到新标签，
-       * 不会像手动点标签那样恢复停止态智能体，导致跳过去的标签停在「已停止」。
-       */
-      const firstId = viewPaneIds(nextView)[0] ?? null;
-      if (firstId) {
-        activateAndReviveView(nextView, firstId);
-      } else {
-        useLayoutStore.getState().activateView(nextView.id);
-      }
-    }
-  };
+  const renamingViewId = useUiStore((s) => s.renamingViewId);
+  const startRenameView = useUiStore((s) => s.startRenameView);
+  const stopRenameView = useUiStore((s) => s.stopRenameView);
 
   return (
     <div className="view-tabs" role="tablist">
@@ -103,16 +53,16 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
              */
             onContextMenu={(e) => {
               e.preventDefault();
-              setEditingId(view.id);
+              startRenameView(view.id);
             }}
           >
-            {editingId === view.id ? (
+            {renamingViewId === view.id ? (
               <ViewTabRename
                 initial={view.name}
-                onDone={() => setEditingId(null)}
+                onDone={stopRenameView}
                 onCommit={(name) => {
                   useLayoutStore.getState().renameView(view.id, name);
-                  setEditingId(null);
+                  stopRenameView();
                 }}
               />
             ) : (
@@ -120,7 +70,7 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
                 <button
                   type="button"
                   className="view-tab__label"
-                  onClick={() => activateTab(view)}
+                  onClick={() => activateViewTab(view)}
                   title={paneTitle(view, paneIds, byId, t('view.renameHint'))}
                 >
                   <span className="view-tab__text">{view.name}</span>
@@ -133,7 +83,7 @@ export function ViewTabs({ views, activeViewId }: ViewTabsProps) {
                   className="view-tab__close"
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTab(view);
+                    closeViewTab(view);
                   }}
                   title={t('view.close')}
                   aria-label={t('view.close')}

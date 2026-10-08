@@ -81,6 +81,10 @@ export class IpcRouter {
    * 语言切换后回调，由主进程注入，用于重建应用菜单（菜单文案随语言变化）。
    */
   onLanguageChange?: () => void;
+  /**
+   * 快捷键覆盖变化后回调，由主进程注入，用于重建应用菜单（accelerator 随覆盖变化）。
+   */
+  onShortcutsChange?: () => void;
 
   constructor() {
     this.pty = new PtyManager({
@@ -92,6 +96,7 @@ export class IpcRouter {
       onExit: (paneId, exitCode, signal) => {
         this.pty.kill(paneId);
         this.session.closePane(paneId);
+        this.reviveFocusedPaneIfStopped();
         this.broadcast({
           type: IPC.PTY_EXIT,
           payload: { paneId, exitCode, signal: signal ?? null },
@@ -275,6 +280,23 @@ export class IpcRouter {
     ipcMain.on(IPC.NAMED, (_event, payload: { kind: string; data: string }) => {
       this.handleNamed(payload);
     });
+    ipcMain.on(
+      IPC.SET_SHORTCUT,
+      (_event, payload: { action: string; accelerator: string | null }) => {
+        void this.settings.setShortcut(payload.action, payload.accelerator).then((settings) => {
+          this.pushSettings(settings);
+          this.onShortcutsChange?.();
+        });
+      },
+    );
+    ipcMain.on(IPC.RESET_SHORTCUTS, () => {
+      void this.settings.resetShortcuts().then((settings) => {
+        this.pushSettings(settings);
+        this.onShortcutsChange?.();
+      });
+    });
+    ipcMain.on(IPC.BEGIN_SHORTCUT_CAPTURE, () => this.setShortcutCaptureMode(true));
+    ipcMain.on(IPC.END_SHORTCUT_CAPTURE, () => this.setShortcutCaptureMode(false));
 
     // 目录选择对话框（添加项目）
     ipcMain.handle('herdr:pick-directory', async (_event, options?: { title?: string }) => {
@@ -306,8 +328,19 @@ export class IpcRouter {
     });
   }
 
-  private handleNamed(payload: { kind: string; data: string }): void {
-    try {
+  /**
+   * 改键捕获期间：忽略菜单快捷键，让 keydown 到达渲染层。
+   *
+   * 菜单 accelerator（如当前已注册的 CmdOrCtrl+Shift+X）会先于渲染层 keydown
+   * 被消费，不忽略的话无法把这类组合键捕获下来。结束捕获时恢复。
+   */
+  private setShortcutCaptureMode(capturing: boolean): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.setIgnoreMenuShortcuts(capturing);
+    }
+  }
+
+  private handleNamed(payload: { kind: string; data: string }): void {    try {
       switch (payload.kind) {
         case 'pty:write': {
           const { paneId, data } = JSON.parse(payload.data) as { paneId: string; data: string };
@@ -899,6 +932,25 @@ export class IpcRouter {
     return available;
   }
 
+  /**
+   * 关闭/退出一个 pane 后，若焦点被转移到停止态 pane，把它也拉起。
+   *
+   * 场景：终端里 Ctrl+C 退出聚焦的 agent → onExit → session.closePane 把焦点
+   * 转移到同项目第一个 pane（可能是恢复出的停止态）。渲染层不参与这条路径，
+   * 不会像侧栏关闭那样先 focusSurvivorBeforeClose 恢复幸存者，因此这里补一次。
+   */
+  private reviveFocusedPaneIfStopped(): void {
+    const focusedPaneId = this.session.snapshot().focusedPaneId;
+    if (!focusedPaneId) return;
+    const pane = this.session.getPane(focusedPaneId);
+    if (!pane) return;
+    if (pane.kind === 'web') {
+      this.tryReviveWeb(focusedPaneId);
+    } else {
+      this.tryRevive(focusedPaneId);
+    }
+  }
+
   private closePane(paneId: string): void {
     this.pty.kill(paneId);
     this.web.release(paneId);
@@ -907,6 +959,7 @@ export class IpcRouter {
     this.pendingSizes.delete(paneId);
     this.revivingPanes.delete(paneId);
     this.session.closePane(paneId);
+    this.reviveFocusedPaneIfStopped();
     this.pushSnapshot();
   }
 

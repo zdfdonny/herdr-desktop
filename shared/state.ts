@@ -244,6 +244,13 @@ export interface AppSettings {
    * 下次在哪找到），并立即把它置为 true，保证只引导一次。
    */
   integrationsOnboarded: boolean;
+  /**
+   * 快捷键覆盖：ShortcutActionId → Electron accelerator。
+   *
+   * 只存被用户改过的动作；未覆盖的动作使用 shared/shortcuts.ts 的默认键位。
+   * 值为 null/空串的条目会被归一化丢弃。旧版本 settings.json 缺失时按空处理。
+   */
+  shortcuts?: Record<string, string>;
 }
 
 /** agent 检测 manifest（继承 herdr 的声明式检测思想）。 */

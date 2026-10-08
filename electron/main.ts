@@ -10,6 +10,7 @@ import { IpcRouter } from './ipc/router';
 import { IPC } from './ipc/protocol';
 import { readClipboard } from './runtime/clipboard';
 import { translate, type MessageKey } from '../shared/i18n';
+import { SHORTCUTS, indexedAccelerator, type ShortcutActionId } from '../shared/shortcuts';
 
 /**
  * 主题对应的窗口底色与原生标题栏按钮配色，需与 global.css 的 --bg-app 一致。
@@ -160,6 +161,27 @@ function buildMenu(): void {
   const t = (key: MessageKey, vars?: Record<string, string | number>) =>
     translate(lang, key, vars);
 
+  /**
+   * 单个快捷键菜单项：accelerator 触发后经 `ui:shortcut` 转发给渲染层分发，
+   * 与既有 ui:open-settings / ui:add-project 的乐观更新流程保持一致。
+   * accelerator 优先取用户自定义覆盖（AppSettings.shortcuts），否则用默认键位。
+   */
+  const overrides = router.getSettings().shortcuts;
+  const shortcutItem = (action: ShortcutActionId): Electron.MenuItemConstructorOptions => {
+    const def = SHORTCUTS.find((s) => s.action === action);
+    if (!def) return { label: action };
+    return {
+      label: t(def.labelKey),
+      accelerator: overrides?.[def.action] ?? def.accelerator,
+      click: () => sendUi(IPC.UI_SHORTCUT, { action: def.action }),
+    };
+  };
+  /** switch-tab 是 indexed（1..9）动作，需展开为 9 个子菜单项。 */
+  const switchTabDef = SHORTCUTS.find((s) => s.action === 'switch-tab');
+  const switchTabBase = switchTabDef
+    ? overrides?.[switchTabDef.action] ?? switchTabDef.accelerator
+    : 'CmdOrCtrl+1';
+
   const template: Electron.MenuItemConstructorOptions[] = [
     // macOS 必须有 App 菜单（含 About / Settings / Quit），否则首项菜单行为异常
     ...(isMac
@@ -189,7 +211,7 @@ function buildMenu(): void {
       submenu: [
         {
           label: t('menu.addProject'),
-          accelerator: 'CmdOrCtrl+Shift+N',
+          accelerator: 'CmdOrCtrl+Shift+O',
           click: () => sendUi(IPC.UI_ADD_PROJECT),
         },
         { type: 'separator' as const },
@@ -252,6 +274,46 @@ function buildMenu(): void {
             ]),
       ],
     },
+    {
+      label: t('menu.view'),
+      submenu: [
+        shortcutItem('new-tab'),
+        shortcutItem('next-tab'),
+        shortcutItem('previous-tab'),
+        { type: 'separator' as const },
+        ...(switchTabDef
+          ? [
+              {
+                label: t('shortcuts.switchTab'),
+                submenu: Array.from({ length: 9 }, (_, i) => {
+                  const n = i + 1;
+                  return {
+                    label: t('shortcuts.switchTabN', { n }),
+                    accelerator: indexedAccelerator(switchTabBase, n),
+                    click: () => sendUi(IPC.UI_SHORTCUT, { action: 'switch-tab', index: n }),
+                  };
+                }),
+              },
+            ]
+          : []),
+        { type: 'separator' as const },
+        shortcutItem('close-tab'),
+        shortcutItem('rename-tab'),
+        { type: 'separator' as const },
+        shortcutItem('split-vertical'),
+        shortcutItem('split-horizontal'),
+        shortcutItem('close-pane'),
+        { type: 'separator' as const },
+        shortcutItem('focus-pane-left'),
+        shortcutItem('focus-pane-down'),
+        shortcutItem('focus-pane-up'),
+        shortcutItem('focus-pane-right'),
+      ],
+    },
+    {
+      label: t('menu.help'),
+      submenu: [shortcutItem('help')],
+    },
     // macOS 约定：必须有 Window 菜单（Cmd+M 最小化等）
     ...(isMac
       ? [
@@ -303,6 +365,8 @@ app.whenReady().then(async () => {
   router.onTitleBarTheme = setTitleBarOverlay;
   // 语言变化会改变菜单文案，交给 buildMenu 重建
   router.onLanguageChange = buildMenu;
+  // 快捷键覆盖变化会改变菜单 accelerator，交给 buildMenu 重建
+  router.onShortcutsChange = buildMenu;
   // 恢复上次会话（项目/agent 元数据）。必须在创建窗口前完成，
   // 这样 did-finish-load 推送的首个快照就包含恢复结果，渲染端无需二次同步。
   await router.restoreSession();

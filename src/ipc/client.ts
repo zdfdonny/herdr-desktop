@@ -262,3 +262,27 @@ export function reportAgentSession(
     payload: { kind: 'agent:report-session', data: JSON.stringify({ paneId, ...report }) },
   });
 }
+
+/** 设置单个快捷键覆盖；accelerator 为 null 表示恢复默认。 */
+export function setShortcut(action: string, accelerator: string | null): void {
+  sendControl({
+    type: 'control:set-shortcut',
+    version: 1,
+    payload: { action, accelerator },
+  });
+}
+
+/** 清空所有快捷键覆盖。 */
+export function resetShortcuts(): void {
+  sendControl({ type: 'control:reset-shortcuts', version: 1, payload: {} });
+}
+
+/** 进入改键捕获：让主进程忽略菜单快捷键，keydown 才能到达渲染层。 */
+export function beginShortcutCapture(): void {
+  sendControl({ type: 'control:begin-shortcut-capture', version: 1, payload: {} });
+}
+
+/** 结束改键捕获：恢复菜单快捷键。 */
+export function endShortcutCapture(): void {
+  sendControl({ type: 'control:end-shortcut-capture', version: 1, payload: {} });
+}

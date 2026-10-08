@@ -23,7 +23,7 @@ if (!existsSync(bundlePath)) {
   console.error('missing .tmp-layout.mjs — run: npm run test:layout');
   process.exit(2);
 }
-const { useLayoutStore } = await import(pathToFileURL(bundlePath).href);
+const { useLayoutStore, viewProjectId } = await import(pathToFileURL(bundlePath).href);
 
 const results = [];
 function check(name, actual, expected) {
@@ -186,6 +186,21 @@ store.getState().closeView(lastViewId);
 views = store.getState().views;
 check('关闭激活的最后一个标签：视图数变为 2', views.length, 2);
 check('关闭激活的最后一个标签：直接选中第一个标签', store.getState().activeViewId, firstViewId);
+
+// ---- 场景十二：newEmptyView 创建空位视图，viewProjectId 取空位项目 ----
+store.getState().reset();
+store.getState().reconcile([pane('A', 'p1', true)], 'A');
+store.getState().newEmptyView('p1');
+views = store.getState().views;
+check('newEmptyView 后视图数 = 2', views.length, 2);
+check('newEmptyView 激活新空位视图', store.getState().activeViewId, views[views.length - 1].id);
+const emptyView = views[views.length - 1];
+check('空位视图无 pane 叶子', collectPanes(emptyView.tree), []);
+check('空位视图的 projectId 取自空位', viewProjectId(emptyView, new Map()), 'p1');
+// 空位视图能通过 reconcile 存活（空位被保留，不被剪掉）
+store.getState().reconcile([pane('A', 'p1', true)], 'A');
+views = store.getState().views;
+check('reconcile 后空位视图仍保留', views.length, 2);
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
