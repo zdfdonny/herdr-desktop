@@ -141,7 +141,14 @@ export class WebAgentManager {
 
   /** 启动共享进程并等待就绪（不负责引用计数，由 acquire 统一登记）。 */
   private async spawnShared(env: Record<string, string>, cwd?: string): Promise<WebSpawnResult> {
-    const executable = resolveExecutable(DSH_COMMAND);
+    /*
+     * 必须传入 `env.PATH`（登录 shell 解析出的那份），与 pty-manager 一致：
+     * 从 Finder / Dock 启动的 macOS 应用拿不到用户真实 PATH（通常只有
+     * `/usr/bin:/bin:/usr/sbin:/sbin`），homebrew 的 `/opt/homebrew/bin` 和
+     * npm global 都不在其中，否则会出现「列表显示已安装、点进去却报
+     * Command not found」的自相矛盾结果。
+     */
+    const executable = resolveExecutable(DSH_COMMAND, env.PATH ?? env.Path ?? '');
     if (!executable) {
       return {
         ok: false,
