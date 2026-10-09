@@ -18,6 +18,7 @@ import { useUiStore } from './stores/uiStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { useWebStore } from './stores/webStore';
 import { t } from './i18n';
+import { playNotificationSound } from './sound';
 import { Layout } from './components/Layout';
 import { dispatchShortcut, matchShortcut } from './shortcuts';
 
@@ -79,20 +80,27 @@ export default function App() {
           break;
         case 'agent:status': {
           const { status, label } = message.payload;
+          const settings = useSettingsStore.getState().settings;
           const titleKey = status === 'blocked' ? 'agent.notifyBlocked' : 'agent.notifyDone';
           const titleVars = { name: label };
-          // 应用内 toast
-          useNotificationStore.getState().push({
-            kind: 'info',
-            titleKey,
-            titleVars,
-          });
+          // 声音（受「声音」开关控制）：blocked → request，done → done
+          if (settings.soundEnabled) {
+            playNotificationSound(status === 'blocked' ? 'request' : 'done');
+          }
+          // 通知（受「通知」开关控制）：应用内 toast；
           // blocked 且窗口未聚焦时，额外发系统通知（HTML5 Notification 由渲染端本地化）
-          if (status === 'blocked' && !document.hasFocus()) {
-            try {
-              new Notification(t(titleKey, titleVars));
-            } catch {
-              /* 系统通知不可用时静默忽略 */
+          if (settings.toastEnabled) {
+            useNotificationStore.getState().push({
+              kind: 'info',
+              titleKey,
+              titleVars,
+            });
+            if (status === 'blocked' && !document.hasFocus()) {
+              try {
+                new Notification(t(titleKey, titleVars));
+              } catch {
+                /* 系统通知不可用时静默忽略 */
+              }
             }
           }
           break;

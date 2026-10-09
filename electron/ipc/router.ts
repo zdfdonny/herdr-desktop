@@ -277,6 +277,12 @@ export class IpcRouter {
           .then((settings) => this.pushSettings(settings));
       },
     );
+    ipcMain.on(IPC.SET_SOUND_ENABLED, (_event, payload: { enabled: boolean }) => {
+      void this.settings.setSoundEnabled(payload.enabled).then((settings) => this.pushSettings(settings));
+    });
+    ipcMain.on(IPC.SET_TOAST_ENABLED, (_event, payload: { enabled: boolean }) => {
+      void this.settings.setToastEnabled(payload.enabled).then((settings) => this.pushSettings(settings));
+    });
     ipcMain.on(IPC.NAMED, (_event, payload: { kind: string; data: string }) => {
       this.handleNamed(payload);
     });

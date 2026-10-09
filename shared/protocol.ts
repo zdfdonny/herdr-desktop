@@ -75,6 +75,8 @@ export type ControlMessage =
       type: 'control:set-integrations-onboarded';
       version: 1;
     })
+  | (IpcEnvelope<{ enabled: boolean }> & { type: 'control:set-sound-enabled'; version: 1 })
+  | (IpcEnvelope<{ enabled: boolean }> & { type: 'control:set-toast-enabled'; version: 1 })
   | (IpcEnvelope<{ kind: string; data: string }> & { type: 'control:named'; version: 1 })
   /*
    * 改键：设置单个动作的自定义 accelerator；accelerator 为 null 表示恢复默认。

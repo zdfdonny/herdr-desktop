@@ -213,6 +213,16 @@ export function setAgentProxy(command: string, enabled: boolean): void {
   sendControl({ type: 'control:set-agent-proxy', version: 1, payload: { command, enabled } });
 }
 
+/** 设置声音开关。 */
+export function setSoundEnabled(enabled: boolean): void {
+  sendControl({ type: 'control:set-sound-enabled', version: 1, payload: { enabled } });
+}
+
+/** 设置通知开关。 */
+export function setToastEnabled(enabled: boolean): void {
+  sendControl({ type: 'control:set-toast-enabled', version: 1, payload: { enabled } });
+}
+
 // store 内使用的别名，避免与同名 action 混淆
 export {
   setTheme as sendSetTheme,

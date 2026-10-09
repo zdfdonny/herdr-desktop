@@ -136,6 +136,10 @@ export interface Messages {
     proxyTestTimeout: string;
     proxyTestFailed: string;
     proxyTestAuth: string;
+    sound: string;
+    soundHint: string;
+    toast: string;
+    toastHint: string;
     integrations: string;
     integrationsHint: string;
     about: string;
@@ -328,6 +332,10 @@ const zhCN: Messages = {
     proxyTestTimeout: '连接超时，代理未响应',
     proxyTestFailed: '无法通过该代理建立连接',
     proxyTestAuth: '代理要求身份验证（407）',
+    sound: '声音',
+    soundHint: '智能体在后台完成或等待输入时播放提示音',
+    toast: '通知',
+    toastHint: '智能体在后台完成或等待输入时弹出通知',
     integrations: '集成',
     integrationsHint: '让智能体直接报告状态，而不是仅依赖进程检测',
     about: '关于',
@@ -521,6 +529,10 @@ const en: Messages = {
     proxyTestTimeout: 'Timed out; the proxy did not respond',
     proxyTestFailed: 'Could not connect through this proxy',
     proxyTestAuth: 'Proxy requires authentication (407)',
+    sound: 'Sound',
+    soundHint: 'Play a sound when an agent finishes or needs input in the background',
+    toast: 'Toast',
+    toastHint: 'Show a toast when an agent finishes or needs input in the background',
     integrations: 'Integrations',
     integrationsHint:
       'Let agents report their status directly instead of relying only on process detection',

@@ -54,6 +54,10 @@ export const IPC = {
   SET_AGENT_PROXY: 'control:set-agent-proxy',
   /** 标记集成引导已完成（首次启动引导弹窗关闭后置 true）。 */
   SET_INTEGRATIONS_ONBOARDED: 'control:set-integrations-onboarded',
+  /** 声音开关。 */
+  SET_SOUND_ENABLED: 'control:set-sound-enabled',
+  /** 通知开关。 */
+  SET_TOAST_ENABLED: 'control:set-toast-enabled',
   NAMED: 'control:named',
   /** 设置单个快捷键覆盖；accelerator 为 null 表示恢复默认。 */
   SET_SHORTCUT: 'control:set-shortcut',

@@ -99,6 +99,10 @@ const SECTIONS: Section[] = [
       'english',
       'chinese',
       '中文',
+      'sound',
+      '声音',
+      'notification',
+      '通知',
     ],
   },
   {
@@ -129,6 +133,8 @@ export function SettingsDialog() {
   const setFontSize = useSettingsStore((s) => s.setFontSize);
   const setProxyUrl = useSettingsStore((s) => s.setProxyUrl);
   const setAgentProxy = useSettingsStore((s) => s.setAgentProxy);
+  const setSoundEnabled = useSettingsStore((s) => s.setSoundEnabled);
+  const setToastEnabled = useSettingsStore((s) => s.setToastEnabled);
   const setShortcut = useSettingsStore((s) => s.setShortcut);
   const resetShortcuts = useSettingsStore((s) => s.resetShortcuts);
   const closeSettings = useUiStore((s) => s.closeSettings);
@@ -290,6 +296,32 @@ export function SettingsDialog() {
                     aria-label={t('settings.fontSize')}
                   />
                   <span className="settings-value">{settings.fontSize}px</span>
+                </Row>
+
+                <Row label={t('settings.sound')} hint={t('settings.soundHint')}>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.soundEnabled}
+                    aria-label={t('settings.sound')}
+                    className={`switch ${settings.soundEnabled ? 'switch--on' : ''}`}
+                    onClick={() => setSoundEnabled(!settings.soundEnabled)}
+                  >
+                    <span className="switch__knob" aria-hidden="true" />
+                  </button>
+                </Row>
+
+                <Row label={t('settings.toast')} hint={t('settings.toastHint')}>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.toastEnabled}
+                    aria-label={t('settings.toast')}
+                    className={`switch ${settings.toastEnabled ? 'switch--on' : ''}`}
+                    onClick={() => setToastEnabled(!settings.toastEnabled)}
+                  >
+                    <span className="switch__knob" aria-hidden="true" />
+                  </button>
                 </Row>
               </Section>
             )}

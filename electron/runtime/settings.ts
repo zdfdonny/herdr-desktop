@@ -19,6 +19,8 @@ const DEFAULTS: AppSettings = {
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: false,
+  soundEnabled: false,
+  toastEnabled: false,
   shortcuts: {},
 };
 
@@ -41,6 +43,8 @@ export class SettingsStore {
         proxyUrl: normalizeProxyUrl(parsed.proxyUrl),
         proxyAgents: normalizeProxyAgents(parsed.proxyAgents),
         integrationsOnboarded: parsed.integrationsOnboarded === true,
+        soundEnabled: parsed.soundEnabled === true,
+        toastEnabled: parsed.toastEnabled === true,
         shortcuts: normalizeShortcuts(parsed.shortcuts),
       };
     } catch {
@@ -97,6 +101,20 @@ export class SettingsStore {
   /** 标记集成引导已完成（首次启动引导弹窗关闭后调用一次）。 */
   async setIntegrationsOnboarded(onboarded: boolean): Promise<AppSettings> {
     this.settings.integrationsOnboarded = onboarded === true;
+    await this.save();
+    return this.get();
+  }
+
+  /** 设置声音开关。 */
+  async setSoundEnabled(enabled: boolean): Promise<AppSettings> {
+    this.settings.soundEnabled = enabled === true;
+    await this.save();
+    return this.get();
+  }
+
+  /** 设置通知开关。 */
+  async setToastEnabled(enabled: boolean): Promise<AppSettings> {
+    this.settings.toastEnabled = enabled === true;
     await this.save();
     return this.get();
   }

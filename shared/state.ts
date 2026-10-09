@@ -245,6 +245,21 @@ export interface AppSettings {
    */
   integrationsOnboarded: boolean;
   /**
+   * 声音：agent 在后台完成（done）或等待输入（blocked）时播放提示音。
+   *
+   * 默认关闭。对应 herdr 的 `ui.sound.enabled`；这里简化为单一开关，
+   * 不提供自定义 mp3 路径与按 agent 覆盖。旧版本 settings.json 缺失时按 false 处理。
+   */
+  soundEnabled: boolean;
+  /**
+   * 通知：agent 在后台完成（done）或等待输入（blocked）时弹出应用内
+   * toast（blocked 且窗口未聚焦时附加系统通知）。
+   *
+   * 默认关闭。对应 herdr 的 `ui.toast`；这里简化为单一开关。
+   * 旧版本 settings.json 缺失时按 false 处理。
+   */
+  toastEnabled: boolean;
+  /**
    * 快捷键覆盖：ShortcutActionId → Electron accelerator。
    *
    * 只存被用户改过的动作；未覆盖的动作使用 shared/shortcuts.ts 的默认键位。

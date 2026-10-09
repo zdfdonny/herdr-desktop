@@ -13,6 +13,8 @@ import {
   sendSetFontSize,
   sendSetProxyUrl,
   sendSetAgentProxy,
+  setSoundEnabled as sendSetSoundEnabled,
+  setToastEnabled as sendSetToastEnabled,
   setShortcut as sendSetShortcut,
   resetShortcuts as sendResetShortcuts,
 } from '../ipc/client';
@@ -25,6 +27,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   proxyUrl: '',
   proxyAgents: {},
   integrationsOnboarded: false,
+  soundEnabled: false,
+  toastEnabled: false,
   shortcuts: {},
 };
 
@@ -68,6 +72,8 @@ interface SettingsStore {
   setFontSize: (fontSize: number) => void;
   setProxyUrl: (url: string) => void;
   setAgentProxy: (command: string, enabled: boolean) => void;
+  setSoundEnabled: (enabled: boolean) => void;
+  setToastEnabled: (enabled: boolean) => void;
   setShortcut: (action: string, accelerator: string | null) => void;
   resetShortcuts: () => void;
 }
@@ -129,6 +135,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       return { settings: { ...s.settings, proxyAgents } };
     });
     sendSetAgentProxy(command, enabled);
+  },
+
+  setSoundEnabled: (enabled) => {
+    set((s) => ({ settings: { ...s.settings, soundEnabled: enabled } }));
+    sendSetSoundEnabled(enabled);
+  },
+
+  setToastEnabled: (enabled) => {
+    set((s) => ({ settings: { ...s.settings, toastEnabled: enabled } }));
+    sendSetToastEnabled(enabled);
   },
 
   setShortcut: (action, accelerator) => {
