@@ -119,10 +119,13 @@ export interface PaneState {
   /**
    * 重启计数：每次「运行中强制重启」递增。
    *
-   * 渲染端把它作为终端挂载 effect 的依赖。运行中重启时 `running` 全程为 true，
-   * 光靠 running 无法让 effect 重跑，旧 xterm 实例会继续挂在已死的 PTY 上，
-   * 且 attachPane 永远不会被调用（两阶段启动的第二步没人触发）。
-   * 递增这个值强制重建终端，从而走完 attach 流程。
+   * 渲染端把它作为「重建运行时视图」的依赖，两种 pane 都需要：
+   * - 终端 pane 据此重建终端。运行中重启时 `running` 全程为 true，光靠 running
+   *   无法让 effect 重跑，旧 xterm 实例会继续挂在已死的 PTY 上，且 attachPane
+   *   永远不会被调用（两阶段启动的第二步没人触发）。递增这个值强制重建终端，
+   *   从而走完 attach 流程。
+   * - web pane 据此重建 `<webview>`。`dsh web` 是全 app 共享的单进程，重启单个
+   *   pane 不会重启服务端，认证链接（src）不变，没有差异可供 React 触发重载。
    *
    * 旧版本快照中缺失，读取方按 0 处理。
    */

@@ -47,9 +47,23 @@ export function WebPane({ pane }: WebPaneProps) {
     );
   }
 
+  /*
+   * key 里带上 restartSeq：运行中「重新启动」时 running 全程为 true，认证链接
+   * 也不会变——`dsh web` 是全 app 共享的单进程，重启单个 pane 不会重启服务端，
+   * Main 下发的 URL 与之前完全一致。src 既然没有差异，React 就不会触发导航，
+   * 点重启便会毫无反应。递增 restartSeq 强制重建 <webview>，新 guest 用同一个
+   * （仍然有效的）认证链接重新加载页面——这就是 web pane 的「重启」语义。
+   *
+   * 与文件头「不要 reparent」的区别：这里是刻意的卸载重建（换一个全新 guest），
+   * 不是把已连接的 webview 搬到别处。partition 是持久化的，登录态与 localStorage
+   * 都会保留，GUI 仍会打开该 pane 最近使用的会话。
+   */
+  const webviewKey = `${pane.paneId}:${pane.restartSeq ?? 0}`;
+
   return (
     <div className="web-pane">
       <webview
+        key={webviewKey}
         src={url}
         partition={`persist:dsh-${pane.paneId}`}
         className="web-pane__webview"

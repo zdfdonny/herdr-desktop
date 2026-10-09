@@ -682,6 +682,12 @@ export class IpcRouter {
    * 只做 kill，不碰 session 状态——由调用方紧接着走 revive 路径重新拉起。
    * 必须先 kill 再 revive：tryRevive 会检查 `pty.has()` / `web.has()`，
    * 残留的运行时会让它判定「已在运行」而直接返回。
+   *
+   * web pane 是例外：`dsh web` 全 app 只有一个共享进程，结束它就等于把**所有**
+   * web pane 的服务端一起重启（其余 pane 正在跑的会话会一并丢失），因此这里只
+   * 解除该 pane 的引用、不动进程（随后 acquire 会把它重新计入使用方）。
+   * 单 pane 的重启因此落在渲染端：由 respawnPane 递增 restartSeq 触发
+   * `<webview>` 重建，用同一个认证链接重新加载页面（见 WebPane）。
    */
   private killForRestart(paneId: string, isWeb: boolean): void {
     if (isWeb) {
