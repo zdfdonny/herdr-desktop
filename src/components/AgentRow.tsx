@@ -47,11 +47,21 @@ export function AgentRow({ agent, focused }: AgentRowProps) {
   /**
    * 重启该 agent。
    *
+   * 先选中它（同点选整行）：启动恢复后 focusedPaneId 为 null，主区域只渲染初始
+   * 引导、不渲染任何视图（见 Layout），此时直接重启会让进程在后台被拉起却完全
+   * 看不见，看着就像按钮没反应。选中后主区域才会切到它所在的视图。
+   *
    * 运行中的 pane 需要确认：主进程会先杀掉现有进程再拉起，
    * agent 当前会话与滚动缓冲会丢失。停止态的没有可丢的东西，直接重启。
    */
   const handleRestart = () => {
+    select();
     if (!running) {
+      /*
+       * select() 里的 focusPane 已让主进程顺带拉起停止态 pane（「选中即恢复」），
+       * 因此这次 respawn 通常是空操作：tryRevive 的守卫会因 running 已翻转为
+       * true 而直接返回。保留它是为了让重启按钮不依赖那个副作用。
+       */
       respawnPane(agent.paneId);
       return;
     }
