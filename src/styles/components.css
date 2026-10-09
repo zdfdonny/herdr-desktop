@@ -2281,6 +2281,17 @@
   white-space: nowrap;
 }
 
+/*
+ * macOS 的等宽字体（Menlo）不含 ⌘ ⌥ ⌃ 等修饰符号，
+ * 这些字形会逐字回退到系统符号字体，导致同一枚键位里
+ * 「修饰符号 / 方向箭头 / 字母」来自不同字体、字号大小不一。
+ * mac 下整枚键位统一改用系统 UI 字体（SF Pro）：三者同源、度量一致，
+ * 也与 macOS 原生菜单里键位的渲染方式相同。
+ */
+.layout--mac .shortcut-key {
+  font-family: var(--font-ui);
+}
+
 .shortcuts-hint {
   margin: 0 0 8px;
   font-size: 12px;
