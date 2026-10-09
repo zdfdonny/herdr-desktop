@@ -652,6 +652,19 @@ export class IpcRouter {
     const pane = this.session.getPane(paneId);
     if (!pane) return;
 
+    /*
+     * 恢复参数必须在 killForRestart 之前算出来。
+     *
+     * killForRestart 会调 clearAgentRuntimeIdentityAfterRespawn()，把 hookAuthority
+     * 与 persistedAgentSession 一起清掉，而 resumeParamsFor 正是从 TerminalState 读
+     * 会话引用（currentSessionForPersistence）。清完再算只能拿到 null，重启就退化成
+     * 「重放原始 command/args」，表现为重启后没有恢复会话。
+     *
+     * 对应 herdr 的 restore_plan_for_snapshot：恢复计划取自持久化快照，且在重建运行时
+     * 身份之前就定下来（herdr 存进 pending_agent_resume_plan，port 这里直接透传）。
+     */
+    const resume = force ? this.resumeParamsFor(pane) : undefined;
+
     if (force) {
       this.killForRestart(paneId, pane.kind === 'web');
       /*
@@ -662,7 +675,9 @@ export class IpcRouter {
     }
 
     const revived =
-      pane.kind === 'web' ? this.tryReviveWeb(paneId, force) : this.tryRevive(paneId, force);
+      pane.kind === 'web'
+        ? this.tryReviveWeb(paneId, force)
+        : this.tryRevive(paneId, force, resume);
     if (revived) {
       /*
        * 顺序要紧：先让 tryRevive 把参数写进 pendingSpawns，再递增 restartSeq。
@@ -722,15 +737,24 @@ export class IpcRouter {
    * 返回是否触发了恢复；调用方决定何时推送快照。
    * 已在运行 / 已在等待启动 / 无启动命令（旧格式）时为 no-op——
    * 除非 `force`（运行中重启），此时这些检查已被 killForRestart 处理过。
+   *
+   * `resume` 是调用方预先算好的恢复参数：`undefined` 表示「这里现算」，
+   * `null` 表示「已算过、没有可用计划」。运行中重启必须走后者——那时
+   * TerminalState 已被 killForRestart 清空，回读只会得到 null。
    */
-  private tryRevive(paneId: string, force = false): boolean {
+  private tryRevive(
+    paneId: string,
+    force = false,
+    resume?: SpawnAgentParams | null,
+  ): boolean {
     const pane = this.session.getPane(paneId);
     if (!pane?.command) return false;
     if (!force && (pane.running || this.pty.has(paneId) || this.pendingSpawns.has(paneId))) {
       return false;
     }
 
-    const params = this.resumeParamsFor(pane) ?? {
+    const resumeParams = resume !== undefined ? resume : this.resumeParamsFor(pane);
+    const params = resumeParams ?? {
       projectId: pane.projectId,
       command: pane.command,
       args: pane.args ?? [],
