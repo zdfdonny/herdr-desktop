@@ -13,6 +13,13 @@ export interface ConfirmState {
   confirmLabel?: string;
   cancelLabel?: string;
   onConfirm: () => void;
+  /**
+   * 取消回调（取消按钮 / Esc / 点击遮罩）。
+   *
+   * 关闭应用的二次确认需要把「用户取消」告知主进程，
+   * 因此取消路径不能只关闭弹窗。
+   */
+  onCancel?: () => void;
 }
 
 /** 设置弹窗的分类（与 SettingsDialog 的左侧导航一致）。 */

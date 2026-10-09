@@ -121,6 +121,13 @@ function createMainWindow(): BrowserWindow {
     router.pushSnapshotTo(win);
   });
 
+  /*
+   * 渲染层崩溃后窗口已无法交互，直接收掉它——关掉最后一个窗口即退出应用。
+   */
+  win.webContents.on('render-process-gone', () => {
+    win.close();
+  });
+
   mainWindow = win;
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
@@ -384,36 +391,38 @@ app.whenReady().then(async () => {
   ipcMain.handle('herdr:hook-uninstall', (_event, agentId: string) => router.uninstallHook(agentId));
   buildMenu();
   createMainWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
-    }
-  });
 });
 
 /**
- * 退出前等待挂起的持久化写入完成。
+ * 退出前收尾。
  *
- * saveState 是 fire-and-forget（每次结构变更触发一次），
- * 若用户在写入进行中退出，最后一次变更可能丢失。这里显式排空写链。
- * quitting 标记避免 preventDefault → quit 的死循环。
+ * 关闭窗口即退出应用（各平台一致，含 macOS，见下方 window-all-closed），
+ * 所以退出路径只有收尾、没有二次确认。
+ *
+ * 收尾动作是回收 web agent 与 hook 上报端点、排空挂起的持久化写入，避免
+ * 最后一次结构变更丢失。清理是异步的，所以先 preventDefault 拦住本次退出，
+ * 等 flush 结束后重新 app.quit()；exitCleanupStarted 保证只清理一次，
+ * 否则 preventDefault → quit 会变成死循环。
  */
-let quitting = false;
+let exitCleanupStarted = false;
 app.on('before-quit', (event) => {
-  if (quitting) return;
-  quitting = true;
+  if (exitCleanupStarted) return;
+  exitCleanupStarted = true;
   event.preventDefault();
   // 先结束 dsh web 子进程树与 hook 上报端点，再排空持久化写入
   router.disposeWebAgents();
   router.disposeHookServer();
-  void router.flush().finally(() => {
-    app.quit();
-  });
+  void router.flush().finally(() => app.quit());
 });
 
+/*
+ * 关掉最后一个窗口即退出应用（各平台一致，含 macOS）。
+ *
+ * 应用没有窗口就无法操作，继续驻留只会留下一个无法交互的进程。
+ * 显式写出来是因为这里刻意不沿用 macOS「关窗后驻留 Dock」的惯例——
+ * 那套惯例依赖 app.on('activate') 重建窗口，而退出清理是异步的，
+ * 清理期间恰好处于「零窗口但仍在运行」的状态，Dock 点击会把窗口又拉回来。
+ */
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });

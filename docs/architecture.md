@@ -13,7 +13,8 @@ Code / Codex / Cursor / opencode 等 CLI agent，提供会话持久化、多 pan
 
 herdr-desktop 的定位与之对齐，但把 herdr 的 **终端字符 UI 升级为原生 GUI**：
 
-- **后台常驻运行时**：自己管理每个 agent 的 PTY 生命周期，关闭窗口不中断 agent。
+- **主进程运行时**：自己管理每个 agent 的 PTY 生命周期，渲染层只是视图；项目 / 标签 /
+  布局持久化到磁盘，关闭窗口退出应用后重新打开即可恢复。
 - **真正的 GUI 面板**：agent 列表、状态徽标（working / blocked / idle / done）、
   workspace/tab 树、分屏布局都是原生组件；只有"单个 agent 的终端画面"用嵌入式终端渲染。
 - **多 agent 管理**：一个窗口内并排监控、切换、操作多个 AI coding agent。

@@ -24,19 +24,28 @@ export function ConfirmDialog() {
     closeConfirm();
   };
 
+  /**
+   * 取消（取消按钮 / Esc / 点击遮罩）走同一条路径：
+   * 先通知调用方，再关闭弹窗。
+   */
+  const handleCancel = () => {
+    confirm.onCancel?.();
+    closeConfirm();
+  };
+
   return (
     <Modal
       overlayClassName="confirm-overlay"
       dialogClassName="confirm-dialog"
       role="alertdialog"
       ariaLabel={confirm.title}
-      onOverlayMouseDown={closeConfirm}
-      onClose={closeConfirm}
+      onOverlayMouseDown={handleCancel}
+      onClose={handleCancel}
     >
       <h2 className="confirm-dialog__title">{confirm.title}</h2>
       {confirm.message && <p className="confirm-dialog__message">{confirm.message}</p>}
       <div className="confirm-dialog__actions">
-        <button type="button" className="button" onClick={closeConfirm}>
+        <button type="button" className="button" onClick={handleCancel}>
           {cancelLabel}
         </button>
         <button

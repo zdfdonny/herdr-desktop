@@ -178,8 +178,8 @@ For a specific architecture use `dist:win:x64` / `dist:win:arm64` /
 3. The agent opens in a **new tab**; use the split button in a pane header to pull
    the next agent into the current view; the sidebar dot tracks its status
 4. Right-click a tab to rename it; closing a tab also ends the agents inside it
-5. Closing the window does **not** kill agents — reopen and click the agent to
-   return to its session
+5. Closing the window quits the app and ends running agents; reopen to restore
+   projects and tabs, then click an agent to start its session again
 
 ---
 
