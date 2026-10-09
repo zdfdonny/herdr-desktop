@@ -16,7 +16,14 @@ import type { ResolvedTheme } from '@shared/state';
 export interface TerminalHandle {
   terminal: Terminal;
   fit: FitAddon;
-  write: (data: string) => void;
+  /**
+   * 写入终端。`onParsed` 在该段数据**全部解析完成**后回调。
+   *
+   * xterm 的解析是分片异步的（无近期用户输入时先经 `setTimeout` 起头），
+   * 调用方无法用同步标志界定「这段内容何时解析完」，只能依赖这个回调
+   * ——例如回放历史缓冲时，需要在此期间闭住「应答回写 PTY」的通路。
+   */
+  write: (data: string, onParsed?: () => void) => void;
   /** 计算适配尺寸并主动上报，不依赖 onResize（首次 fit 的事件会丢失）。 */
   fitAndSync: (onSize: (cols: number, rows: number) => void) => void;
   /**
@@ -313,7 +320,7 @@ export function createTerminal(
   return {
     terminal,
     fit,
-    write: (data: string) => terminal.write(data),
+    write: (data: string, onParsed?: () => void) => terminal.write(data, onParsed),
     /*
      * 计算适配尺寸并**主动上报**给 PTY。
      *

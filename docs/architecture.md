@@ -300,7 +300,7 @@ interface PtyRuntime {
 |------|------|
 | `state:snapshot` | 结构快照（projects/panes/agents/focusedPaneId） |
 | `state:settings` | 应用设置 |
-| `pty:data` / `pty:exit` | 终端数据流 / 进程退出（高频，独立于结构协议） |
+| `pty:data` / `pty:exit` / `pty:reset` | 终端数据流 / 进程退出 / 丢弃回放缓冲（高频，独立于结构协议） |
 | `app:info` / `app:error` | 应用信息 / 错误 toast（key 下发，渲染端本地化） |
 | `agent:status` | 状态变化通知（blocked / done） |
 | `agent:availability` | 命令可用性探测结果 |

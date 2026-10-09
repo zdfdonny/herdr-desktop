@@ -11,6 +11,8 @@ export const IPC = {
   // 终端数据（Main → Renderer）
   PTY_DATA: 'pty:data',
   PTY_EXIT: 'pty:exit',
+  /** 丢弃某 pane 的回放缓冲（强制重启时用，不带退出语义）。 */
+  PTY_RESET: 'pty:reset',
   // 应用信息
   APP_INFO: 'app:info',
   APP_ERROR: 'app:error',

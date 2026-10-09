@@ -66,7 +66,13 @@ export default function App() {
           terminalBus.emit(message.payload.paneId, message.payload.data);
           appendTerminal(message.payload.paneId, message.payload.data);
           break;
+        /*
+         * pty:exit 是进程正常退出，pty:reset 是强制重启时主进程补发的
+         * 「缓冲作废」（kill 会吞掉 onExit，收不到 pty:exit）。两者都只需
+         * 丢弃回放缓冲，不涉及 pane 生命周期。
+         */
         case 'pty:exit':
+        case 'pty:reset':
           useTerminalStore.getState().reset(message.payload.paneId);
           break;
         case 'app:error':

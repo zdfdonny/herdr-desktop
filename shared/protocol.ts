@@ -36,7 +36,20 @@ export type StateMessage =
 /** 终端数据通道（高频，独立于结构协议）。 */
 export type TerminalMessage =
   | { type: 'pty:data'; payload: { paneId: string; data: string } }
-  | { type: 'pty:exit'; payload: { paneId: string; exitCode: number; signal: number | null } };
+  | { type: 'pty:exit'; payload: { paneId: string; exitCode: number; signal: number | null } }
+  /*
+   * 丢弃某个 pane 的回放缓冲。
+   *
+   * 强制重启时进程被 kill，但 `PtyManager.kill` 会先置 disposed 从而吞掉
+   * onExit 回调，渲染端收不到 `pty:exit`、缓冲不会被清。若不清，重启后
+   * 终端重建会把旧会话输出重放进新 xterm，其中的终端能力查询（CSI c、
+   * DECRPM、OSC 11;? 等）会被重新作答并写进刚创建、仍处于 canonical+echo
+   * 的 PTY，被行规程原样回显成 `^[[?1;2c...` 之类的乱码。
+   *
+   * 与 `pty:exit` 分开是为了不触发退出语义（主进程的 onExit 回调还会
+   * closePane / 转移焦点），这里只表示「缓冲作废」。
+   */
+  | { type: 'pty:reset'; payload: { paneId: string } };
 
 /** 控制命令（可扩展，对应 herdr 的 EndpointControl）。 */
 export type ControlMessage =

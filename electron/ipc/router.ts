@@ -688,6 +688,19 @@ export class IpcRouter {
       this.web.release(paneId);
     } else {
       this.pty.kill(paneId);
+      /*
+       * kill() 会先置 disposed，导致 PtyManager 的 onExit 回调被吞掉，
+       * 渲染端收不到 pty:exit、回放缓冲不会被清。这里补一条不带退出语义的
+       * 通知，让渲染端丢弃旧缓冲。
+       *
+       * 不清的后果：重启后终端重建会把旧会话输出（含 CSI c / DECRPM /
+       * OSC 11;? 等终端能力查询）重放进新 xterm，新实例逐条作答，应答写进
+       * 刚创建、子进程尚未切 raw 模式（ICANON|ECHO|ECHOCTL）的 PTY，
+       * 被行规程原样回显成 `^[[?1;2c...` 乱码。
+       *
+       * 这也兑现了 respawnPane 的约定——强制重启丢弃当前会话与滚动缓冲。
+       */
+      this.broadcast({ type: IPC.PTY_RESET, payload: { paneId } });
     }
     // 两阶段创建的中间态一并清掉，避免旧参数被 attachPane 复用
     this.pendingSpawns.delete(paneId);

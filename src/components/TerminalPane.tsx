@@ -218,11 +218,30 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
     container.addEventListener('dragover', onDragOver);
     container.addEventListener('drop', onDrop);
 
+    /*
+     * 终端 → PTY 的唯一出口（用户输入与查询应答都走这里）。
+     *
+     * `replaying` 期间闭住：历史缓冲回放会让新终端实例重新应答上一个会话
+     * 发出的终端能力查询——xterm 内建的 DA1/DECRPM 走 onData，herdr 自己的
+     * OSC 10/11 处理器走 onQueryResponse，两条通路都汇到这里。此时 PTY 刚
+     * 重建、子进程尚未切到 raw 模式，而 node-pty 建的 pty 带
+     * ICANON|ECHO|ECHOCTL（见 node-pty/src/unix/pty.cc），这些应答会被内核
+     * 原样回显，表现为 `^[[?1;2c^[[?2026;2$y...` 乱码。
+     *
+     * 回放总是排在实时数据之前（terminalBus 的积压数据在 register 时才补发），
+     * 所以这个闭窗只覆盖回放本身，不会吞掉实时查询的应答。
+     */
+    let replaying = false;
+    const toPty = (data: string): void => {
+      if (replaying) return;
+      writeTerminal(pane.paneId, data);
+    };
+
     const handle = createTerminal(container, {
       fontSize,
       theme: resolvedTheme,
       // 主题颜色查询（OSC 10/11、CSI ? 2031 h）的响应回写到 PTY
-      onQueryResponse: (data) => writeTerminal(pane.paneId, data),
+      onQueryResponse: toPty,
     });
     handleRef.current = handle;
 
@@ -295,17 +314,29 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
       return true;
     });
 
-    // 挂载时一次性回放历史缓冲（非响应式读取，之后不再全量重放）
+    /*
+     * 挂载时一次性回放历史缓冲（非响应式读取，之后不再全量重放）。
+     *
+     * 回放期间闭住 toPty：缓冲里含有旧会话发出的终端能力查询，新终端实例
+     * 会逐条重新作答，若放行就会写进刚创建、还没进 raw 模式的 PTY 并被
+     * 行规程回显成乱码（详见 toPty 注释）。
+     *
+     * 不能用同步标志界定这个窗口——xterm 的解析是分片异步的，必须等
+     * write 的解析完成回调。
+     */
     const history = useTerminalStore.getState().getBuffer(pane.paneId);
     if (history) {
-      handle.write(history);
+      replaying = true;
+      handle.write(history, () => {
+        replaying = false;
+      });
     }
 
     // 注册到总线：此后 PTY 数据直接写入，不触发 React 渲染
     terminalBus.register(pane.paneId, handle.write);
 
     const dataSub = handle.terminal.onData((data) => {
-      writeTerminal(pane.paneId, data);
+      toPty(data);
     });
 
     /*
