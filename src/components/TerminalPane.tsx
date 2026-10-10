@@ -230,6 +230,9 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
      *
      * 回放总是排在实时数据之前（terminalBus 的积压数据在 register 时才补发），
      * 所以这个闭窗只覆盖回放本身，不会吞掉实时查询的应答。
+     *
+     * ConPTY 的 OSC 编码由 writeTerminal 统一处理（见 src/ipc/client.ts），
+     * 这里只负责回放闸门。
      */
     let replaying = false;
     const toPty = (data: string): void => {

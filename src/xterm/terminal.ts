@@ -98,9 +98,6 @@ function readCssVar(name: string): string | null {
   return value.length > 0 ? value : null;
 }
 
-/** 渲染进程判断平台：仅用于绕开 Windows ConPTY 的 OSC 过滤。 */
-const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
-
 /**
  * 把 `#RRGGBB` 转成 OSC 颜色报告的 `rgb:RRRR/GGGG/BBBB` 格式。
  * 8 位分量按 `cc * 0x101` 扩展到 16 位（即重复两次）。
@@ -127,14 +124,11 @@ function isDarkBackground(hex: string): boolean {
 
 /**
  * 向 PTY 写入一条 OSC 序列。
- * Windows 上 ConPTY 会把 `ESC ]` 开头的 OSC 整条吞掉，需在 ESC 与 ] 之间插入
- * NUL 字节绕过其过滤器；非 Windows（forkpty）直接写标准形式。
+ *
+ * 这里构造裸 `ESC ]` 形式即可：出站时由 writeTerminal 统一按 ConPTY 要求编码
+ * （见 src/ipc/client.ts），Windows 上会插入 NUL、非 Windows 原样透传。
  */
 function writeOscToPty(write: (data: string) => void, body: string): void {
-  if (isWindows) {
-    write(`\x1b\x00]${body}`);
-    return;
-  }
   write(`\x1b]${body}`);
 }
 
@@ -145,11 +139,10 @@ function writeOscToPty(write: (data: string) => void, body: string): void {
  * 重查调色板，若颜色应答分属不同 PTY 写，微任务会在颜色到达前先跑完。
  */
 function buildThemeResponse(scheme: 1 | 2, foreground: string, background: string): string {
-  const osc = isWindows ? '\x1b\x00]' : '\x1b]';
   return (
     `\x1b[?997;${scheme}n` +
-    `${osc}10;${hexToRgbColon(foreground)}\x07` +
-    `${osc}11;${hexToRgbColon(background)}\x07`
+    `\x1b]10;${hexToRgbColon(foreground)}\x07` +
+    `\x1b]11;${hexToRgbColon(background)}\x07`
   );
 }
 
@@ -236,7 +229,7 @@ export function createTerminal(
    * - 收到 OSC 10/11 查询时直接回颜色。
    *
    * Windows 上 ConPTY 会吞掉 opencode 自己发出的 OSC 查询，因此 2031 h 触发的
-   * 主动推送是主要路径，且必须用 `ESC NUL ]` 绕过 ConPTY 的 OSC 过滤器。
+   * 主动推送是主要路径（出站 OSC 由 writeTerminal 统一按 ConPTY 形式编码）。
    */
   const respond = options?.onQueryResponse;
 
