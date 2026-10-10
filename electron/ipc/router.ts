@@ -178,6 +178,7 @@ export class IpcRouter {
         message: report.message,
         sessionStartSource: report.sessionStartSource,
         replay: report.replay,
+        completion: report.completion,
       });
     });
   }
@@ -670,6 +671,8 @@ export class IpcRouter {
       sessionStartSource?: string | null;
       /** 切换绑定后的状态重放：只刷新状态，不触发声音/toast。 */
       replay?: boolean;
+      /** idle 时的结束原因：aborted（手动停止）→ 直接 idle，不投影 done、不响完成声音。 */
+      completion?: 'completed' | 'aborted';
     },
   ): void {
     const ref = agentResume.sessionRefFromReport(
@@ -705,9 +708,11 @@ export class IpcRouter {
           Date.now(),
         );
         if (mutation) {
-          const transition = this.session.applyStateChange(targetPaneId, mutation, false);
-          // 重放只刷新状态，不触发声音/toast。
-          if (!report.replay) {
+          // 手动停止（aborted）：suppress 完成——不投影 done、不记录完成、不响完成声音。
+          const aborted = report.completion === 'aborted';
+          const transition = this.session.applyStateChange(targetPaneId, mutation, aborted);
+          // 重放与手动停止都只刷新状态，不触发声音/toast。
+          if (!report.replay && !aborted) {
             this.notifyForTransition(targetPaneId, mutation, transition, report.message ?? undefined);
           }
         }

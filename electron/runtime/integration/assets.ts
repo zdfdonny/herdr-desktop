@@ -137,5 +137,5 @@ export const INTEGRATION_VERSIONS: Record<string, number> = {
   opencode: 3,
   kilo: 3,
   hermes: 2,
-  'dsh-web': 3,
+  'dsh-web': 4,
 };

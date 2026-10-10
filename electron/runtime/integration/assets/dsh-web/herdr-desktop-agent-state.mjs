@@ -1,5 +1,5 @@
 // HERDR_INTEGRATION_ID=herdr-desktop
-// HERDR_INTEGRATION_VERSION=3
+// HERDR_INTEGRATION_VERSION=4
 // Self-contained DeepSeek Harness plugin.
 //
 // Responsibilities (active only when launched by herdr-desktop, i.e. when
@@ -44,8 +44,12 @@ export function apply(ctx) {
   // sessionId -> cwd: attribute sessionId-keyed events back to their project.
   const sessionCwd = new Map()
 
-  // sessionId -> { running: boolean, blocked: string | null, cwd: string }
+  // sessionId -> { running, blocked, askUserCallId, turnEndKind, cwd }
   // Per-session state (not project-level aggregation).
+  // `blocked` covers two cases: permission approval (approval/asked) and the
+  // ask_user_question tool waiting for the user's answer.
+  // `turnEndKind` records the last turn's end reason, to distinguish a normal
+  // completion from a manual stop.
   const sessionState = new Map()
 
   // Monotonic report sequence.
@@ -63,7 +67,7 @@ export function apply(ctx) {
   function ensureSessionState(sessionId, cwd) {
     let st = sessionState.get(sessionId)
     if (!st) {
-      st = { running: false, blocked: null, cwd }
+      st = { running: false, blocked: null, askUserCallId: null, turnEndKind: null, cwd }
       sessionState.set(sessionId, st)
     }
     return st
@@ -94,8 +98,13 @@ export function apply(ctx) {
         seq: seqNow,
         sessionId,
       }
-      // 切换绑定后的重放：标记给 Main，避免触发声音/toast。
+      // Replay after a binding switch: mark it so Main skips sound/toast.
       if (replay) body.replay = true
+      // When idle, carry the turn's end reason: completed -> normal done;
+      // aborted (manual stop) -> plain idle (no done).
+      if (agg.state === 'idle' && st.turnEndKind) {
+        body.completion = st.turnEndKind
+      }
       if (agg.message) body.message = agg.message
       fetch(REPORT_URL, {
         method: 'POST',
@@ -174,7 +183,10 @@ export function apply(ctx) {
     reportForSession(sessionId)
   })
 
-  // session events -> blocked state (approval/asked means awaiting a permission decision).
+  // session events -> blocked state. Two kinds of "waiting for the user":
+  // - approval/asked: permission decision (allow / reject);
+  // - tool/call of ask_user_question: the model asked the user a question / choice
+  //   and is awaiting the answer; it stays blocked until tool/result closes it.
   ctx.on('session/event', function (session, event) {
     if (!event) return
     let cwd = sessionCwd.get(session.id)
@@ -184,13 +196,47 @@ export function apply(ctx) {
     }
     if (!cwd) return
     const st = ensureSessionState(session.id, cwd)
+    const data = event.data || {}
     if (event.type === 'approval/asked') {
-      const data = event.data || {}
       st.blocked = data.reason || data.toolName || 'approval'
       reportForSession(session.id)
     } else if (event.type === 'approval/decided') {
       st.blocked = null
       reportForSession(session.id)
+    } else if (event.type === 'tool/call' && data.name === 'ask_user_question') {
+      // The model issued ask_user_question and is awaiting the user's answer.
+      st.blocked = 'Waiting for user choice'
+      st.askUserCallId = typeof data.callId === 'string' ? data.callId : null
+      reportForSession(session.id)
+    } else if (event.type === 'tool/result' && st.askUserCallId) {
+      const msg = data.message
+      const callId =
+        (msg && typeof msg.toolCallId === 'string' && msg.toolCallId) ||
+        (msg && msg.source && typeof msg.source.callId === 'string' && msg.source.callId) ||
+        null
+      if (callId && callId === st.askUserCallId) {
+        st.askUserCallId = null
+        st.blocked = null
+        reportForSession(session.id)
+      }
+    } else if (event.type === 'turn/start') {
+      // A new turn begins; the previous end reason no longer applies.
+      st.turnEndKind = null
+    } else if (event.type === 'turn/end') {
+      // Record the end reason: completed (normal) vs aborted+user (manual stop).
+      const reason = data.reason
+      if (reason && reason.kind === 'completed') {
+        st.turnEndKind = 'completed'
+      } else if (
+        reason &&
+        reason.kind === 'aborted' &&
+        reason.reason &&
+        reason.reason.kind === 'user'
+      ) {
+        st.turnEndKind = 'aborted'
+      } else {
+        st.turnEndKind = null
+      }
     }
   }, { global: true })
 

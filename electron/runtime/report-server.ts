@@ -30,6 +30,11 @@ export interface SessionReport {
   sessionStartSource?: string | null;
   /** 是否为「切换绑定后的状态重放」：true 时 Main 只刷新状态、不触发声音/toast。 */
   replay?: boolean;
+  /**
+   * idle 时 turn 的结束原因：`completed`（正常完成）或 `aborted`（手动停止）。
+   * `aborted` 时 Main 直接把状态落到 idle、不投影 done、不触发完成声音/toast。
+   */
+  completion?: 'completed' | 'aborted';
 }
 
 export class ReportServer {
@@ -113,6 +118,10 @@ export class ReportServer {
           message: typeof parsed.message === 'string' ? parsed.message : null,
           sessionStartSource: typeof parsed.sessionStartSource === 'string' ? parsed.sessionStartSource : null,
           replay: typeof parsed.replay === 'boolean' ? parsed.replay : false,
+          completion:
+            parsed.completion === 'completed' || parsed.completion === 'aborted'
+              ? parsed.completion
+              : undefined,
         };
       } catch {
         res.writeHead(400).end();
