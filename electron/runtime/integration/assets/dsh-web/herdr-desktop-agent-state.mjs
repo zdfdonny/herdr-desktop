@@ -309,11 +309,26 @@ export function apply(ctx) {
               return
             }
             if (mode === 'replay') {
-              // Pane switched sessions: re-report this session's current state with
-              // our own monotonic seq, so the newly-bound pane refreshes (replay=true
-              // tells Main to skip sound/toast for this refresh).
+              // Pane switched sessions (or restarted): re-report this session's
+              // current state with our own monotonic seq, so the newly-bound pane
+              // refreshes (replay=true tells Main to skip sound/toast).
               const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
-              if (sessionId) reportForSession(sessionId, true)
+              const replayPaneId = typeof parsed.paneId === 'string' ? parsed.paneId : ''
+              if (sessionId) {
+                const st = sessionState.get(sessionId)
+                // Ensure the requesting pane is in the broadcast set even if its
+                // register-workspace call has not landed yet (restart race), so the
+                // re-reported state is actually delivered back to that pane.
+                if (st && replayPaneId) {
+                  let set = cwdToPaneIds.get(st.cwd)
+                  if (!set) {
+                    set = new Set()
+                    cwdToPaneIds.set(st.cwd, set)
+                  }
+                  set.add(replayPaneId)
+                }
+                reportForSession(sessionId, true)
+              }
               res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
               return
             }

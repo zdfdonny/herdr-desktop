@@ -74,6 +74,23 @@ export function WebPane({ pane }: WebPaneProps) {
   const lastReportedSessionRef = useRef<string | null>(null);
 
   /*
+   * 读 webview 当前会话并上报绑定。dom-ready 后（handleDomReady）立即调用一次，
+   * 之后由轮询兜底观察会话切换。这样重启 pane 时 dom-ready 一触发就恢复绑定，
+   * 不用等下一个 1.5s 轮询周期。
+   */
+  const pollSession = useCallback(() => {
+    if (!domReadyRef.current) return;
+    const el = webviewRef.current as WebviewHost | null;
+    if (!el) return;
+    void readCurrentSession(el).then((currentSessionId) => {
+      if (currentSessionId !== lastReportedSessionRef.current) {
+        lastReportedSessionRef.current = currentSessionId;
+        bindDshSession(pane.paneId, currentSessionId);
+      }
+    });
+  }, [pane.paneId]);
+
+  /*
    * dom-ready 时把「本项目应落地的会话」写进该 pane partition 的 localStorage，
    * 让 dsh GUI 的 restoreSelection 恢复本项目，而不是落到全局「最近项目」。
    *
@@ -83,6 +100,8 @@ export function WebPane({ pane }: WebPaneProps) {
    */
   const handleDomReady = useCallback(() => {
     domReadyRef.current = true;
+    // 立即读一次当前会话并恢复绑定（dom-ready 后 executeJavaScript 已可用）。
+    pollSession();
     const webview = webviewRef.current as WebviewHost | null;
     if (!webview || !sessionId) return;
     const expected = JSON.stringify({ sessionId });
@@ -107,7 +126,7 @@ export function WebPane({ pane }: WebPaneProps) {
         webview.reload();
       })
       .catch(() => {});
-  }, [sessionId]);
+  }, [pollSession, sessionId]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -129,19 +148,7 @@ export function WebPane({ pane }: WebPaneProps) {
    */
   useEffect(() => {
     if (!url) return;
-    const poll = () => {
-      if (!domReadyRef.current) return;
-      const el = webviewRef.current as WebviewHost | null;
-      if (!el) return;
-      void readCurrentSession(el).then((currentSessionId) => {
-        if (currentSessionId !== lastReportedSessionRef.current) {
-          lastReportedSessionRef.current = currentSessionId;
-          bindDshSession(pane.paneId, currentSessionId);
-        }
-      });
-    };
-
-    const timer = setInterval(poll, 1500);
+    const timer = setInterval(pollSession, 1500);
     return () => {
       clearInterval(timer);
       if (lastReportedSessionRef.current !== null) {
@@ -149,7 +156,7 @@ export function WebPane({ pane }: WebPaneProps) {
         bindDshSession(pane.paneId, null);
       }
     };
-  }, [url, webviewKey, pane.paneId]);
+  }, [url, webviewKey, pane.paneId, pollSession]);
 
   /*
    * 停止态（恢复出的 pane，进程未运行）不再显示「智能体已停止」整页提示，

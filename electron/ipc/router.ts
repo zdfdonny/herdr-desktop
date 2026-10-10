@@ -760,10 +760,12 @@ export class IpcRouter {
   private requestDshSessionReplay(paneId: string, sessionId: string): void {
     const pane = this.session.getPane(paneId);
     if (!pane || pane.kind !== 'web' || !pane.port) return;
+    // 带上 paneId：插件 replay 时若该 pane 尚未通过 register 注册进广播表，
+    // 也能临时补注册，确保重发的状态能路由回请求方 pane（消除重启时的竞态）。
     void fetch(`http://127.0.0.1:${pane.port}/herdr-desktop/register-workspace`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'replay', sessionId }),
+      body: JSON.stringify({ mode: 'replay', sessionId, paneId }),
     }).catch(() => {
       // 插件旧版本无 replay 模式时忽略。
     });
