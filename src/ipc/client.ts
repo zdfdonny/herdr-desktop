@@ -273,6 +273,15 @@ export function reportAgentSession(
   });
 }
 
+/** 上报 dsh web pane 当前正在查看的会话（用于会话绑定路由）。sessionId 为 null 表示解绑。 */
+export function bindDshSession(paneId: string, sessionId: string | null): void {
+  sendControl({
+    type: 'control:named',
+    version: 1,
+    payload: { kind: 'dsh:bind-session', data: JSON.stringify({ paneId, sessionId }) },
+  });
+}
+
 /** 设置单个快捷键覆盖；accelerator 为 null 表示恢复默认。 */
 export function setShortcut(action: string, accelerator: string | null): void {
   sendControl({

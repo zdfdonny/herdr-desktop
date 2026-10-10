@@ -42,6 +42,7 @@ const OFFICIAL_AGENTS = new Set([
   'qodercli',
   'qwen',
   'letta',
+  'dsh',
 ]);
 
 export interface AgentSessionRef {

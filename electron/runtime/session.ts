@@ -449,6 +449,8 @@ export class Session {
       (change !== null && change.previousAgentLabel !== change.agentLabel);
     if (completionReset) {
       terminal.lastAgentCompletionSeq = null;
+      // 对应 herdr completion_reset：旧的 done（未看）作废，重置为已看。
+      this.seen.set(paneId, true);
     }
 
     if (change === null) {
@@ -477,7 +479,9 @@ export class Session {
     if (change.state !== 'idle') {
       this.seen.set(paneId, true);
     } else if (!suppressCompletion && isCompletionTransition(change.previousState, change.state)) {
-      this.seen.set(paneId, !focused);
+      // 聚焦 = 已看（idle）；后台 = 未看（done）。对应 herdr 的
+      // pane.seen = suppress_active_tab_notifications。
+      this.seen.set(paneId, focused);
     }
     const seen = this.seen.get(paneId) ?? true;
 

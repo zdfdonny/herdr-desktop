@@ -52,6 +52,13 @@ export default function App() {
           break;
         case 'web:ready':
           useWebStore.getState().setUrl(message.payload.paneId, message.payload.url);
+          // 新建模式：注入会话 id；恢复模式：null（清除旧值，不覆盖 partition 的 localStorage）。
+          useWebStore
+            .getState()
+            .setSessionId(
+              message.payload.paneId,
+              typeof message.payload.sessionId === 'string' ? message.payload.sessionId : null,
+            );
           break;
         case 'state:settings':
           applySettings(message.payload);
@@ -85,22 +92,27 @@ export default function App() {
           });
           break;
         case 'agent:status': {
-          const { status, label } = message.payload;
+          const { status, label, paneId } = message.payload;
           const settings = useSettingsStore.getState().settings;
           const titleKey = status === 'blocked' ? 'agent.notifyBlocked' : 'agent.notifyDone';
           const titleVars = { name: label };
-          // 声音（受「声音」开关控制）：blocked → request，done → done
+          // 该 pane 是否为当前聚焦 pane（对应 herdr 的 is_active_tab）。
+          const paneIsFocused = useSessionStore.getState().state.focusedPaneId === paneId;
+          // 「后台」= 不是「pane 聚焦 且 窗口聚焦」。
+          const inForeground = paneIsFocused && document.hasFocus();
+          // 声音：不管是否聚焦都提示（blocked → request，done → done）。
           if (settings.soundEnabled) {
             playNotificationSound(status === 'blocked' ? 'request' : 'done');
           }
-          // 通知（受「通知」开关控制）：应用内 toast；
-          // blocked 且窗口未聚焦时，额外发系统通知（HTML5 Notification 由渲染端本地化）
+          // 通知（受「通知」开关控制）：应用内 toast 仅后台发（前台时不打扰）。
           if (settings.toastEnabled) {
-            useNotificationStore.getState().push({
-              kind: 'info',
-              titleKey,
-              titleVars,
-            });
+            if (!inForeground) {
+              useNotificationStore.getState().push({
+                kind: 'info',
+                titleKey,
+                titleVars,
+              });
+            }
             if (status === 'blocked' && !document.hasFocus()) {
               try {
                 new Notification(t(titleKey, titleVars));

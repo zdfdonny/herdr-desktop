@@ -9,11 +9,13 @@ import { BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { Session } from '../runtime/session';
+import type { TerminalStateMutation } from '../runtime/terminal-state';
 import { PtyManager } from '../runtime/pty-manager';
 import { WebAgentManager } from '../runtime/web-agent-manager';
 import { SettingsStore } from '../runtime/settings';
 import { detectFromSnapshot } from '../runtime/agent-detector';
 import { parseAgentLabel } from '../../shared/detect-manifest';
+import { isCompletionTransition } from '../../shared/agent-status';
 import { detectGitBranch } from '../runtime/git';
 import { saveState, loadState, flushState } from '../runtime/persist';
 import * as agentResume from '../runtime/agent-resume';
@@ -70,6 +72,13 @@ export class IpcRouter {
    * 键为 `${paneId}:${status}`，值为最近一次通知的时间戳。
    */
   private agentStatusNotifyCooldown = new Map<string, number>();
+  /**
+   * dsh web pane 当前正在查看的会话绑定：sessionId → Set<paneId>。
+   *
+   * 由渲染端 WebPane 轮询 webview 的 localStorage 后通过 `dsh:bind-session`
+   * 上报，用于把插件的 per-session 状态报告路由到正确的 pane（而不是按 cwd 广播）。
+   */
+  private dshSessionBinding = new Map<string, Set<string>>();
 
   /**
    * 标题栏配色回调，由主进程在创建窗口后注入。
@@ -168,6 +177,7 @@ export class IpcRouter {
         seq: report.seq,
         message: report.message,
         sessionStartSource: report.sessionStartSource,
+        replay: report.replay,
       });
     });
   }
@@ -385,6 +395,14 @@ export class IpcRouter {
           this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource });
           break;
         }
+        case 'dsh:bind-session': {
+          const { paneId, sessionId } = JSON.parse(payload.data) as {
+            paneId: string;
+            sessionId: string | null;
+          };
+          this.bindDshSession(paneId, sessionId);
+          break;
+        }
         default:
           break;
       }
@@ -501,6 +519,8 @@ export class IpcRouter {
   private startWebAgent(paneId: string): void {
     const pane = this.session.getPane(paneId);
     if (!pane || pane.kind !== 'web') return;
+    // 新建 vs 恢复/重启：新建需要新会话，恢复/重启需要恢复该 pane 上次的会话。
+    const restore = this.revivingPanes.has(paneId);
 
     const env = this.launchEnvFor('dsh');
     /*
@@ -511,7 +531,7 @@ export class IpcRouter {
     this.injectHookEnv(env, paneId, 'dsh');
     // 显式带项目目录，插件用它注册工作区（不依赖 process.cwd()，防 dsh chdir）。
     if (pane.cwd) env.HERDR_DESKTOP_CWD = pane.cwd;
-    void this.web.acquire(paneId, env, pane.cwd ?? undefined).then((result) => {
+    void this.web.acquire(paneId, env, pane.cwd ?? undefined).then(async (result) => {
       if (result.ok) {
         // pane 可能在共享进程启动期间被关闭：清理掉这次遗留的引用，
         // 避免它把共享进程的引用计数卡住、导致无法回收。
@@ -520,12 +540,22 @@ export class IpcRouter {
           return;
         }
         this.revivingPanes.delete(paneId);
+        // 共享单进程只在首次 spawn 拿到 env/cwd，第二个及后续项目需要在运行时
+        // 通过插件暴露的本地路由把 cwd 注册进去，否则 dsh 工作目录会停留在首项目。
+        // 新建模式：插件新建空白会话并返回其 id；恢复模式：插件返回 null（不覆盖
+        // 该 pane partition 里已有的 localStorage，让 GUI 恢复它上次的会话）。
+        const landingSessionId = await this.registerDshWorkspace(
+          result.port,
+          pane.cwd ?? null,
+          paneId,
+          restore ? 'restore' : 'create',
+        );
         this.session.setPaneWebUrl(paneId, result.cleanUrl);
         // 记录共享进程端口（informational；端口由共享进程统一持有）。
         this.session.setPanePort(paneId, result.port);
         this.broadcast({
           type: IPC.WEB_READY,
-          payload: { paneId, url: result.url },
+          payload: { paneId, url: result.url, sessionId: landingSessionId },
         });
         this.pushSnapshot();
         return;
@@ -548,6 +578,55 @@ export class IpcRouter {
         { paneId, projectId: pane.projectId },
       );
       this.pushSnapshot();
+    });
+  }
+
+  /**
+   * 在运行时向共享 dsh web 进程注册某 pane 的项目 workspace。
+   *
+   * dsh web 是全 app 共享的单进程，`HERDR_DESKTOP_CWD`/`HERDR_DESKTOP_PANE_ID`
+   * 只在首次 spawn 时注入；第二个及后续项目复用已运行进程，拿不到自己的 env。
+   * 这里通过 dsh 侧插件暴露的本地回环路由补注册（幂等，插件内 create 已存在则复用）。
+   * 注册失败不阻断 pane 启动：旧版插件没有该路由时退化为原有行为。
+   *
+   * @param mode `create` 新建会话；`restore` 恢复该 pane 上次的会话（返回 null，不覆盖 partition）。
+   * @returns 新建模式下的落地会话 id；恢复模式下通常为 null（让 partition 的 localStorage 生效），
+   *          但空项目会新建并返回一个空白会话 id。
+   */
+  private async registerDshWorkspace(
+    port: number,
+    cwd: string | null,
+    paneId: string,
+    mode: 'create' | 'restore',
+  ): Promise<string | null> {
+    if (!cwd) return null;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/herdr-desktop/register-workspace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd, paneId, mode }),
+      });
+      const body = (await response.json()) as { sessionId?: string | null };
+      return typeof body.sessionId === 'string' ? body.sessionId : null;
+    } catch {
+      // 回环调用失败忽略：不因 workspace 注册失败而让 pane 启动失败。
+      return null;
+    }
+  }
+
+  /**
+   * 通知 dsh 插件移除某个已关闭 web pane 的广播条目（best-effort）。
+   *
+   * 插件据此把 paneId 从 cwd 的 Set 里移除，Set 清空后连 cwd 状态一起回收，
+   * 避免共享 dsh 进程长期运行下映射无界增长。dsh 进程已死时回环调用失败会被吞掉。
+   */
+  private unregisterDshWorkspace(port: number, cwd: string, paneId: string): void {
+    void fetch(`http://127.0.0.1:${port}/herdr-desktop/register-workspace`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd, paneId, mode: 'unregister' }),
+    }).catch(() => {
+      // 进程已退出或路由未注册时忽略。
     });
   }
 
@@ -589,6 +668,8 @@ export class IpcRouter {
       seq?: number | null;
       message?: string | null;
       sessionStartSource?: string | null;
+      /** 切换绑定后的状态重放：只刷新状态，不触发声音/toast。 */
+      replay?: boolean;
     },
   ): void {
     const ref = agentResume.sessionRefFromReport(
@@ -597,44 +678,90 @@ export class IpcRouter {
       report.sessionId ?? null,
       report.sessionPath ?? null,
     );
-    const terminal = this.session.getTerminal(paneId);
-    if (!terminal) {
-      this.pushSnapshot();
-      return;
-    }
+    // dsh 的 per-session 报告：用 sessionId 反查绑定，精确路由到正在看该会话的 pane；
+    // 无绑定时回退到报告自带的 paneId（插件按 cwd 广播的兜底）。
+    // 仅对 dsh 来源做绑定反查，避免其它 agent 的 sessionId 恰巧碰撞被误路由。
+    const bound =
+      report.source === 'herdr:dsh' && report.sessionId
+        ? [...(this.dshSessionBinding.get(report.sessionId) ?? [])]
+        : [];
+    const targets = bound.length > 0 ? bound : [paneId];
 
-    if (report.state && report.state !== 'done') {
-      // 状态上报（对应 herdr handle_pane_report_agent → HookStateReported）：
-      // setHookAuthorityAt 内部携带 session ref 完成会话锚定，不单独走 session 路径，
-      // 避免同一 seq 被 setAgentSessionRefForSessionStart 与 setHookAuthorityAt 重复消费。
-      const mutation = terminal.setHookAuthorityAt(
-        report.source,
-        report.agent,
-        report.state,
-        report.message ?? null,
-        ref,
-        report.seq ?? null,
-        Date.now(),
-      );
-      if (mutation) {
-        const transition = this.session.applyStateChange(paneId, mutation, false);
-        if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
-          this.notifyAgentStatus(paneId, transition.to, report.message ?? undefined);
+    for (const targetPaneId of targets) {
+      const terminal = this.session.getTerminal(targetPaneId);
+      if (!terminal) continue;
+
+      if (report.state && report.state !== 'done') {
+        // 状态上报（对应 herdr handle_pane_report_agent → HookStateReported）：
+        // setHookAuthorityAt 内部携带 session ref 完成会话锚定，不单独走 session 路径，
+        // 避免同一 seq 被 setAgentSessionRefForSessionStart 与 setHookAuthorityAt 重复消费。
+        const mutation = terminal.setHookAuthorityAt(
+          report.source,
+          report.agent,
+          report.state,
+          report.message ?? null,
+          ref,
+          report.seq ?? null,
+          Date.now(),
+        );
+        if (mutation) {
+          const transition = this.session.applyStateChange(targetPaneId, mutation, false);
+          // 重放只刷新状态，不触发声音/toast。
+          if (!report.replay) {
+            this.notifyForTransition(targetPaneId, mutation, transition, report.message ?? undefined);
+          }
         }
+      } else if (ref) {
+        // 仅会话上报（对应 herdr handle_pane_report_agent_session → AgentSessionReported）。
+        terminal.setAgentSessionRefForSessionStart(
+          report.source,
+          report.agent,
+          ref,
+          report.seq ?? null,
+          report.sessionStartSource ?? null,
+          Date.now(),
+        );
       }
-    } else if (ref) {
-      // 仅会话上报（对应 herdr handle_pane_report_agent_session → AgentSessionReported）。
-      terminal.setAgentSessionRefForSessionStart(
-        report.source,
-        report.agent,
-        ref,
-        report.seq ?? null,
-        report.sessionStartSource ?? null,
-        Date.now(),
-      );
     }
 
     this.pushSnapshot();
+  }
+
+  /**
+   * 记录 dsh web pane 当前正在查看的会话（由渲染端 WebPane 轮询上报）。
+   * 一个 pane 只绑定一个会话；一个会话可被多个 pane 同时查看。
+   */
+  private bindDshSession(paneId: string, sessionId: string | null): void {
+    for (const set of this.dshSessionBinding.values()) {
+      set.delete(paneId);
+    }
+    if (sessionId) {
+      let set = this.dshSessionBinding.get(sessionId);
+      if (!set) {
+        set = new Set();
+        this.dshSessionBinding.set(sessionId, set);
+      }
+      set.add(paneId);
+      // 切换绑定后请求插件立即重发该会话的当前状态，让 pane 刷新，
+      // 而不是停留在旧会话的最后一次状态（seq 由插件管理，保持单调）。
+      this.requestDshSessionReplay(paneId, sessionId);
+    }
+  }
+
+  /**
+   * 请求 dsh 插件立即重发某个会话的当前状态（best-effort）。
+   * 插件用自身单调递增的 seq 上报，main 按绑定路由到该 pane。
+   */
+  private requestDshSessionReplay(paneId: string, sessionId: string): void {
+    const pane = this.session.getPane(paneId);
+    if (!pane || pane.kind !== 'web' || !pane.port) return;
+    void fetch(`http://127.0.0.1:${pane.port}/herdr-desktop/register-workspace`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'replay', sessionId }),
+    }).catch(() => {
+      // 插件旧版本无 replay 模式时忽略。
+    });
   }
 
   /**
@@ -1001,6 +1128,13 @@ export class IpcRouter {
   }
 
   private closePane(paneId: string): void {
+    // 关闭 web pane 时，通知 dsh 插件把这个 paneId 从广播表里移除，避免映射无界增长。
+    const closing = this.session.getPane(paneId);
+    if (closing?.kind === 'web' && closing.cwd && closing.port) {
+      this.unregisterDshWorkspace(closing.port, closing.cwd, paneId);
+    }
+    // 清理该 pane 的会话绑定。
+    this.bindDshSession(paneId, null);
     this.pty.kill(paneId);
     this.web.release(paneId);
     // 清理两阶段创建的中间态，避免 pending 泄漏
@@ -1057,9 +1191,7 @@ export class IpcRouter {
       Date.now(),
     );
     const transition = this.session.applyStateChange(paneId, mutation, false);
-    if (transition && (transition.to === 'blocked' || transition.to === 'done')) {
-      this.notifyAgentStatus(paneId, transition.to);
-    }
+    this.notifyForTransition(paneId, mutation, transition);
 
     /*
      * 采集端 fallback：从终端输出识别出会话 id 时，把它持久化到 terminal，
@@ -1086,6 +1218,31 @@ export class IpcRouter {
     }
 
     this.pushSnapshot();
+  }
+
+  /**
+   * 根据状态跳变决定通知：
+   * - blocked → 通知 blocked；
+   * - 完成跳变（working/blocked → idle）→ 通知 done，**无论前台后台**——声音应始终
+   *   提示，toast 由渲染端按「该 pane 是否前台」决定是否展示。
+   */
+  private notifyForTransition(
+    paneId: string,
+    mutation: TerminalStateMutation,
+    transition: { from: string; to: string } | null,
+    message?: string,
+  ): void {
+    if (!transition) return;
+    if (transition.to === 'blocked') {
+      this.notifyAgentStatus(paneId, 'blocked', message);
+      return;
+    }
+    const change = mutation.effectiveStateChange;
+    const completed =
+      change !== null && isCompletionTransition(change.previousState, change.state);
+    if (completed || transition.to === 'done') {
+      this.notifyAgentStatus(paneId, 'done', message);
+    }
   }
 
   /**

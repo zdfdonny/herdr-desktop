@@ -28,6 +28,8 @@ export interface SessionReport {
   message?: string | null;
   /** 会话启动来源（startup/resume/select 等，对应 herdr 的 session_start_source）。 */
   sessionStartSource?: string | null;
+  /** 是否为「切换绑定后的状态重放」：true 时 Main 只刷新状态、不触发声音/toast。 */
+  replay?: boolean;
 }
 
 export class ReportServer {
@@ -110,6 +112,7 @@ export class ReportServer {
           seq: typeof parsed.seq === 'number' ? parsed.seq : null,
           message: typeof parsed.message === 'string' ? parsed.message : null,
           sessionStartSource: typeof parsed.sessionStartSource === 'string' ? parsed.sessionStartSource : null,
+          replay: typeof parsed.replay === 'boolean' ? parsed.replay : false,
         };
       } catch {
         res.writeHead(400).end();

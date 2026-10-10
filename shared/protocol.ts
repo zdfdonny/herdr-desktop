@@ -120,7 +120,7 @@ export type MainToRendererMessage =
   | { type: 'ui:shortcut'; payload: { action: ShortcutActionId; index?: number } }
   | {
       type: 'web:ready';
-      payload: { paneId: string; url: string };
+      payload: { paneId: string; url: string; sessionId: string | null };
     };
 
 /**

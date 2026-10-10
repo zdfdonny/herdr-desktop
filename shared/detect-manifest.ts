@@ -43,6 +43,7 @@ const AGENT_IDENTITY: Array<[agent: string, pattern: string]> = [
   ['letta', '\\bletta\\b'],
   ['maki', '\\bmaki\\b'],
   ['muse', '\\bmuse\\b'],
+  ['dsh', '\\bdsh\\b'],
 ];
 
 /** canonical agent 名集合（与 AGENT_IDENTITY 的 agent 列一致）。 */
