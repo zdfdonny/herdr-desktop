@@ -12,7 +12,6 @@ import type {
   ClipboardPayload,
 } from '@shared/protocol';
 import type { ThemePreference, Language } from '@shared/state';
-import { encodeOscForConpty } from '../xterm/conpty-osc';
 
 function api(): HerdrDesktopApi {
   const bridge = window.herdrDesktop;
@@ -236,16 +235,15 @@ export {
 /**
  * 写入终端 —— 渲染层发往 PTY 的唯一出口（终端应答、按键、粘贴/拖放文本都经这里）。
  *
- * 出站数据统一过 encodeOscForConpty：Windows ConPTY 会吞掉裸 `ESC ]` 开头的 OSC
- * 序列（含 xterm 内建对 `OSC 4;N;?` 调色板查询的应答），须在 ESC 与 ] 之间插入
- * NUL 字节才能完整透传；非 Windows 原样返回。改写只针对 `ESC ]`，CSI 等其它
- * 序列不受影响，且幂等。
+ * 出站数据原样下发，不做任何转义：Windows 上 node-pty 使用的是自带 conpty.dll
+ * （见 electron/runtime/pty-manager.ts 的 useConptyDll），OSC / CSI 与其它平台一样
+ * 逐字节透传。系统内置的那份 ConPTY 会吞掉裸 `ESC ]` 开头的 OSC，正因如此才不用它。
  */
 export function writeTerminal(paneId: string, data: string): void {
   sendControl({
     type: 'control:named',
     version: 1,
-    payload: { kind: 'pty:write', data: JSON.stringify({ paneId, data: encodeOscForConpty(data) }) },
+    payload: { kind: 'pty:write', data: JSON.stringify({ paneId, data }) },
   });
 }
 

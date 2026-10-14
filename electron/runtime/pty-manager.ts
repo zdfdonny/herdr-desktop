@@ -141,6 +141,19 @@ export class PtyManager {
       /*
        * useConpty 是 Windows 专有选项（ConPTY）；macOS / Linux 用 forkpty，
        * 该字段无意义。显式只在 Windows 下带上，避免向 Unix 传无关选项。
+       *
+       * useConptyDll：改用 node-pty 自带的 conpty.dll（Windows Terminal 的实现），
+       * 而不是系统内置的那一份。系统内置的 ConPTY 会双向过滤 OSC —— 子进程发出的
+       * `OSC 10;?` / `OSC 11;?` 配色查询根本到不了宿主（宿主收不到查询，也就无从
+       * 应答），宿主回写的 OSC 也必须插入 NUL 才能存活。于是 codex 这类「启动时只
+       * 探测一次配色」的 TUI 永远拿不到答案，只能退回自己的深色配色 —— 浅色主题下
+       * 输入框是一整条黑带。
+       *
+       * 自带的那份不做这种过滤，配色协商与非 Windows 完全一致（xterm 的 OSC 10/11
+       * 应答直接可用）。该 dll 随 node-pty 分发（third_party/conpty/<版本>/win10-x64，
+       * 由 node-pty 的 postinstall 拷到 build/Release/conpty/），缺失时 node-pty 直接
+       * 抛错，不会静默退回内置实现；打包时 @electron/rebuild 会清掉该目录，故由
+       * scripts/after-pack.js 在 afterPack 阶段补回（否则装出来的应用面板全起不来）。
        */
       const spawnOptions: pty.IPtyForkOptions | pty.IWindowsPtyForkOptions = {
         name: 'xterm-256color',
@@ -150,7 +163,7 @@ export class PtyManager {
         env,
         encoding: 'utf8',
         handleFlowControl: false,
-        ...(isWindows ? { useConpty: true } : {}),
+        ...(isWindows ? { useConpty: true, useConptyDll: true } : {}),
       };
       ptyProcess = pty.spawn(spawnFile, spawnArgs, spawnOptions);
     } catch (error) {

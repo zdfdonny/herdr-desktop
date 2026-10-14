@@ -125,8 +125,9 @@ function isDarkBackground(hex: string): boolean {
 /**
  * 向 PTY 写入一条 OSC 序列。
  *
- * 这里构造裸 `ESC ]` 形式即可：出站时由 writeTerminal 统一按 ConPTY 要求编码
- * （见 src/ipc/client.ts），Windows 上会插入 NUL、非 Windows 原样透传。
+ * 直接写裸 `ESC ]` 形式即可：Windows 上 node-pty 用的是自带 conpty.dll
+ * （见 electron/runtime/pty-manager.ts 的 useConptyDll），出站 OSC 与其它平台
+ * 一样逐字节透传，无需再为系统内置 ConPTY 插入 NUL。
  */
 function writeOscToPty(write: (data: string) => void, body: string): void {
   write(`\x1b]${body}`);
@@ -221,15 +222,17 @@ export function createTerminal(
   }
 
   /*
-   * 应答 opencode 在启动时发来的主题颜色查询。
+   * 应答 TUI 启动时发来的主题颜色查询。
    *
-   * opencode（opentui）启动时发送 `CSI ? 2031 h` 启用颜色方案报告，并（非 Windows）
-   * 自己发 `OSC 10;?` / `OSC 11;?` 查询前景/背景色。宿主需：
+   * opencode（opentui）启动时发送 `CSI ? 2031 h` 启用颜色方案报告，并自己发
+   * `OSC 10;?` / `OSC 11;?` 查询前景/背景色；codex 同样会在启动时探测一次配色。
+   * 宿主需：
    * - 收到 2031 h 时回「997 颜色方案报告 + OSC 10/11 颜色」；
    * - 收到 OSC 10/11 查询时直接回颜色。
    *
-   * Windows 上 ConPTY 会吞掉 opencode 自己发出的 OSC 查询，因此 2031 h 触发的
-   * 主动推送是主要路径（出站 OSC 由 writeTerminal 统一按 ConPTY 形式编码）。
+   * Windows 上这条链路依赖 node-pty 自带的 conpty.dll（见
+   * electron/runtime/pty-manager.ts 的 useConptyDll）：系统内置的 ConPTY 会把子进程
+   * 发出的 OSC 查询整条吞掉，宿主收不到查询也就无从应答，codex 便退回自己的深色配色。
    */
   const respond = options?.onQueryResponse;
 
