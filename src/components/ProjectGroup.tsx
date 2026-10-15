@@ -5,11 +5,13 @@
  * 项目是 agent 的容器，显示项目名、路径、agent 计数与状态汇总。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ProjectGroup as ProjectGroupData } from '../stores/sessionStore';
 import { useUiStore } from '../stores/uiStore';
 import { AgentRow } from './AgentRow';
 import { AgentPicker } from './AgentPicker';
+import { computePickerAnchor } from './agent-picker-position';
+import type { PickerAnchor } from './agent-picker-position';
 import { toggleProject, removeProject } from '../ipc/client';
 import { useT } from '../i18n';
 import { IconChevronDown, IconPlus, IconClose } from './icons';
@@ -28,10 +30,9 @@ export function ProjectGroup({ group, focusedPaneId }: ProjectGroupProps) {
   /** 浮窗容器，用于判断点击是否落在浮窗内。 */
   const pickerRef = useRef<HTMLDivElement>(null);
   /** 浮窗锚点坐标（fixed 定位，脱离侧栏 overflow 裁剪）。 */
-  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
-
-  /** 浮窗宽度，与 CSS .agent-picker-popover 保持一致。 */
-  const PICKER_WIDTH = 232;
+  const [anchor, setAnchor] = useState<PickerAnchor | null>(null);
+  /** 本次打开是否已按实测内容高度复算过锚点（避免测量-重排循环）。 */
+  const measuredRef = useRef(false);
 
   /*
    * 浮窗打开时：点击浮窗外部任意位置、按 Esc、或滚动/改变窗口大小都关闭。
@@ -75,25 +76,53 @@ export function ProjectGroup({ group, focusedPaneId }: ProjectGroupProps) {
     };
   }, [showPicker]);
 
+  /** 按「+」按钮当前位置计算锚点；contentHeight 为实测内容高度（首帧省略）。 */
+  const anchorFromButton = (contentHeight?: number): PickerAnchor | null => {
+    const button = addButtonRef.current;
+    const rect = button?.getBoundingClientRect();
+    if (!button || !rect) return null;
+    /*
+     * 弹出框水平居中于侧栏内容页（.sidebar__panel），而不是贴靠「+」按钮。
+     * 垂直方向与最大高度交给 computePickerAnchor：项目多时「+」按钮会贴近
+     * 窗口底部，固定向下弹出会让浮窗下半部分落到可视区外。
+     */
+    const panel = button.closest('.sidebar__panel');
+    const panelRect = panel instanceof HTMLElement ? panel.getBoundingClientRect() : null;
+    return computePickerAnchor({
+      button: { top: rect.top, bottom: rect.bottom, right: rect.right },
+      panel: panelRect ? { left: panelRect.left, width: panelRect.width } : null,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      contentHeight,
+    });
+  };
+
   /** 计算锚点并打开浮窗。 */
   const openPicker = () => {
-    const rect = addButtonRef.current?.getBoundingClientRect();
-    if (rect) {
-      /*
-       * 弹出框水平居中于侧栏内容页（.sidebar__panel），而不是贴靠「+」按钮。
-       * 垂直方向仍锚定在「+」按钮下方；左右再夹在窗口内，至少留 8px 边距。
-       */
-      const panel = addButtonRef.current?.closest('.sidebar__panel');
-      const panelRect = panel instanceof HTMLElement ? panel.getBoundingClientRect() : null;
-      const centerX = panelRect ? panelRect.left + panelRect.width / 2 : rect.right;
-      const left = Math.max(
-        8,
-        Math.min(centerX - PICKER_WIDTH / 2, window.innerWidth - PICKER_WIDTH - 8),
-      );
-      setAnchor({ top: rect.bottom + 4, left });
-    }
+    measuredRef.current = false;
+    // 拿不到按钮位置时不渲染浮窗（避免沿用上一次的坐标）。
+    setAnchor(anchorFromButton());
     setShowPicker(true);
   };
+
+  /*
+   * 首帧只能按假定高度定位，而列表高度取决于本机已安装的智能体数量。
+   * 浮窗挂载后立刻用实测内容高度复算一次：只有这样才能判断「下方放不下、
+   * 上方更宽裕」从而正确向上翻转。useLayoutEffect 在浏览器绘制前完成，
+   * 用户看不到先向下再翻转的跳动。
+   */
+  useLayoutEffect(() => {
+    if (!showPicker || measuredRef.current) return;
+    const popover = pickerRef.current;
+    if (!popover) return;
+    // scrollHeight 是内容自然高度，不受 max-height 夹取影响。
+    const contentHeight = popover.scrollHeight;
+    if (contentHeight <= 0) return;
+    measuredRef.current = true;
+    setAnchor(anchorFromButton(contentHeight));
+    // anchorFromButton 只依赖 ref 与窗口尺寸，无需列入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPicker]);
 
   const closePicker = () => setShowPicker(false);
 
@@ -187,7 +216,12 @@ export function ProjectGroup({ group, focusedPaneId }: ProjectGroupProps) {
         <div
           ref={pickerRef}
           className="agent-picker-popover"
-          style={{ top: anchor.top, left: anchor.left }}
+          style={{
+            top: anchor.top,
+            bottom: anchor.bottom,
+            left: anchor.left,
+            maxHeight: anchor.maxHeight,
+          }}
         >
           <AgentPicker projectId={project.projectId} onPick={() => setShowPicker(false)} />
         </div>

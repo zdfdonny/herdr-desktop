@@ -501,7 +501,10 @@
 /*
  * 浮窗容器：fixed 定位脱离侧栏（.sidebar overflow:hidden /
  * .sidebar__list overflow-y:auto）的裁剪，坐标由「+」按钮的 rect 给出。
- * 固定宽度以保证描述文字可读；宽度值需与 ProjectGroup 的 PICKER_WIDTH 一致。
+ * 固定宽度以保证描述文字可读；宽度值需与 agent-picker-position.ts 的
+ * PICKER_WIDTH 一致。
+ * 最大高度由 computePickerAnchor 按「+」按钮上/下方的可用空间内联计算并覆盖
+ * （项目多时按钮贴近窗口底部，固定向下弹出会被窗口下边缘截断），此处仅作兜底。
  */
 .agent-picker-popover {
   position: fixed;
@@ -509,6 +512,8 @@
   width: 232px;
   max-height: 60vh;
   overflow-y: auto;
+  /* 滚到浮窗尽头时不把滚动链传给侧栏列表，避免误触发「滚动即关闭」 */
+  overscroll-behavior: contain;
 }
 
 .agent-picker {
