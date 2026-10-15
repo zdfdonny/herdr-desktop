@@ -12,7 +12,8 @@
 import type { ReactNode } from 'react';
 import { useProjectGroups, useFocusedPaneId } from '../stores/sessionStore';
 import { useUiStore, useSettingsOpen } from '../stores/uiStore';
-import { useT } from '../i18n';
+import { useIntegrationUpdateCount } from '../stores/integrationsStore';
+import { useT, usePlural } from '../i18n';
 import { addProject, pickDirectory } from '../ipc/client';
 import { ProjectGroup } from './ProjectGroup';
 import { IntegrationsPanel } from './IntegrationsPanel';
@@ -20,12 +21,15 @@ import { IconPlus, IconFolder, IconIntegrations, IconSettings } from './icons';
 
 export function Sidebar() {
   const t = useT();
+  const plural = usePlural();
   const groups = useProjectGroups();
   const focusedPaneId = useFocusedPaneId();
   const section = useUiStore((s) => s.sidebarSection);
   const toggleSection = useUiStore((s) => s.toggleSidebarSection);
   const settingsOpen = useSettingsOpen();
   const openSettings = useUiStore((s) => s.openSettings);
+  /** 待更新的集成数量（0 时不显示徽标）。 */
+  const integrationUpdateCount = useIntegrationUpdateCount();
 
   const handleAddProject = async () => {
     const path = await pickDirectory(t('sidebar.addProject'));
@@ -48,6 +52,15 @@ export function Sidebar() {
           icon={<IconIntegrations size={18} />}
           label={t('settings.integrations')}
           active={section === 'integrations'}
+          // 有集成待更新时显示待更新数量，悬停提示说明含义；全部更新完成后自动消失
+          badge={
+            integrationUpdateCount > 0
+              ? {
+                  count: integrationUpdateCount,
+                  label: plural('sidebar.integrationsUpdateBadge', integrationUpdateCount),
+                }
+              : undefined
+          }
           onClick={() => toggleSection('integrations')}
         />
 
@@ -111,23 +124,36 @@ function RailButton({
   icon,
   label,
   active,
+  badge,
   onClick,
 }: {
   icon: ReactNode;
   label: string;
   active: boolean;
+  /** 待处理数量徽标；给定即显示数字（如集成待更新数量）。 */
+  badge?: { count: number; label: string };
   onClick: () => void;
 }) {
+  /*
+   * 徽标里的数字对读屏器是个孤立的数字，因此徽标本身隐藏（aria-hidden），
+   * 把完整含义并进按钮的可访问名称，保证「有更新」不只靠颜色传达。
+   */
+  const title = badge ? `${label} · ${badge.label}` : label;
   return (
     <button
       type="button"
       className={`sidebar__rail-button ${active ? 'is-active' : ''}`}
       onClick={onClick}
-      title={label}
-      aria-label={label}
+      title={title}
+      aria-label={title}
       aria-current={active}
     >
       {icon}
+      {badge && (
+        <span className="sidebar__rail-badge" aria-hidden="true">
+          {badge.count}
+        </span>
+      )}
     </button>
   );
 }

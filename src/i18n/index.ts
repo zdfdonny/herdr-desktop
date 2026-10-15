@@ -40,8 +40,8 @@ export function useT() {
  * 复数翻译 hook。
  *
  * 中文无复数变化，英文按 count 选 one/other。
- * `base` 为基础路径，如 `'sidebar.projectCount'` 对应
- * `sidebar.projectCountOne` / `sidebar.projectCountOther`。
+ * `base` 为基础路径，如 `'sidebar.integrationsUpdateBadge'` 对应
+ * `sidebar.integrationsUpdateBadgeOne` / `sidebar.integrationsUpdateBadgeOther`。
  */
 export function usePlural() {
   const language = useI18nStore((s) => s.language);

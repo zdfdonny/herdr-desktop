@@ -37,6 +37,12 @@ export interface Messages {
     removeProjectConfirm: string;
     expandProject: string;
     collapseProject: string;
+    /**
+     * 「集成」图标按钮计数徽标的提示：有 N 个集成待更新。
+     * 复数路径，配合 `usePlural('sidebar.integrationsUpdateBadge', count)` 使用。
+     */
+    integrationsUpdateBadgeOne: string;
+    integrationsUpdateBadgeOther: string;
   };
   agent: {
     notInstalled: string;
@@ -256,6 +262,8 @@ const zhCN: Messages = {
     removeProjectConfirm: '确定移除项目「{name}」及其下的所有智能体？',
     expandProject: '展开项目',
     collapseProject: '折叠项目',
+    integrationsUpdateBadgeOne: '有 {count} 个集成待更新',
+    integrationsUpdateBadgeOther: '有 {count} 个集成待更新',
   },
   agent: {
     notInstalled: '未安装',
@@ -452,6 +460,8 @@ const en: Messages = {
     removeProjectConfirm: 'Remove project "{name}" and all of its agents?',
     expandProject: 'Expand project',
     collapseProject: 'Collapse project',
+    integrationsUpdateBadgeOne: '{count} integration update available',
+    integrationsUpdateBadgeOther: '{count} integration updates available',
   },
   agent: {
     notInstalled: 'not installed',

@@ -3,24 +3,25 @@
  *
  * 侧栏「集成」页与首次启动的集成引导弹窗共用。
  * 为支持弹窗「上下固定、只有列表滚动」的布局，这里拆成：
- * - useIntegrationHooks：共享的状态与安装/卸载动作；
+ * - useIntegrationHooks：共享的状态与安装/卸载动作（读 integrationsStore）；
  * - IntegrationInstallAllButton：一键安装按钮；
  * - IntegrationStatusList：智能体状态列表；
  * - IntegrationAgentList：按钮 + 列表的组合（侧栏集成页使用）。
  *
- * 状态权威来自 Main（getHookStatuses / installHook / uninstallHook）。
+ * 状态权威来自 Main（getHookStatuses / installHook / uninstallHook），
+ * 但状态本身存放在 integrationsStore：侧栏「集成」按钮上的待更新数量徽标
+ * 要在集成页未打开时就可见，因此不能留在组件内部。
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import type { HookStatus } from '@shared/protocol';
 import { AGENT_PRESETS, useAgentsStore, isAvailable } from '../stores/agentsStore';
-import { getHookStatuses, installHook, uninstallHook } from '../ipc/client';
-import { useNotificationStore } from '../stores/notificationStore';
+import { useIntegrationsStore } from '../stores/integrationsStore';
 import { useT } from '../i18n';
 
 export interface IntegrationHooks {
   hookStatuses: Record<string, HookStatus>;
-  hookBusy: string | null;
+  hookBusy: string[];
   hookBusyAll: boolean;
   handleHookInstall: (agentId: string) => void;
   handleHookUninstall: (agentId: string) => void;
@@ -28,78 +29,33 @@ export interface IntegrationHooks {
 }
 
 /**
- * 共享的集成 hook 状态与动作。
+ * 共享的集成 hook 状态与动作（integrationsStore 的读取适配层）。
  *
- * @param enabled 是否拉取安装状态。首次启动引导弹窗常驻挂载，
- *                但只有弹窗打开时才需要拉取，避免每次启动都多一次 IPC。
+ * @param enabled 是否在挂载时刷新安装状态。App 启动时已拉取过一次
+ *                （侧栏「集成」按钮上的待更新数量徽标依赖它），这里再拉一次
+ *                只为保证打开面板/弹窗时看到的是最新状态。
  */
 export function useIntegrationHooks(enabled = true): IntegrationHooks {
-  const availability = useAgentsStore((s) => s.availability);
-  const probed = useAgentsStore((s) => s.probed);
-  /** 官方集成 hook 安装状态：agentId → installed/not-installed/unsupported。 */
-  const [hookStatuses, setHookStatuses] = useState<Record<string, HookStatus>>({});
-  const [hookBusy, setHookBusy] = useState<string | null>(null);
-  const [hookBusyAll, setHookBusyAll] = useState(false);
+  const hookStatuses = useIntegrationsStore((s) => s.hookStatuses);
+  const hookBusy = useIntegrationsStore((s) => s.busy);
+  const hookBusyAll = useIntegrationsStore((s) => s.busyAll);
+  const refresh = useIntegrationsStore((s) => s.refresh);
+  const install = useIntegrationsStore((s) => s.install);
+  const uninstall = useIntegrationsStore((s) => s.uninstall);
+  const installAll = useIntegrationsStore((s) => s.installAll);
 
   useEffect(() => {
     if (!enabled) return;
-    void getHookStatuses()
-      .then(setHookStatuses)
-      .catch(() => setHookStatuses({}));
-  }, [enabled]);
-
-  const notifyInstallError = (agentId: string, error: unknown) => {
-    const raw = error instanceof Error ? error.message : String(error);
-    const message = raw.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
-    useNotificationStore.getState().push({
-      kind: 'error',
-      titleKey: 'settings.integrationInstallFailed',
-      titleVars: { agent: agentId },
-      detailKey: 'settings.integrationInstallFailedDetail',
-      detailVars: { error: message },
-    });
-  };
-
-  const handleHookInstall = (agentId: string) => {
-    setHookBusy(agentId);
-    void installHook(agentId)
-      .then((status) => setHookStatuses((prev) => ({ ...prev, [agentId]: status })))
-      .catch((error) => notifyInstallError(agentId, error))
-      .finally(() => setHookBusy(null));
-  };
-
-  const handleHookUninstall = (agentId: string) => {
-    setHookBusy(agentId);
-    void uninstallHook(agentId)
-      .then((status) => setHookStatuses((prev) => ({ ...prev, [agentId]: status })))
-      .catch((error) => notifyInstallError(agentId, error))
-      .finally(() => setHookBusy(null));
-  };
-
-  const handleInstallAll = () => {
-    setHookBusyAll(true);
-    // 只给「本机已安装」的智能体装 hook/插件，未安装的不碰
-    const agents = Object.keys(hookStatuses).filter((agentId) => {
-      const preset = AGENT_PRESETS.find((p) => p.id === agentId);
-      return preset ? isAvailable(availability, probed, preset.command) : false;
-    });
-    void Promise.all(
-      agents.map((agentId) => installHook(agentId).catch(() => 'not-installed' as HookStatus)),
-    )
-      // 装完后从 Main 重新拉一次权威状态，确保 UI 反映真实落盘结果
-      .then(() => getHookStatuses())
-      .then((statuses) => setHookStatuses(statuses))
-      .catch(() => undefined)
-      .finally(() => setHookBusyAll(false));
-  };
+    void refresh();
+  }, [enabled, refresh]);
 
   return {
     hookStatuses,
     hookBusy,
     hookBusyAll,
-    handleHookInstall,
-    handleHookUninstall,
-    handleInstallAll,
+    handleHookInstall: (agentId) => void install(agentId),
+    handleHookUninstall: (agentId) => void uninstall(agentId),
+    handleInstallAll: () => void installAll(),
   };
 }
 
@@ -132,7 +88,7 @@ export function IntegrationStatusList({
   onUninstall,
 }: {
   statuses: Record<string, HookStatus>;
-  busy: string | null;
+  busy: string[];
   onInstall: (agentId: string) => void;
   onUninstall: (agentId: string) => void;
 }) {
@@ -145,7 +101,7 @@ export function IntegrationStatusList({
       {AGENT_PRESETS.map((preset) => {
         const isOk = isAvailable(availability, probed, preset.command);
         const hookStatus = statuses[preset.id];
-        const isBusy = busy === preset.id;
+        const isBusy = busy.includes(preset.id);
 
         /*
          * 状态列的五种情况：

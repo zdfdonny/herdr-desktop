@@ -14,6 +14,7 @@ import { useTerminalStore, terminalBus } from './stores/terminalStore';
 import { useSettingsStore, applyThemeToDom } from './stores/settingsStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useAgentsStore } from './stores/agentsStore';
+import { useIntegrationsStore } from './stores/integrationsStore';
 import { useUiStore } from './stores/uiStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { useWebStore } from './stores/webStore';
@@ -166,6 +167,16 @@ export default function App() {
   // 探测本机可用的 agent 命令
   useEffect(() => {
     void useAgentsStore.getState().refresh();
+  }, []);
+
+  /*
+   * 拉取集成安装状态。
+   *
+   * 侧栏「集成」按钮上的待更新数量徽标依赖它，而集成页只有被点开才挂载，
+   * 所以必须在启动时就拉一次，否则不打开集成页永远看不到这个数字。
+   */
+  useEffect(() => {
+    void useIntegrationsStore.getState().refresh();
   }, []);
 
   // 跟随系统外观（system 模式）

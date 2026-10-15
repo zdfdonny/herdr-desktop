@@ -336,6 +336,42 @@
   margin-top: auto;
 }
 
+/*
+ * 图标栏计数徽标：有官方集成待更新时显示待更新数量，贴在图标右下角；
+ * 全部更新完成后消失。不做脉冲动画——它表示「有事情待处理」而非
+ * 「正在进行中」，常亮比持续闪烁更安静（持续动画也影响无障碍体验）。
+ *
+ * 文字用 --text-inverse 而不是固定的白色：深色主题下 --status-blocked
+ * 是浅红，白字对比度只有 2.6:1 左右，反色在两种主题下都够清楚。
+ *
+ * 尺寸是量出来的，不是估的：IconIntegrations 那条从 (10,13) 到 (17.54,13.54)
+ * 的链环弧线是向下鼓的，最低点落在按钮坐标 y≈18.2、x≈17.4，正好探进
+ * 图标右下角。所以徽标要贴住按钮右下角（right/bottom 0）并压到 12px 高，
+ * 让上边缘落在 y=20 才完全不压笔画；12px 高时 border-radius 999px 恰好
+ * 等于按钮自身 6px 的圆角，两者同心。9px 字号下两位数实测宽 10px、外框
+ * 14px，远小于可用的 32px，既不换行也不会被裁掉。
+ */
+.sidebar__rail-badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 999px;
+  background: var(--status-blocked);
+  color: var(--text-inverse);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 12px;
+  text-align: center;
+  /* 数量变化时数字宽度不跳动 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* 内容页：展开时占满图标栏右侧的剩余宽度 */
 .sidebar__panel {
   flex: 1;
@@ -856,6 +892,10 @@
  * min-width: 0 是必须的，否则 flex 项的默认 min-width: auto 会以内容
  * 宽度为下限，标签无法压到基准宽度以下，数量一多就溢出。
  * max-width 限制单个标签不至于过宽（只开一两个时不会拉满整条栏）。
+ *
+ * 标签极窄时（标签栏 900px 下约 12 个以上）文字会被省略成空，
+ * 剩下的可见内容只有「计数徽标 + 悬停时的 ×」，于是让位顺序是：
+ * 先省略文字，再收掉标签内边距（见下面的 @container），最后才收窄 ×。
  */
 .view-tab {
   display: flex;
@@ -865,6 +905,17 @@
   max-width: 220px;
   /* 与标签带等高：无间隙时标签要填满带子 */
   height: 100%;
+  /*
+   * 内容一律裁在标签自己身上：标签窄到放不下「计数 + ×」时，
+   * 宁可裁掉自己右缘的余量，也不要把 × 画到隔壁标签上。
+   */
+  overflow: hidden;
+  /*
+   * 让下面的 @container 能读到标签自身的宽度。
+   * 标签宽度由 flex 等分决定（basis 0），与内容无关，
+   * 所以这条尺寸包含不会改变等分布局。
+   */
+  container-type: inline-size;
   border: none;
   /* 未选中标签 = 标签带底色，视觉上"消失"成带子的一部分 */
   background: transparent;
@@ -914,6 +965,28 @@
   outline: none;
 }
 
+/*
+ * 标签窄到放不下文字时，把标签的内边距与「文字-计数」间距收掉。
+ *
+ * 阈值是算出来的，不是拍的：标签要同时装下
+ * 左内边距 10 + 右内边距 4 + 间距 6 + 三位数计数 26 + × 24 + 右边距 4 = 74px。
+ * （计数这里按三位数保守取值：实际一位数居多——分屏数 > 1 才显示，
+ * 一位数盒宽 15.4px，对应 45.4px。分档见下面 .view-tab__close 的注释。）
+ * 取 72 而不是 74，是留 2px 余量吸收子像素取整（实测 16 个标签每个 56.3px、
+ * 17 个 52.9px，都还在阈值内）。宽度低于阈值时，原来那 20px 内边距已经换不来
+ * 任何可读文字（文字早被省略号吃干），只会把 × 挤到隔壁标签上。
+ * 这里省下 16px，16 个标签（每个 56.3px）时 × 就能完整留在自己标签内。
+ *
+ * 用容器查询而不是媒体查询：决定因素是「单个标签有多宽」，
+ * 而它由标签数量与窗口宽度共同决定，媒体查询读不到。
+ */
+@container (max-width: 72px) {
+  .view-tab__label {
+    gap: 0;
+    padding: 0 2px;
+  }
+}
+
 .view-tab__text {
   flex: 1;
   min-width: 0;
@@ -945,13 +1018,34 @@
  * 标签栏高度是 36px，20px 的按钮配 11px 的 × 显得又小又难点，
  * 尤其是标签按数量自适应收窄后，关闭按钮反而成了最费眼的元素。
  * 24px 仍在 36px 标签内留有上下各 6px 余量，不会顶满。
+ *
+ * 但它允许收窄到 16px：标签极窄时最后让位的是它，而不是把整个 × 推出标签。
+ * 分界是算出来的：它基准占 24 + 右边距 4 = 28px，标签窄于 28px（900px 标签栏
+ * 下约 33 个）才轮到它收窄；实测 20 个标签时标签宽 45px，它仍是 24px、
+ * label 拿 45 - 28 = 17px。16px 仍装得下 14px 图标，不至于点不到。
+ *
+ * 代价：标签窄到装不下「计数 + ×」两样时，× 会压在计数徽标上（计数是 label
+ * 的子元素，label 被压到只剩内边距后它只能向右溢进 ×）。分界随计数位数变化
+ * （计数盒 = 左右内边距 10 + 位数 × 5.4px），即 2 + 计数盒 + 28：
+ * - 一位数（盒宽 15.4px）→ 45.4px：900px 标签栏下 20 个标签（45.0px）起压
+ *   0.4px，19 个（47.4px）仍干净。计数只在分屏数 > 1 时显示，10 个 pane
+ *   以内都是一位数，这是常态；
+ * - 两位数（10 个 pane 以上，20.8px）→ 50.8px：18 个标签起压；
+ * - 三位数（26px）→ 56.2px：17 个标签起压。
+ * 实测分界（探针按三位数 '123' 渲染）：16 个标签（每个 56.3px）时计数结束于
+ * 28.2、× 起于 28.3，刚好不重叠——正是三位数那一档；20 个（45px）时重叠
+ * 5.8px，对应两位数那一档（2 + 20.8 + 28 = 50.8）。
+ * 这是刻意选的降级：计数不裁不缩、× 始终可点，都好过 × 画到隔壁标签上；
+ * × 的按钮框（16px 下限，右边距 4px 不绘制）要到约 45 个标签才被裁，
+ * 而 × 只在悬停/选中时可见，这种宽度下文字也早已只剩省略号。
  */
 .view-tab__close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex-shrink: 1;
   width: 24px;
+  min-width: 16px;
   height: 24px;
   margin-right: 4px;
   border: none;
@@ -976,6 +1070,11 @@
 /* 就地重命名输入框：高度与标签一致，避免切换时标签栏跳动 */
 .view-tab__rename {
   width: 120px;
+  /*
+   * 标签窄于 120px 时跟着收窄（左右各留 4px 外边距），
+   * 否则会被标签的 overflow: hidden 裁掉一截，打字看不全。
+   */
+  max-width: calc(100% - 8px);
   height: 22px;
   margin: 0 4px;
   padding: 0 6px;
@@ -1350,6 +1449,17 @@
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
+  /*
+   * 窄面板里必须收窄：搜索栏是绝对定位 + 收缩包裹，
+   * 内容自然宽度约 320px（输入框 200px + 计数 + 三个按钮），
+   * 面板比它窄时整条会向左越过面板左边界，盖住终端内容甚至隔壁面板。
+   * 左右各留 12px，保证它永远待在面板内。
+   *
+   * 内容有约 148px 的下限（图标 + 计数 + 三个按钮 + 间距，输入框已能压到 0），
+   * 面板窄于约 172px 时内容会从栏框右侧溢出一截：此时栏框仍在面板内、
+   * 溢出方向朝右，好过给栏框加 overflow: hidden 把按钮裁掉（那样就点不到了）。
+   */
+  max-width: calc(100% - 24px);
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -1358,11 +1468,18 @@
 
 .terminal-search__icon {
   display: inline-flex;
+  /* 收窄时让输入框先缩，图标与按钮不参与压缩 */
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
 .terminal-search__input {
   width: 200px;
+  /*
+   * 输入框是唯一可压缩项：默认 min-width: auto 会以输入框的固有宽度
+   * 为下限，挡住收缩，所以必须显式归零。
+   */
+  min-width: 0;
   padding: 3px 6px;
   border: none;
   border-radius: var(--radius-sm);
@@ -1374,6 +1491,12 @@
 
 .terminal-search__count {
   min-width: 36px;
+  /*
+   * 计数保持完整、单行：它是 0/0 与 12/345 这类数字，
+   * 被压扁或折行都会读不出来，所以只让输入框让位。
+   */
+  flex-shrink: 0;
+  white-space: nowrap;
   text-align: center;
   font-size: 11px;
   color: var(--text-muted);
@@ -1383,6 +1506,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 22px;
   height: 22px;
   border: none;
