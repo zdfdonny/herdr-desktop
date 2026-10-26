@@ -200,7 +200,7 @@ export function createTerminal(
   terminal.open(container);
 
   /*
-   * 加载 WebGL 渲染器。
+   * 渲染器生命周期：加载 WebGL 渲染器，并处理它挂掉之后的回退与重建。
    *
    * 默认的 DOM 渲染器为每个字符单元格创建一个 <div> 并逐个改动，
    * 在高频输出时产生大量 DOM 变动，肉眼可见闪烁。
@@ -209,17 +209,99 @@ export function createTerminal(
    * 失败时（无 GPU / 上下文丢失）自动回退到 DOM 渲染器，不影响可用性。
    */
   let webgl: WebglAddon | null = null;
-  try {
-    webgl = new WebglAddon();
-    webgl.onContextLoss(() => {
-      // 上下文丢失后必须释放，xterm 会自动回退到 DOM 渲染器
-      webgl?.dispose();
+  /** 终端是否已销毁：延迟回调都要检查，避免操作已释放的 terminal。 */
+  let disposed = false;
+  /** 连续自动重建次数，用于给「GPU 持续不可用」封顶，避免无限空转。 */
+  let autoRebuilds = 0;
+  /** 自动重建次数上限；触顶后留在 DOM 渲染器，用户切主题仍可手动恢复 WebGL。 */
+  const MAX_AUTO_REBUILDS = 3;
+  /** 新上下文活过这个时长才视为已恢复稳定，清零重建计数。 */
+  const REBUILD_STABLE_MS = 60_000;
+  /** 重建前的延迟：不在 contextlost 回调里同步创建新上下文（部分驱动会立刻失败）。 */
+  const REBUILD_DELAY_MS = 300;
+
+  /** 整屏重绘（终端已销毁时静默跳过）。 */
+  const refreshAll = (): void => {
+    try {
+      terminal.refresh(0, Math.max(0, terminal.rows - 1));
+    } catch {
+      // 终端已销毁
+    }
+  };
+
+  /**
+   * 重建渲染器并整屏重绘。
+   *
+   * 抽成一条路径是因为两处都需要「换掉 WebGL 实例 + 重绘」：
+   * 主题切换（WebGL 的字形/背景图集缓存了旧配色）与上下文丢失后的恢复。
+   */
+  const rebuildRenderer = (): void => {
+    if (webgl) {
+      try {
+        webgl.dispose();
+      } catch {
+        // 已释放
+      }
       webgl = null;
-    });
-    terminal.loadAddon(webgl);
-  } catch {
-    webgl = null;
-  }
+    }
+    let created: WebglAddon | null = null;
+    try {
+      created = new WebglAddon();
+      const addon = created;
+      addon.onContextLoss(() => handleContextLoss(addon));
+      terminal.loadAddon(addon);
+      webgl = addon;
+    } catch {
+      /*
+       * 拿不到 WebGL 上下文（无 GPU / 上下文配额耗尽）：留在 DOM 渲染器，刷新后照样可读。
+       * 刚创建但没装上的实例必须显式释放，否则每失败一次就泄漏一个 WebGL 上下文配额，
+       * 反过来让后续重建更容易失败——这正是我们要修的那类症状的成因之一。
+       */
+      try {
+        created?.dispose();
+      } catch {
+        // 已释放
+      }
+      webgl = null;
+    }
+    refreshAll();
+  };
+
+  /**
+   * WebGL 上下文丢失（GPU 进程崩溃 / 显存压力 / 驱动重置）。
+   *
+   * Chromium 只有一个 GPU 进程，一次丢失会同时打掉**所有** pane 的上下文——
+   * 表现就是所有终端在同一瞬间一起花屏。
+   *
+   * 丢失后 xterm 会把渲染器换回 DOM，但新渲染器的节点不会自动补齐缓冲区内容：
+   * 不重绘的话屏幕就停在错乱状态，只有再触发一次重绘（切主题、拉窗口）才恢复。
+   * 所以这里必须**先整屏重绘**保证立刻可读，再尝试把 WebGL 建回来。
+   */
+  const handleContextLoss = (lost: WebglAddon): void => {
+    console.warn('[terminal] webgl context lost, falling back to DOM renderer');
+    if (webgl === lost) webgl = null;
+    try {
+      lost.dispose();
+    } catch {
+      // 已释放
+    }
+    refreshAll();
+
+    if (disposed || autoRebuilds >= MAX_AUTO_REBUILDS) return;
+    autoRebuilds += 1;
+    setTimeout(() => {
+      // 期间已由别的路径（切主题）重建出可用上下文，就不必再插手
+      if (disposed || webgl) return;
+      rebuildRenderer();
+      if (!webgl) return; // 重建失败：计数保留，累计到上限后停止尝试
+      // 新上下文活过一段时间才清零，秒挂的话计数会持续累加直到触顶
+      setTimeout(() => {
+        autoRebuilds = 0;
+      }, REBUILD_STABLE_MS);
+    }, REBUILD_DELAY_MS);
+  };
+
+  rebuildRenderer();
 
   /*
    * 应答 TUI 启动时发来的主题颜色查询。
@@ -285,32 +367,12 @@ export function createTerminal(
    * 应用主题配色。
    *
    * 仅设置 options.theme 不足以让 WebGL 渲染器换色：它的字形/背景纹理图集
-   * 是缓存的，仍保留旧主题的背景色。必须重建 WebGL 上下文（dispose 后重新
-   * loadAddon），新实例会以当前 theme 重新初始化。失败时退化为 DOM 渲染器。
+   * 是缓存的，仍保留旧主题的背景色。必须重建渲染器并整屏重绘
+   * （见 rebuildRenderer 注释）。
    */
   const applyTheme = (theme: ResolvedTheme): void => {
     terminal.options.theme = terminalTheme(theme);
-
-    if (webgl) {
-      try {
-        webgl.dispose();
-      } catch {
-        // 已释放
-      }
-      webgl = null;
-    }
-    try {
-      const next = new WebglAddon();
-      next.onContextLoss(() => {
-        next.dispose();
-        if (webgl === next) webgl = null;
-      });
-      terminal.loadAddon(next);
-      webgl = next;
-    } catch {
-      webgl = null;
-    }
-    terminal.refresh(0, Math.max(0, terminal.rows - 1));
+    rebuildRenderer();
   };
 
   return {
@@ -345,6 +407,8 @@ export function createTerminal(
     search,
     applyTheme,
     dispose: () => {
+      // 先置位：上下文丢失的延迟重建回调据此跳过已销毁的终端
+      disposed = true;
       try {
         webgl?.dispose();
       } catch {
