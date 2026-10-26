@@ -106,19 +106,6 @@ function createMainWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => win.show());
 
-  /*
-   * 渲染进程 console 落盘。
-   *
-   * 打包后的应用没有 DevTools 入口（自定义菜单里没有 toggleDevTools），
-   * 终端里的 WebGL 上下文丢失告警之类的现场信息就只能靠这条通道留痕。
-   *
-   * 注意参数形态：Electron 44 把详情挂在**第一个**参数上（`level` / `message`），
-   * 后面那几个 level/message 形参是已废弃的旧接口，不要再按老签名取值。
-   */
-  win.webContents.on('console-message', (details) => {
-    logLine(`renderer:${details.level}`, details.message);
-  });
-
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -137,10 +124,10 @@ function createMainWindow(): BrowserWindow {
 
   /*
    * 渲染层崩溃后窗口已无法交互，直接收掉它——关掉最后一个窗口即退出应用。
-   * 崩溃原因（crashed / oom / killed…）要先落到日志，否则退出后无从追查。
+   * 崩溃原因由 web-contents-created 里的统一处理器落盘（覆盖所有 webContents），
+   * 这里只负责收窗口，不再重复记日志。
    */
-  win.webContents.on('render-process-gone', (_event, details) => {
-    logLine('render-process-gone', `reason=${details.reason} exitCode=${details.exitCode}`);
+  win.webContents.on('render-process-gone', () => {
     win.close();
   });
 
@@ -404,6 +391,83 @@ app.whenReady().then(async () => {
       'child-process-gone',
       `type=${details.type} reason=${details.reason} exitCode=${details.exitCode}${extra}`,
     );
+  });
+
+  /** <webview> 崩溃后自动重载的次数上限与延迟（见下方说明）。 */
+  const MAX_WEBVIEW_RELOADS = 2;
+  const WEBVIEW_RELOAD_DELAY_MS = 300;
+
+  /*
+   * 渲染进程 console 落盘 —— 覆盖**所有** webContents，含 <webview>。
+   *
+   * 不能只在主窗口上挂：DSH web agent 那个 <webview> 是独立的 webContents，
+   * 主窗口的监听根本收不到它的日志。这里统一挂载，标签带上类型与 id，
+   * 同时开多个 web pane 时能分清是谁输出的。
+   *
+   * 注册必须早于 createMainWindow()，否则主窗口自己的首屏日志会漏掉。
+   * 注意参数形态：Electron 44 把详情挂在**第一个**参数上（`level` / `message`），
+   * 后面那几个 level/message 形参是已废弃的旧接口，按老签名取值拿不到数据。
+   */
+  app.on('web-contents-created', (_event, contents) => {
+    const type = contents.getType();
+    const prefix = `renderer:${type}#${contents.id}`;
+    /** 这个 webContents 已经被自动重载过几次。 */
+    let webviewReloads = 0;
+
+    contents.on('console-message', (details) => {
+      /*
+       * <webview> 常驻不卸载（切标签只改 display，见 Layout），DSH web GUI 的
+       * info 级日志会持续涌入；它和终端共用同一个 2000 行缓冲，刷屏时会把终端侧
+       * 的关键告警（webgl context lost 之类）挤掉。因此 webview 只留 warning/error，
+       * 主窗口保持全量。
+       */
+      if (type === 'webview' && details.level !== 'warning' && details.level !== 'error') {
+        return;
+      }
+      logLine(`${prefix}:${details.level}`, details.message);
+    });
+
+    /*
+     * 记录「编号 → 地址」的映射。
+     *
+     * 标签里的 #id 是进程内自增编号，重启后会变；有了这条导航记录，就能把
+     * `renderer:webview#12:error` 对应到具体是哪个 web pane 的哪个地址。
+     *
+     * 只订阅 did-navigate（整页加载），不用 did-navigate-in-page：
+     * DSH web GUI 是 SPA，站内路由会频繁触发后者，把日志冲成噪声。
+     * 崩溃自动重载之后也会重新触发一次 did-navigate，映射自动刷新。
+     */
+    contents.on('did-navigate', (_e, url) => {
+      logLine(`${prefix}:navigate`, url);
+    });
+
+    /*
+     * 渲染进程崩溃也在这里统一记录：主窗口原本自己记了一份，但 <webview>
+     * 崩掉时没人记录。统一到这一处，避免主窗口被记两遍。
+     */
+    contents.on('render-process-gone', (_e, details) => {
+      logLine(`${prefix}:process-gone`, `reason=${details.reason} exitCode=${details.exitCode}`);
+
+      /*
+       * <webview> 崩溃后不会自愈，web pane 会停在空白状态，用户只能手动点重启，
+       * 这里自动重载一次让它自己恢复。主窗口不在此列——它崩溃后已无法交互，
+       * 由 createMainWindow 里的处理器直接收窗口。
+       *
+       * 次数封顶 2 次：崩溃若是确定性的（页面自身问题），无限重载会变成
+       * 崩溃-重载死循环。用完后就停在坏状态，靠手动重启恢复——重建 <webview>
+       * 会换一个新的 webContents，计数自然归零。
+       */
+      if (type !== 'webview' || contents.isDestroyed()) return;
+      if (webviewReloads >= MAX_WEBVIEW_RELOADS) {
+        // 放弃自动恢复也要留痕，否则日志里只剩崩溃记录，看不出我们已经不再重试
+        logLine(`${prefix}:reload-giveup`, `attempts=${webviewReloads}`);
+        return;
+      }
+      webviewReloads += 1;
+      setTimeout(() => {
+        if (!contents.isDestroyed()) contents.reload();
+      }, WEBVIEW_RELOAD_DELAY_MS);
+    });
   });
 
   router = new IpcRouter();
