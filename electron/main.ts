@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { IpcRouter } from './ipc/router';
 import { IPC } from './ipc/protocol';
 import { readClipboard } from './runtime/clipboard';
+import { logLine, flushLogSync } from './runtime/logger';
 import { translate, type MessageKey } from '../shared/i18n';
 import { SHORTCUTS, indexedAccelerator, type ShortcutActionId } from '../shared/shortcuts';
 
@@ -105,6 +106,19 @@ function createMainWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => win.show());
 
+  /*
+   * 渲染进程 console 落盘。
+   *
+   * 打包后的应用没有 DevTools 入口（自定义菜单里没有 toggleDevTools），
+   * 终端里的 WebGL 上下文丢失告警之类的现场信息就只能靠这条通道留痕。
+   *
+   * 注意参数形态：Electron 44 把详情挂在**第一个**参数上（`level` / `message`），
+   * 后面那几个 level/message 形参是已废弃的旧接口，不要再按老签名取值。
+   */
+  win.webContents.on('console-message', (details) => {
+    logLine(`renderer:${details.level}`, details.message);
+  });
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -123,8 +137,10 @@ function createMainWindow(): BrowserWindow {
 
   /*
    * 渲染层崩溃后窗口已无法交互，直接收掉它——关掉最后一个窗口即退出应用。
+   * 崩溃原因（crashed / oom / killed…）要先落到日志，否则退出后无从追查。
    */
-  win.webContents.on('render-process-gone', () => {
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logLine('render-process-gone', `reason=${details.reason} exitCode=${details.exitCode}`);
     win.close();
   });
 
@@ -355,9 +371,11 @@ app.whenReady().then(async () => {
   // IPC 处理器内的可预期失败（命令不存在等）已在 router 中转成 app:error 消息。
   process.on('uncaughtException', (error) => {
     console.error('[herdr-desktop] uncaught exception:', error);
+    logLine('uncaught-exception', error instanceof Error ? (error.stack ?? error.message) : String(error));
   });
   process.on('unhandledRejection', (reason) => {
     console.error('[herdr-desktop] unhandled rejection:', reason);
+    logLine('unhandled-rejection', reason instanceof Error ? (reason.stack ?? reason.message) : String(reason));
   });
 
   /*
@@ -366,6 +384,27 @@ app.whenReady().then(async () => {
    * 避免同时安装 herdr 时读写冲突。
    */
   app.setPath('userData', join(app.getPath('appData'), 'herdr-desktop'));
+
+  /*
+   * 启动横幅 + 子进程异常日志。
+   *
+   * 必须在 setPath 之后再记第一条：日志文件落在 userData/logs 下，
+   * 提前写入会落到默认的 appData/Herdr 目录。
+   *
+   * child-process-gone 里的 type==='GPU' 是关键信号：GPU 进程崩溃会同时打掉
+   * 所有 pane 的 WebGL 上下文，正是「所有终端同一瞬间一起花屏」的直接证据。
+   */
+  logLine(
+    'app',
+    `start version=${app.getVersion()} electron=${process.versions.electron} platform=${process.platform}`,
+  );
+  app.on('child-process-gone', (_event, details) => {
+    const extra = details.name ? ` name=${details.name}` : '';
+    logLine(
+      'child-process-gone',
+      `type=${details.type} reason=${details.reason} exitCode=${details.exitCode}${extra}`,
+    );
+  });
 
   router = new IpcRouter();
   router.loadSettings();
@@ -412,7 +451,11 @@ app.on('before-quit', (event) => {
   // 先结束 dsh web 子进程树与 hook 上报端点，再排空持久化写入
   router.disposeWebAgents();
   router.disposeHookServer();
-  void router.flush().finally(() => app.quit());
+  void router.flush().finally(() => {
+    // 日志缓冲是异步落盘的，退出前同步补写，否则最后几条（往往最有用）会丢
+    flushLogSync();
+    app.quit();
+  });
 });
 
 /*
