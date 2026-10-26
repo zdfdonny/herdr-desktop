@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import type { Terminal } from '@xterm/xterm';
 import type { PaneState } from '@shared/state';
 import type { ClipboardPayload } from '@shared/protocol';
 import { useTerminalStore, terminalBus } from '../stores/terminalStore';
@@ -40,15 +41,36 @@ const SEARCH_DECORATIONS = {
 };
 
 /**
- * 把一组磁盘绝对路径格式化为写入终端的文本。
+ * 向终端投递一次粘贴。
+ *
+ * `terminal.paste()` 在终端已销毁时会抛错，而剪贴板读取是异步的——这一往返期间
+ * pane 可能被关闭或强制重启。之前走 `writeTerminal` 时由主进程的 disposed 检查
+ * 兜底，改走 xterm 后这层保护没了，这里自己吞掉这种竞态。
+ */
+function pasteInto(terminal: Terminal, text: string): void {
+  if (!text) return;
+  try {
+    terminal.paste(text);
+  } catch {
+    // 终端已销毁：粘贴结果无处可去，忽略
+  }
+}
+
+/**
+ * 把一组磁盘绝对路径插入终端，每个路径单独走一次粘贴。
  *
  * 刻意不做 shell 转义 / 加引号：这些 pane 绝大多数跑的是 CLI coding agent
  * （Claude Code / Codex / opencode 等），它们的输入是纯文本提示词而非 shell，
- * 加引号会把引号本身带进路径、导致 agent 读不到文件。多个文件用空格分隔，
- * 并在末尾补一个空格作为结束分隔，与 macOS 终端拖放文件的行为一致。
+ * 加引号会把引号本身带进路径、导致 agent 读不到文件。每个路径末尾补一个空格
+ * 作为分隔，与 macOS 终端拖放文件的行为一致。
+ *
+ * 逐条粘贴而不是拼成一条，是因为 TUI 会做「粘贴内容是否就是一个文件路径」的识别：
+ * opencode 收到粘贴事件后先拿整段内容去当路径探测（其白名单为
+ * png/jpg/jpeg/gif/webp/avif/svg/pdf），命中就把文件读成真正的图片部件；
+ * 多个路径用空格拼成一条就不再是合法路径，识别不到、退化成普通文本。
  */
-function formatInsertPaths(paths: string[]): string {
-  return `${paths.join(' ')} `;
+function pastePaths(terminal: Terminal, paths: string[]): void {
+  for (const path of paths) pasteInto(terminal, `${path} `);
 }
 
 /**
@@ -56,8 +78,21 @@ function formatInsertPaths(paths: string[]): string {
  *
  * 图片没有文本表示：由 Main 先把它落盘为临时文件，再插入临时文件路径，
  * 让终端里的 CLI agent 能按普通文件路径读取它。
+ *
+ * 三种内容**都**经 `terminal.paste()`，而不是直接 `writeTerminal()`，它做两件事：
+ * 1. 换行归一：`\r?\n` → `\r`（TUI 的 Enter 是 CR，不是 LF）；
+ * 2. bracketed paste：子进程用 `CSI ? 2004 h` 打开该模式后，把内容裹进
+ *    `ESC[200~ … ESC[201~`，让 TUI 知道「这是一次粘贴」而不是逐字符按键。
+ *
+ * 少了括号包裹，opencode / antigravity 这类 TUI 的粘贴快路径根本不会触发：
+ * opencode 收到 `ESC[200~` 时才会把整段文本折叠成 `[Pasted ~N lines]` 这一个
+ * 虚拟占位符（O(1)），否则它按逐字符按键插入编辑器，每插一个字符就整屏重绘一次，
+ * 输出量随文本长度平方级增长——这正是「在真实终端里粘贴秒完成、在这里卡死」的原因。
+ *
+ * 图片路径同样需要括号包裹：opencode 只在粘贴事件里才做文件探测，命中图片白名单
+ * 就把它读成真正的图片部件（`[Image N]`）交给模型；直接写 PTY 只会得到一行裸路径。
  */
-async function pasteIntoTerminal(paneId: string): Promise<void> {
+async function pasteIntoTerminal(terminal: Terminal): Promise<void> {
   let payload: ClipboardPayload;
   try {
     payload = await readClipboard();
@@ -66,13 +101,13 @@ async function pasteIntoTerminal(paneId: string): Promise<void> {
   }
   switch (payload.kind) {
     case 'files':
-      writeTerminal(paneId, formatInsertPaths(payload.files));
+      pastePaths(terminal, payload.files);
       break;
     case 'image':
-      writeTerminal(paneId, formatInsertPaths([payload.imagePath]));
+      pastePaths(terminal, [payload.imagePath]);
       break;
     case 'text':
-      writeTerminal(paneId, payload.text);
+      pasteInto(terminal, payload.text);
       break;
     case 'empty':
       break;
@@ -183,10 +218,10 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
         }
       }
       if (paths.length > 0 && !hasSyntheticImage) {
-        writeTerminal(pane.paneId, formatInsertPaths(paths));
+        pastePaths(handle.terminal, paths);
         return;
       }
-      void pasteIntoTerminal(pane.paneId);
+      void pasteIntoTerminal(handle.terminal);
     };
 
     // 拖文件到终端：插入文件绝对路径。
@@ -210,13 +245,9 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
         }
       }
       if (paths.length > 0) {
-        writeTerminal(pane.paneId, formatInsertPaths(paths));
+        pastePaths(handle.terminal, paths);
       }
     };
-
-    container.addEventListener('paste', onNativePaste, true);
-    container.addEventListener('dragover', onDragOver);
-    container.addEventListener('drop', onDrop);
 
     /*
      * 终端 → PTY 的唯一出口（用户输入与查询应答都走这里）。
@@ -247,6 +278,17 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
       onQueryResponse: toPty,
     });
     handleRef.current = handle;
+
+    /*
+     * 粘贴 / 拖放监听在终端实例创建之后才注册：两个处理函数都要通过
+     * `handle.terminal` 走 xterm 的粘贴语义（见 pastePaths 注释）。提前注册
+     * 就等于在闭包里引用一个尚未初始化的 const——当前是靠「effect 体内没有
+     * await、事件不可能在这中间触发」才安全，将来若在两者之间插入异步操作
+     * 就会变成 TDZ 崩溃。注册顺序本身不影响任何行为。
+     */
+    container.addEventListener('paste', onNativePaste, true);
+    container.addEventListener('dragover', onDragOver);
+    container.addEventListener('drop', onDrop);
 
     /*
      * 聚焦的 pane 自动获取键盘焦点：新建、恢复（running 翻转重建终端）、
@@ -296,7 +338,7 @@ export function TerminalPane({ pane }: TerminalPaneProps) {
 
       // 粘贴剪贴板（文本 / 图片 / 文件）：Ctrl+V / Cmd+V
       if (plain && !event.shiftKey && (event.key === 'v' || event.key === 'V')) {
-        void pasteIntoTerminal(pane.paneId);
+        void pasteIntoTerminal(handle.terminal);
         event.preventDefault();
         return false;
       }
