@@ -138,14 +138,33 @@ export function fullLifecycleHookAuthority(source: string, agentLabel: string): 
  * 仅上报会话身份的集成（对应 herdr `session_identity_only_integration`）。
  *
  * 这些来源不持有状态权威，只提供会话引用。
+ *
+ * 注意 antigravity 已从这里移除：它的 hook 现在会上报 working/idle
+ * （PreInvocation → working，Stop 且 fullyIdle → idle），如果继续留在这个名单里，
+ * TerminalState 会把它的状态上报整个丢弃（见 terminal-state.ts 的
+ * setHookAuthorityAt 首行），屏幕检测就会在「初始化完成 / 工具跑完」时
+ * 各响一次完成提示音。
  */
 export function sessionIdentityOnlyIntegration(source: string, agentLabel: string): boolean {
   return (
     (source === 'herdr:hermes' && agentLabel === 'hermes') ||
     (source === 'herdr:qwen' && agentLabel === 'qwen') ||
-    (source === 'herdr:letta' && agentLabel === 'letta') ||
-    (source === 'herdr:antigravity' && agentLabel === 'antigravity')
+    (source === 'herdr:letta' && agentLabel === 'letta')
   );
+}
+
+/**
+ * 完成判定完全交给 hook 的 agent —— 屏幕不再决定「完成」。
+ *
+ * antigravity 的集成会用 PreInvocation 上报 working、用 Stop + fullyIdle 上报 idle。
+ * 而屏幕分不清「初始化完成 / 工具跑完 / 会话真的结束」：三者都表现为 spinner 停下，
+ * 都会产生 working/blocked → idle 的跳变。只要让屏幕参与完成判定，前两者就会各响
+ * 一次完成提示音。所以这些 agent 的完成只认 hook。
+ *
+ * 往这里加 agent 时必须确认它的集成确实会上报状态，否则它永远不会响完成提示音。
+ */
+export function screenCompletionIgnored(agentLabel: string | null): boolean {
+  return agentLabel === 'antigravity';
 }
 
 export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(

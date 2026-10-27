@@ -1053,8 +1053,20 @@ function antigravityTarget(): HookTarget {
 
       const hooksPath = join(dir, 'hooks.json');
       const root = await readJson(hooksPath);
-      const command = commandFor({ encodedCommand: true }, path, 'session');
-      root['herdr-desktop'] = { PreInvocation: [{ type: 'command', command, timeout: 10 }] };
+      /*
+       * 注册两个事件：
+       * - PreInvocation：每轮模型调用开始 → 上报 working，用来「夹住」整轮；
+       * - Stop：本轮结束 → 仅当 payload 的 fullyIdle 为 true 才上报 idle。
+       *
+       * 只有 Stop+fullyIdle 会产生 working→idle 跳变，因此「初始化完成」和
+       * 「工具跑完」都不再触发完成提示音（屏幕检测分不清这三者）。
+       */
+      const startCommand = commandFor({ encodedCommand: true }, path, 'session');
+      const stopCommand = commandFor({ encodedCommand: true }, path, 'stop');
+      root['herdr-desktop'] = {
+        PreInvocation: [{ type: 'command', command: startCommand, timeout: 10 }],
+        Stop: [{ type: 'command', command: stopCommand, timeout: 10 }],
+      };
       await writeJson(hooksPath, root);
     },
     async uninstall() {

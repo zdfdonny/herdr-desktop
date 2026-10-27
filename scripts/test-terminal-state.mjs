@@ -267,9 +267,15 @@ function setHook(t, source, agent, state, seq, now) {
   // full-lifecycle：hook 活着时对状态拥有权威，屏幕检测只作回退
   const fullLifecycle = ['pi', 'omp', 'mastracode', 'opencode', 'kilo', 'kimi'];
   // session-identity-only：只上报会话身份，不持有状态权威
-  const sessionOnly = ['hermes', 'qwen', 'letta', 'antigravity'];
-  // 其余官方来源：自定义 hook（session 或 state），非 full-lifecycle、非 session-only
-  const custom = ['claude', 'codex', 'copilot', 'devin', 'droid', 'qodercli', 'cursor', 'grok'];
+  const sessionOnly = ['hermes', 'qwen', 'letta'];
+  /*
+   * antigravity 刻意**不**在 session-only 名单里（herdr 上游把它列为
+   * `herdr:antigravity_cli` / `agy`）：它的集成会用 PreInvocation 上报 working、
+   * Stop + fullyIdle 上报 idle，状态权威因此必须被采纳，否则状态上报会被
+   * setHookAuthorityAt 首行直接丢弃。它同样不在 full-lifecycle 名单里，
+   * 屏幕检测继续作为兜底。
+   */
+  const custom = ['claude', 'codex', 'copilot', 'devin', 'droid', 'qodercli', 'cursor', 'grok', 'antigravity'];
 
   for (const agent of fullLifecycle) {
     check(`10.1 ${agent} 是 full-lifecycle`, fullLifecycleHookAuthority(`herdr:${agent}`, agent), true);
@@ -285,8 +291,9 @@ function setHook(t, source, agent, state, seq, now) {
         sessionIdentityOnlyIntegration(`herdr:${agent}`, agent),
       false);
   }
-  // antigravity 的 desktop 资产标签与 herdr（herdr:antigravity_cli / agy）不同，单独锁定
-  check('10.6 antigravity 用 desktop 标签', sessionIdentityOnlyIntegration('herdr:antigravity', 'antigravity'), true);
+  // antigravity 的 desktop 资产标签与 herdr（herdr:antigravity_cli / agy）不同：它上报状态，
+  // 因此不在 session-only 名单里；这一条锁定「上线报状态」这个桌面端独有的决定。
+  check('10.6 antigravity 上报状态（不在 session-only）', sessionIdentityOnlyIntegration('herdr:antigravity', 'antigravity'), false);
 }
 
 // ---------------------------------------------------------------------------

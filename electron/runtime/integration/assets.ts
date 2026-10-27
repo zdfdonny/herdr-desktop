@@ -130,7 +130,7 @@ export const INTEGRATION_VERSIONS: Record<string, number> = {
   letta: 3,
   cursor: 3,
   mastracode: 3,
-  antigravity: 3,
+  antigravity: 4,
   grok: 3,
   pi: 3,
   omp: 4,

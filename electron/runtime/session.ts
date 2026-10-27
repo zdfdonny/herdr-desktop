@@ -21,6 +21,7 @@ import type {
   SpawnAgentParams,
   SpawnWebAgentParams,
   AgentStatus,
+  DetectedState,
 } from '../../shared/state';
 import { paneAgentStatus, isCompletionTransition } from '../../shared/agent-status';
 import { TerminalState, type TerminalStateMutation } from './terminal-state';
@@ -504,6 +505,18 @@ export class Session {
       focusedPaneId: this.focusedPaneId,
       revision: this.revision,
     };
+  }
+
+  /**
+   * pane 当前的**原始**检测状态（未经 seen 投影）。
+   *
+   * 供通知投递前的证据校验使用（对应 herdr `notification_validation`）：那里比对的是
+   * agent 自己的状态，而不是「已看/未看」投影后的 AgentStatus——否则聚焦的 pane 因为
+   * seen=true 永远得不到 done，完成音会被全部丢掉。
+   */
+  detectedStateFor(paneId: string): DetectedState | null {
+    const terminal = this.terminals.get(paneId);
+    return terminal ? terminal.state : null;
   }
 
   private projectAgent(pane: PaneState): AgentInfo {

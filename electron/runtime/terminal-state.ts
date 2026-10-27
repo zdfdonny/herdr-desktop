@@ -152,7 +152,6 @@ export class TerminalState {
   lastAgentCompletionSeq: number | null;
 
   private fallbackVisibleBlocker: boolean;
-  private fallbackObservedAt: number | null;
   private agentNameOwner: AgentNameOwner | null;
   private managedAgent: ManagedAgent | null;
   private codexPromptReady: boolean;
@@ -168,7 +167,6 @@ export class TerminalState {
     this.detectedAgent = null;
     this.fallbackState = 'unknown';
     this.fallbackVisibleBlocker = false;
-    this.fallbackObservedAt = null;
     this.hookAuthority = null;
     this.persistedAgentSession = null;
     this.agentName = null;
@@ -300,7 +298,6 @@ export class TerminalState {
     }
     this.fallbackState = fallbackState;
     this.fallbackVisibleBlocker = visibleBlocker && fallbackState === 'blocked';
-    this.fallbackObservedAt = now;
     if (processExited) {
       if (agent !== null) {
         this.recentAgentProcessExit = { agent, observedAt: now };
@@ -914,7 +911,6 @@ export class TerminalState {
       this.detectedAgent = null;
       this.fallbackState = 'unknown';
       this.fallbackVisibleBlocker = false;
-      this.fallbackObservedAt = null;
       this.clearAgentName();
     }
     this.hookAuthority = null;
@@ -954,7 +950,6 @@ export class TerminalState {
     this.detectedAgent = null;
     this.fallbackState = 'unknown';
     this.fallbackVisibleBlocker = false;
-    this.fallbackObservedAt = null;
     this.clearAgentName();
 
     const currentSession = this.currentSessionIdentityForPersistence();
@@ -1029,6 +1024,17 @@ export class TerminalState {
   /** 对应 herdr `full_lifecycle_hook_authority_active`。 */
   fullLifecycleHookAuthorityActive(): boolean {
     return this.liveFullLifecycleHookAuthority();
+  }
+
+  /**
+   * 该 pane 是否有生效中的 hook 状态权威（不要求是全生命周期集成）。
+   *
+   * 目前用于：一旦某个 agent 会通过 hook 上报状态，就不再让**屏幕**决定「完成」。
+   * 否则「初始化完成 / 工具跑完」这类 working→idle 会各自响一次完成提示音
+   * （屏幕分不清它们和真正的会话结束）。完成只由 hook 的 idle 上报驱动。
+   */
+  hookStateAuthorityActive(): boolean {
+    return this.hookAuthority !== null && this.hookAuthorityIsEffective(this.hookAuthority);
   }
 
   /** 对应 herdr `set_agent_name`。 */
@@ -1223,7 +1229,6 @@ export class TerminalState {
     this.detectedAgent = null;
     this.fallbackState = 'unknown';
     this.fallbackVisibleBlocker = false;
-    this.fallbackObservedAt = null;
     this.hookAuthority = null;
     this.persistedAgentSession = null;
     this.suppressedFullLifecycleHookReports.clear();
@@ -1249,13 +1254,14 @@ export class TerminalState {
     return this.hookAuthority === null || this.hookAuthority.reportedAt <= observedAt;
   }
 
-  private fallbackNotOlderThanHook(): boolean {
-    return (
-      this.hookAuthority === null ||
-      (this.fallbackObservedAt !== null &&
-        this.hookAuthority.reportedAt <= this.fallbackObservedAt)
-    );
-  }
+  /*
+   * 注：herdr 还有 fallback_not_older_than_hook() + fallback_observed_at（要求屏幕观测
+   * 新于 hook 上报才允许 blocker 覆盖）。我们刻意没有实现——herdr 的 antigravity 是
+   * session-identity-only 集成、从不报状态，那条判据在它那里不会被行使；而我们的
+   * antigravity 会稀疏上报状态，一旦 hook 比屏幕新就把状态钉死在 working，权限提示
+   * 弹出后 TUI 不再刷新，blocked 永远出不来（实测：阻塞时完全没有提示音）。
+   * 详见 visibleBlockerOverridesHook()。
+   */
 
   private hookAuthorityConflictsWithDetectedAgent(detectedAgent: string | null): boolean {
     if (detectedAgent === null || this.hookAuthority === null) {
@@ -1824,13 +1830,34 @@ export class TerminalState {
     if (this.liveFullLifecycleHookAuthority()) {
       return false;
     }
+    /*
+     * 偏离上游：这里**不**要求「屏幕观测新于 hook 上报」（herdr 有此判据）。
+     *
+     * 原因：herdr 把 antigravity 当作 session-identity-only 集成，它永远不报状态，
+     * 所以源侧那条判据在 herdr 里根本不会被行使。我们的 antigravity 会上报状态，
+     * 而它的上报是稀疏的（PreInvocation / Stop），一旦 hook 的时间戳比屏幕新就会赢，
+     * 且权限提示弹出后 TUI 通常不再刷新——没有新的屏幕观测，状态就被**钉死在
+     * working**，blocked 永远出不来（实测：阻塞时完全没有提示音）。
+     *
+     * 因此让 blocker 恒胜：它是每帧重算的具体信号（对话框按键提示、trust 文案），
+     * 提示消失后 fallbackVisibleBlocker 自然变 false，hook 状态随之恢复。
+     */
     return (
       this.fallbackVisibleBlocker &&
-      this.fallbackNotOlderThanHook() &&
       this.hookAuthority !== null &&
       this.hookAuthority.state !== 'blocked' &&
       parseAgentLabel(this.hookAuthority.agentLabel) === this.detectedAgent
     );
+  }
+
+  /**
+   * 屏幕当前是否看到「需要人工输入」的 blocker（对应 fallback_visible_blocker）。
+   *
+   * 供上报边界使用：hook 报 working 时若屏幕上正显示权限/信任对话框，
+   * 这条 working 会把 blocked 顶掉，制造 blocked ↔ working 横跳。
+   */
+  screenVisibleBlocker(): boolean {
+    return this.fallbackVisibleBlocker;
   }
 
   private liveFullLifecycleHookAuthority(): boolean {

@@ -14,7 +14,7 @@ import { PtyManager } from '../runtime/pty-manager';
 import { WebAgentManager } from '../runtime/web-agent-manager';
 import { SettingsStore } from '../runtime/settings';
 import { detectFromSnapshot } from '../runtime/agent-detector';
-import { parseAgentLabel } from '../../shared/detect-manifest';
+import { parseAgentLabel, screenCompletionIgnored } from '../../shared/detect-manifest';
 import { isCompletionTransition } from '../../shared/agent-status';
 import { detectGitBranch } from '../runtime/git';
 import { saveState, loadState, flushState } from '../runtime/persist';
@@ -33,8 +33,29 @@ import type {
   Language,
 } from '../../shared/state';
 
-/** agent 状态通知的冷却窗口：同一 pane+状态在此窗口内只通知一次。 */
-const AGENT_STATUS_NOTIFY_COOLDOWN_MS = 10_000;
+/**
+ * 通知投递延迟（对应 herdr 的 `config.ui.toast.delay_seconds`，默认 1 秒）。
+ *
+ * 这是 herdr 通知机制的核心：通知不立即投递，而是延后 1 秒再按**当时**的 pane 状态
+ * 校验一次。屏幕检测的抖动（blocked→working→blocked）通常远小于 1 秒，于是多次跳变
+ * 只会被合并成一条，假完成在投递前就已失效、根本不发声。
+ */
+const NOTIFY_DELIVERY_DELAY_MS = 1_000;
+/** 投递前的证据宽限期：期间状态仍在变化就每 50ms 重试，超时则丢弃（对应 COMPLETION_EVIDENCE_GRACE）。 */
+const NOTIFY_EVIDENCE_GRACE_MS = 1_000;
+/** 队列轮询间隔（对应 COMPLETION_RECHECK_INTERVAL）。 */
+const NOTIFY_TICK_MS = 50;
+
+/** 一条待投递的通知。 */
+interface PendingNotify {
+  paneId: string;
+  status: 'blocked' | 'done';
+  message?: string;
+  /** 计划投递时间。 */
+  deliverAt: number;
+  /** 证据宽限截止时间：超过后不再等待状态稳定，直接按当时的校验结果决定丢弃。 */
+  expiresAt: number;
+}
 
 export class IpcRouter {
   private session = new Session();
@@ -65,13 +86,21 @@ export class IpcRouter {
   /** hook 上报端点（官方集成 hook 把会话引用报回 Main）。 */
   private reportServer = new ReportServer();
   /**
-   * agent 状态通知冷却：同一 pane + 状态 在冷却窗口内只通知一次。
+   * 待投递的 agent 状态通知队列（对应 herdr `pending_notifications`）。
    *
-   * 终端检测会因屏幕重绘抖动（blocked → working → blocked），每次重新进入
-   * blocked 都会触发一次 transition，若不去重，右下角会连续弹同一状态。
-   * 键为 `${paneId}:${status}`，值为最近一次通知的时间戳。
+   * 同一 pane 至多保留一条（新通知替换旧的），靠投递前的状态校验过滤掉抖动产生的
+   * 假完成/假阻塞——取代了原先的时间冷却窗口。
    */
-  private agentStatusNotifyCooldown = new Map<string, number>();
+  private pendingNotifies: PendingNotify[] = [];
+  /** 通知队列的轮询定时器（队列空即停）。 */
+  private notifyTicker: NodeJS.Timeout | null = null;
+  /**
+   * 「该 agent 的完成判定是否交给集成 hook」的缓存（agent → bool）。
+   *
+   * 判断要读集成安装状态（`hookStatuses()` 会遍历所有集成做文件 stat），不能每块
+   * PTY 数据都算一次；安装/卸载集成后清空即可。
+   */
+  private hookCompletionCache = new Map<string, boolean>();
   /**
    * dsh web pane 当前正在查看的会话绑定：sessionId → Set<paneId>。
    *
@@ -195,12 +224,17 @@ export class IpcRouter {
 
   /** 安装某 agent 的官方集成 hook。 */
   async installHook(agentId: string): Promise<HookStatus> {
-    return installHook(agentId, this.reportServer.reportUrl);
+    const status = await installHook(agentId, this.reportServer.reportUrl);
+    // 安装状态变化会影响「完成判定是否交给 hook」，清缓存重新判断
+    this.hookCompletionCache.clear();
+    return status;
   }
 
   /** 卸载某 agent 的官方集成 hook。 */
   async uninstallHook(agentId: string): Promise<HookStatus> {
-    return uninstallHook(agentId);
+    const status = await uninstallHook(agentId);
+    this.hookCompletionCache.clear();
+    return status;
   }
 
   getSettings() {
@@ -695,6 +729,20 @@ export class IpcRouter {
       if (!terminal) continue;
 
       if (report.state && report.state !== 'done') {
+        /*
+         * 上报边界：屏幕上正显示权限/信任对话框时，丢弃 hook 报来的 working。
+         *
+         * herdr 的状态仲裁要求「屏幕观测新于 hook 上报」才允许 blocker 覆盖，
+         * 所以一条比 blocker 更新的 working 会把 blocked 顶掉，屏幕下一次刷新再判回
+         * blocked——一次权限提示被拆成成串跳变，通知又被冷却吃掉一半，表现为
+         * 「阻塞一次响一次不响」（实测日志：两次 blocked 相隔 7~9 秒）。
+         *
+         * 在边界丢弃而不是削弱仲裁，是为了保持与 herdr 的仲裁逻辑一致。
+         * 只丢 working：blocked/idle 必须照常放行（idle 是完成信号）。
+         */
+        if (report.state === 'working' && terminal.screenVisibleBlocker()) {
+          continue;
+        }
         // 状态上报（对应 herdr handle_pane_report_agent → HookStateReported）：
         // setHookAuthorityAt 内部携带 session ref 完成会话锚定，不单独走 session 路径，
         // 避免同一 seq 被 setAgentSessionRefForSessionStart 与 setHookAuthorityAt 重复消费。
@@ -1153,8 +1201,7 @@ export class IpcRouter {
     this.pushSnapshot();
   }
 
-  private focusPane(paneId: string): void {
-    // 聚焦即「已看」：Session.focusPane 会置 seen=true，done 投影自动回落 idle。
+  private focusPane(paneId: string): void {    // 聚焦即「已看」：Session.focusPane 会置 seen=true，done 投影自动回落 idle。
     this.session.focusPane(paneId);
     /*
      * 选中即恢复：聚焦的 pane 处于停止态时自动拉起进程。
@@ -1172,6 +1219,27 @@ export class IpcRouter {
     this.pushSnapshot();
   }
 
+  /**
+   * 该 agent 的「完成」是否由集成 hook 负责。
+   *
+   * 只有集成**确实装着**才把完成判定交给 hook：
+   * - 装了：屏幕的 working/blocked → idle 不再发通知，避免「初始化完成 / 工具跑完」误响；
+   *   完成改由 hook 的 idle 上报驱动（antigravity 用 Stop + fullyIdle）。
+   * - 没装（或版本过旧）：hook 永远不会上报 idle，若仍抑制屏幕，该 agent 就再也不会
+   *   响完成提示音。此时保持原行为，由屏幕决定。
+   *
+   * 注意只认 `installed`，不认 `outdated`：旧版本集成未必会上报状态（antigravity v3
+   * 只报会话身份），按 outdated 放行会让用户升级前一直误响，按 not-installed 处理更安全。
+   */
+  private agentCompletionFromHooks(agent: string | null): boolean {
+    if (!agent || !screenCompletionIgnored(agent)) return false;
+    const cached = this.hookCompletionCache.get(agent);
+    if (cached !== undefined) return cached;
+    const installed = hookStatuses()[agent] === 'installed';
+    this.hookCompletionCache.set(agent, installed);
+    return installed;
+  }
+
   private refreshAgent(paneId: string): void {
     const snapshot = this.pty.snapshot(paneId);
     const pane = this.session.getPane(paneId);
@@ -1184,6 +1252,18 @@ export class IpcRouter {
 
     // 展示字段（name/title）单独更新；状态一律经 TerminalState 仲裁后在 snapshot 投影
     this.session.updateAgentPresentation(paneId, result.name, result.title);
+
+    /*
+     * skip_state_update：命中的规则明确要求「不要拿这次观测改状态」。
+     *
+     * 对应 herdr 的 `(!detection.skip_state_update).then_some(detection)`——那边是整条
+     * 检测结果被丢弃、状态保持原样。典型场景：claude 打开 /model 选择器或详细记录
+     * 视图时，屏幕上不再有 spinner/prompt box 特征，若照常按 fallback 判成 idle，
+     * 就会产生一次 working → idle 的假完成跳变（误响提示音）。
+     *
+     * 注意 name/title 仍然更新：这些规则只否决「状态」，不影响侧栏展示的标题。
+     */
+    if (result.skipStateUpdate) return;
 
     // 状态仲裁（对应 herdr set_detected_state_with_screen_signals_at）。
     // agent 参数用命令派生的 detectedAgent（进程检测等价物），屏幕只提供 fallback 状态；
@@ -1198,7 +1278,28 @@ export class IpcRouter {
       Date.now(),
     );
     const transition = this.session.applyStateChange(paneId, mutation, false);
-    this.notifyForTransition(paneId, mutation, transition);
+    /*
+     * 完成判定交给 hook 的 agent（见 screenCompletionIgnored），屏幕不再发完成通知。
+     *
+     * 原因：屏幕分不清「初始化完成 / 工具跑完 / 会话真的结束」，三者都表现为 spinner
+     * 停下，都会产生 working/blocked → 完成 的跳变，于是各自响一次提示音。
+     *
+     * 两个前提缺一不可：
+     * 1. 该 agent 的集成**确实装了**（agentCompletionFromHooks）——没装时 hook 永远不会
+     *    上报 idle，若仍然抑制屏幕，它就此再也不会响完成提示音；
+     * 2. transition.to 是 **AgentStatus**（idle | done | working | blocked），不是原始
+     *    状态：paneAgentStatus 会把「未聚焦 pane 的完成」投影成 `done`（见 session.ts），
+     *    所以必须同时匹配 idle 与 done，否则只有聚焦的 pane 被抑制、后台 pane 照旧乱响。
+     */
+    const screenSaysDone =
+      transition !== null &&
+      (transition.to === 'idle' || transition.to === 'done') &&
+      (transition.from === 'working' || transition.from === 'blocked');
+    const hooksOwnCompletion =
+      this.agentCompletionFromHooks(terminal.detectedAgent) || terminal.hookStateAuthorityActive();
+    if (!(screenSaysDone && hooksOwnCompletion)) {
+      this.notifyForTransition(paneId, mutation, transition);
+    }
 
     /*
      * 采集端 fallback：从终端输出识别出会话 id 时，把它持久化到 terminal，
@@ -1253,33 +1354,85 @@ export class IpcRouter {
   }
 
   /**
-   * agent 状态变化通知。
+   * agent 状态变化通知 —— 入队（对应 herdr `receive_notification`）。
    *
-   * 转到 blocked / done 时推送一条 `agent:status` 给渲染端，
-   * 由渲染端决定 toast 与系统通知；Main 只给结构化数据与文案 key，
-   * 本地化仍留在渲染端。
+   * 不再用时间冷却去重，而是采用 herdr 的两条规则：
    *
-   * 同一 pane + 状态在冷却窗口内只通知一次，避免终端检测抖动导致重复弹。
+   * 1. **同 pane 替换**：新通知到达时丢掉该 pane 已排队/待投递的通知
+   *    （herdr 用 `retain` 做同样的事）。屏幕检测抖动产生的一串跳变因此合并成一条。
+   * 2. **投递前校验**：延后 `NOTIFY_DELIVERY_DELAY_MS` 投递，投递时按**当时**的 pane
+   *    状态复核——`blocked` 要求仍是 blocked，`done` 要求仍是 idle；仍在变化就每
+   *    50ms 重试，超过 `NOTIFY_EVIDENCE_GRACE_MS` 宽限期则丢弃。
+   *    假完成（工具跑完、菜单开关那种瞬时跳变）在这 1 秒里就消失了，不发声。
    */
   private notifyAgentStatus(paneId: string, status: 'blocked' | 'done', message?: string): void {
-    const key = `${paneId}:${status}`;
     const now = Date.now();
-    const last = this.agentStatusNotifyCooldown.get(key);
-    if (last !== undefined && now - last < AGENT_STATUS_NOTIFY_COOLDOWN_MS) {
-      return;
-    }
-    this.agentStatusNotifyCooldown.set(key, now);
+    // 同 pane 替换：该 pane 之前排队的通知一律作废（只保留最新状态）
+    this.pendingNotifies = this.pendingNotifies.filter((item) => item.paneId !== paneId);
+    this.pendingNotifies.push({
+      paneId,
+      status,
+      message,
+      deliverAt: now + NOTIFY_DELIVERY_DELAY_MS,
+      expiresAt: now + NOTIFY_DELIVERY_DELAY_MS + NOTIFY_EVIDENCE_GRACE_MS,
+    });
+    this.ensureNotifyTicker();
+  }
 
-    const pane = this.session.getPane(paneId);
+  /** 启动通知轮询（队列空时自动停，避免空转）。 */
+  private ensureNotifyTicker(): void {
+    if (this.notifyTicker) return;
+    this.notifyTicker = setInterval(() => this.tickNotifies(), NOTIFY_TICK_MS);
+    // 只有通知任务时不该拖住进程退出
+    this.notifyTicker.unref?.();
+  }
+
+  private stopNotifyTicker(): void {
+    if (!this.notifyTicker) return;
+    clearInterval(this.notifyTicker);
+    this.notifyTicker = null;
+  }
+
+  /** 推进通知队列（对应 herdr `tick_notifications`）。 */
+  private tickNotifies(): void {
+    const now = Date.now();
+    const kept: PendingNotify[] = [];
+    for (const item of this.pendingNotifies) {
+      if (item.deliverAt > now) {
+        kept.push(item);
+        continue;
+      }
+      const state = this.session.detectedStateFor(item.paneId);
+      if (state === null) continue; // pane 已关闭
+      const expected = item.status === 'blocked' ? 'blocked' : 'idle';
+      if (state !== expected) {
+        /*
+         * 证据不成立。若状态刚刚还在变化（尚未超过宽限期），稍后重试——屏幕检测的
+         * 解析是分片异步的，状态可能还在落定；超过宽限期就判定为抖动丢弃。
+         */
+        if (now < item.expiresAt) {
+          kept.push({ ...item, deliverAt: now + NOTIFY_TICK_MS });
+        }
+        continue;
+      }
+      this.deliverNotify(item);
+    }
+    this.pendingNotifies = kept;
+    if (this.pendingNotifies.length === 0) this.stopNotifyTicker();
+  }
+
+  /** 真正把通知推给渲染进程（声音 / toast 由渲染端决定）。 */
+  private deliverNotify(item: PendingNotify): void {
+    const pane = this.session.getPane(item.paneId);
     if (!pane) return;
     this.broadcast({
       type: IPC.AGENT_STATUS,
       payload: {
-        paneId,
+        paneId: item.paneId,
         projectId: pane.projectId,
-        label: pane.label ?? paneId,
-        status,
-        ...(message ? { message } : {}),
+        label: pane.label ?? item.paneId,
+        status: item.status,
+        ...(item.message ? { message: item.message } : {}),
       },
     });
   }
