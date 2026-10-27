@@ -752,16 +752,20 @@ export class IpcRouter {
         if (report.state === 'working' && terminal.screenVisibleBlocker()) {
           continue;
         }
-        // 状态上报（对应 herdr handle_pane_report_agent → HookStateReported）：
-        // setHookAuthorityAt 内部携带 session ref 完成会话锚定，不单独走 session 路径，
-        // 避免同一 seq 被 setAgentSessionRefForSessionStart 与 setHookAuthorityAt 重复消费。
+        /*
+         * seq 兜底：hook 脚本未必能给出可移植的单调序号
+         * （macOS 的 BSD date 不支持 %3N，退化成定值后所有上报都会被
+         *  `hookReportIsNewer` 判为过期而丢弃，表现为完成时没有提示音）。
+         * 缺省时用当前毫秒时间戳——每次 hook 都是独立进程，间隔远大于 1ms。
+         */
+        const seq = report.seq ?? Date.now();
         const mutation = terminal.setHookAuthorityAt(
           report.source,
           report.agent,
           report.state,
           report.message ?? null,
           ref,
-          report.seq ?? null,
+          seq,
           Date.now(),
         );
         if (mutation) {
