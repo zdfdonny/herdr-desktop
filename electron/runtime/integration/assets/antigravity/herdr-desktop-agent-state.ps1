@@ -1,5 +1,5 @@
 # HERDR_INTEGRATION_ID=herdr-desktop
-# HERDR_INTEGRATION_VERSION=4
+# HERDR_INTEGRATION_VERSION=5
 #
 # antigravity (agy) hook: report session identity + agent state.
 #
@@ -42,16 +42,25 @@ $body = @{
 if ($sessionPath) { $body.sessionPath = $sessionPath }
 
 if ($action -eq 'stop') {
-  # Stop: the model finished this turn. Only a *fully idle* Stop is a real
-  # completion. Anything else must report nothing at all -- in particular a
-  # pending permission prompt arrives together with Stop (fullyIdle=false),
-  # and reporting 'working' here would stomp the screen's blocked signal,
-  # making the prompt ring only every other time.
-  if ($payload -notmatch '"fullyIdle"\s*:\s*true') { exit 0 }
+  # Stop: the execution loop ended. Report idle in every case except one:
+  # "normal completion while background tasks are still running"
+  # (terminationReason=NO_TOOL_CALL && fullyIdle=false), where we stay working.
+  #
+  # Why not gate purely on fullyIdle: pressing Esc cancels the turn with
+  # terminationReason=USER_CANCELED, and fullyIdle can still be false (the
+  # cancelled execution counts as a background task). Gating on fullyIdle alone
+  # left the pane stuck in working forever after a manual cancel.
+  #
+  # terminationReason enum (from the CLI's own hook contract):
+  #   NO_TOOL_CALL, MAX_INVOCATIONS, MAX_FORCED_INVOCATIONS,
+  #   MAX_TOKEN_BUDGET_EXCEEDED, ERROR, USER_CANCELED,
+  #   TERMINAL_STEP_TYPE, TERMINAL_CUSTOM_HOOK, INJECTED_RESPONSE
   $reason = $null
   if ($payload -match '"terminationReason"\s*:\s*"([^"]*)"') { $reason = $Matches[1] }
   $errorText = $null
   if ($payload -match '"error"\s*:\s*"([^"]+)"') { $errorText = $Matches[1] }
+  $fullyIdle = $payload -match '"fullyIdle"\s*:\s*true'
+  if ($reason -eq 'NO_TOOL_CALL' -and -not $fullyIdle) { exit 0 }
   $body.state = 'idle'
   $message = $reason
   if ($errorText) {

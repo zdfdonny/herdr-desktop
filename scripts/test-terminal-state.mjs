@@ -333,13 +333,50 @@ function setHook(t, source, agent, state, seq, now) {
   const claudeSpinner = '* Thinking… (12s · esc to interrupt)';
   check('12.3 claude spinner+… → working', detectStatus('claude', claudeSpinner), 'working');
 
-  // claude 权限确认（bash_permission_prompt：do you want to proceed? + bash command）
-  const claudeBlocked = ['Do you want to proceed?', '> bash command'].join('\n');
+  /*
+   * claude 权限确认（bash_permission_prompt：do you want to proceed? + bash command）
+   *
+   * 真实的权限确认一定渲染编号选项行——herdr 的 bash_permission_prompt 用
+   * `all = [yes/no 选项行]` 作为必要条件，避免把正文里出现的 "do you want to proceed?"
+   * 误判成阻塞，因此样本必须带选项行。
+   */
+  const claudeBlocked = [
+    'Do you want to proceed?',
+    '❯ 1. Yes',
+    "  2. Yes, and don't ask again for: bash",
+    '  3. No',
+    'bash command',
+    'esc to cancel',
+  ].join('\n');
   check('12.4 claude 权限确认 → blocked', detectStatus('claude', claudeBlocked), 'blocked');
 
   // 核心回归：claude 响应正文里的 "working" 不能误判为 working
   const claudeIdleWithWord = ['The tests are working now.', '❯'].join('\n');
   check('12.5 claude 正文里的 working 不误判 → idle', detectStatus('claude', claudeIdleWithWord), 'idle');
+
+  /*
+   * / 命令场景回归：命中 skip_state_update 的规则时状态必须保持原样，
+   * 不能产生假的 working → idle 完成跳变（否则会误响提示音）。
+   */
+  const evalClaude = (screen) =>
+    evaluateManifest(MANIFESTS.claude, { screen, oscTitle: '', oscProgress: '' });
+
+  const modelPicker = [
+    'Select model',
+    '❯ Opus 5.5 · API Usage Billing',
+    '  Sonnet 4.8',
+    'enter to set as default · esc to cancel',
+  ].join('\n');
+  check('12.6 claude /model 选择器 → skipStateUpdate', evalClaude(modelPicker).skipStateUpdate, true);
+
+  const transcript = ['showing detailed transcript', 'ctrl+o to toggle', 'ctrl+e show all'].join('\n');
+  check('12.7 claude 详细记录视图 → skipStateUpdate', evalClaude(transcript).skipStateUpdate, true);
+
+  const btwOverlay = ['/btw 这条消息不进上下文', '', 'esc to close'].join('\n');
+  check('12.8 claude /btw 浮层 → working', evalClaude(btwOverlay).state, 'working');
+
+  const dynamicWorkflow = ['run a dynamic workflow?', 'esc to cancel'].join('\n');
+  check('12.9 claude 动态 workflow 提示 → blocked', evalClaude(dynamicWorkflow).state, 'blocked');
 }
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import { BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { Session } from '../runtime/session';
-import type { TerminalStateMutation } from '../runtime/terminal-state';
+import { HOOK_WORKING_TTL_MS, type TerminalStateMutation } from '../runtime/terminal-state';
 import { PtyManager } from '../runtime/pty-manager';
 import { WebAgentManager } from '../runtime/web-agent-manager';
 import { SettingsStore } from '../runtime/settings';
@@ -94,6 +94,15 @@ export class IpcRouter {
   private pendingNotifies: PendingNotify[] = [];
   /** 通知队列的轮询定时器（队列空即停）。 */
   private notifyTicker: NodeJS.Timeout | null = null;
+  /**
+   * 「hook 的 working 上报到期」定时器（paneId → timer）。
+   *
+   * TTL 只在有事件时才被求值：用户按 Esc 取消后 TUI 只重绘一次（那时还没到 TTL），
+   * 之后就静止等输入、不再产生 PTY 数据，状态机也就再没机会重新评估，于是永久卡在
+   * working。这里在收到 working 上报时挂一个到期定时器，到期主动重跑一次屏幕检测，
+   * 让状态回落。
+   */
+  private hookWorkingExpiry = new Map<string, NodeJS.Timeout>();
   /**
    * 「该 agent 的完成判定是否交给集成 hook」的缓存（agent → bool）。
    *
@@ -763,6 +772,12 @@ export class IpcRouter {
           if (!report.replay && !aborted) {
             this.notifyForTransition(targetPaneId, mutation, transition, report.message ?? undefined);
           }
+          // working 上报会过期（见 scheduleHookWorkingExpiry），需要有人在到期时重新评估
+          if (report.state === 'working') {
+            this.scheduleHookWorkingExpiry(targetPaneId);
+          } else {
+            this.cancelHookWorkingExpiry(targetPaneId);
+          }
         }
       } else if (ref) {
         // 仅会话上报（对应 herdr handle_pane_report_agent_session → AgentSessionReported）。
@@ -1365,6 +1380,38 @@ export class IpcRouter {
    *    50ms 重试，超过 `NOTIFY_EVIDENCE_GRACE_MS` 宽限期则丢弃。
    *    假完成（工具跑完、菜单开关那种瞬时跳变）在这 1 秒里就消失了，不发声。
    */
+  /**
+   * 安排一次「working 过期后重新评估」。
+   *
+   * 状态机只在有观测时才重算（PTY 数据 / hook 上报）。用户按 Esc 取消后 TUI 静止，
+   * 不会再有观测，TTL 就永远不会被求值。这里在到期后主动跑一次屏幕检测，
+   * 使过期的 working 失效、状态按当前屏幕回落。
+   *
+   * 重复上报会重置定时器（每次 working 都刷新 TTL）。
+   */
+  private scheduleHookWorkingExpiry(paneId: string): void {
+    /*
+     * 只对真有 PTY 的 pane 安排：web pane 没有终端输出，refreshAgent 会拿空快照
+     * 去做屏幕检测，反而把 dsh 的状态改坏。
+     */
+    if (!this.pty.has(paneId)) return;
+    this.cancelHookWorkingExpiry(paneId);
+    const timer = setTimeout(() => {
+      this.hookWorkingExpiry.delete(paneId);
+      // 重新跑一次屏幕检测；此时 hook 的 working 已过期，状态会按屏幕判定
+      this.refreshAgent(paneId);
+    }, HOOK_WORKING_TTL_MS + 100);
+    timer.unref?.();
+    this.hookWorkingExpiry.set(paneId, timer);
+  }
+
+  private cancelHookWorkingExpiry(paneId: string): void {
+    const timer = this.hookWorkingExpiry.get(paneId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.hookWorkingExpiry.delete(paneId);
+  }
+
   private notifyAgentStatus(paneId: string, status: 'blocked' | 'done', message?: string): void {
     const now = Date.now();
     // 同 pane 替换：该 pane 之前排队的通知一律作废（只保留最新状态）

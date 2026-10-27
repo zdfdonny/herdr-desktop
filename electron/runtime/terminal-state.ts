@@ -30,6 +30,22 @@ import {
   type PersistedAgentSession,
 } from './agent-resume';
 
+/**
+ * 非全生命周期来源的 `working` 上报有效期。
+ *
+ * antigravity 在用户按 Esc 取消时不会回调 `Stop`（CLI 直接中断执行循环，
+ * 只有正在跑的 PreInvocation 进程被杀掉），最后一条 `working` 会把状态永久钉住。
+ * 超过这个时长仍未被刷新，就把状态交还屏幕判定。
+ *
+ * 取 1.5 秒：真实工作时屏幕一直有 spinner / `esc to cancel`，状态不会因此抖动；
+ * 即使屏幕偶发误判 idle，通知队列还有 1 秒证据校验兜底，不会误响。
+ *
+ * 只对「有屏幕观测」的 pane 生效（见 effectiveHookState）：web pane 没有屏幕检测，
+ * 其 fallbackState 恒为 idle，若也套用 TTL，dsh 的 working 上报间隔一长就会被
+ * 错误地拉回 idle。
+ */
+export const HOOK_WORKING_TTL_MS = 1_500;
+
 /** hook 上报的权威状态（对应 herdr `HookAuthority`）。 */
 export interface HookAuthority {
   source: string;
@@ -152,6 +168,13 @@ export class TerminalState {
   lastAgentCompletionSeq: number | null;
 
   private fallbackVisibleBlocker: boolean;
+  /**
+   * 是否收到过真实的屏幕观测（对应「这个 pane 有终端输出」）。
+   *
+   * web pane 永远没有屏幕观测，`fallbackState` 恒为 idle；hook working 的 TTL
+   * 只对有过屏幕观测的 pane 生效，避免把 dsh 的 working 误落到 idle。
+   */
+  private screenObserved = false;
   private agentNameOwner: AgentNameOwner | null;
   private managedAgent: ManagedAgent | null;
   private codexPromptReady: boolean;
@@ -222,6 +245,8 @@ export class TerminalState {
     processExited: boolean,
     now: number,
   ): TerminalStateMutation {
+    // 标记「这个 pane 有屏幕观测」——hook working 的 TTL 只在此时才允许生效
+    this.screenObserved = true;
     const previousAgentLabel = this.effectiveAgentLabel();
     const previousKnownAgent = this.effectiveKnownAgent();
     const previousState = this.state;
@@ -1899,12 +1924,13 @@ export class TerminalState {
     previousAgentLabel: string | null,
     previousKnownAgent: string | null,
     previousState: DetectedState,
-    _now: number, // 预留：对齐 herdr 的 now，当前无 presentation 比较故未使用
+    now: number,
   ): EffectiveStateChange | null {
+    const hookState = this.effectiveHookState(now);
     const state = this.visibleBlockerOverridesHook()
       ? 'blocked'
-      : this.hookAuthority !== null && this.hookAuthorityIsEffective(this.hookAuthority)
-        ? this.hookAuthority.state
+      : hookState !== null
+        ? hookState
         : this.fallbackState;
     const agentLabel = this.effectiveAgentLabel();
     const knownAgent = this.effectiveKnownAgent();
@@ -1921,5 +1947,32 @@ export class TerminalState {
       knownAgent,
       state,
     };
+  }
+
+  /**
+   * 生效中的 hook 状态（无则返回 null，由屏幕兜底）。
+   *
+   * 除 herdr 原有的「生效性」判断外，额外给**非全生命周期来源**的 `working` 加了过期：
+   * antigravity 在用户按 Esc 取消时不会回调 `Stop`（CLI 直接中断执行循环，只有正在跑的
+   * PreInvocation 进程被杀掉），于是最后一条 `working` 会把状态永久钉住、屏幕再也拿不回。
+   * 超过 `HOOK_WORKING_TTL_MS` 未被刷新就视为失效，交还屏幕判定——
+   * 真实工作时屏幕一直有 spinner / `esc to cancel`，状态仍是 working（无跳变）；
+   * 取消后屏幕回到 idle 页脚，状态随之回落。
+   */
+  private effectiveHookState(now: number): DetectedState | null {
+    const authority = this.hookAuthority;
+    if (authority === null || !this.hookAuthorityIsEffective(authority)) return null;
+    /*
+     * 只对「屏幕真的观测过」的 pane 套用 TTL。
+     *
+     * web pane（dsh）没有终端屏幕，fallbackState 恒为 idle；若不设这个前提，
+     * 它上报的 working 在间隔超过 TTL 时会被错误地回落到 idle。
+     */
+    const staleWorking =
+      this.screenObserved &&
+      authority.state === 'working' &&
+      !fullLifecycleHookAuthority(authority.source, authority.agentLabel) &&
+      now - authority.reportedAt > HOOK_WORKING_TTL_MS;
+    return staleWorking ? null : authority.state;
   }
 }

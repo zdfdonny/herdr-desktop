@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # HERDR_INTEGRATION_ID=herdr-desktop
-# HERDR_INTEGRATION_VERSION=4
+# HERDR_INTEGRATION_VERSION=5
 #
 # antigravity（agy）非 Windows 版 hook：上报会话身份 + 状态。
 # 逻辑与 .ps1 一致，改动原因见该文件顶部说明：
@@ -26,12 +26,23 @@ body="{\"paneId\":\"$HERDR_DESKTOP_PANE_ID\",\"source\":\"herdr:antigravity\",\"
 [ -n "$session_path" ] && body="$body,\"sessionPath\":\"$session_path\""
 
 if [ "$action" = "stop" ]; then
-  # 只有 fullyIdle=true 的 Stop 才是真正完成；其余情况什么都不报——
-  # 权限提示会与 Stop 同时到来（fullyIdle=false），此时报 working 会把屏幕
-  # 刚检测到的 blocked 踩掉，导致提示音隔一次才响一次。
-  printf '%s' "$payload" | grep -q '"fullyIdle"[[:space:]]*:[[:space:]]*true' || exit 0
+  # Stop：执行循环结束。除了「正常完成但后台任务还在跑」（NO_TOOL_CALL +
+  # fullyIdle=false）之外一律报 idle。
+  #
+  # 为什么不能只看 fullyIdle：按 Esc 取消时 terminationReason=USER_CANCELED，
+  # 而 fullyIdle 可能仍是 false（被取消的 execution 也算后台任务），
+  # 只看 fullyIdle 会让手动取消后状态永久卡在 working。
+  #
+  # terminationReason 枚举（CLI 钩子契约）：
+  #   NO_TOOL_CALL / MAX_INVOCATIONS / MAX_FORCED_INVOCATIONS /
+  #   MAX_TOKEN_BUDGET_EXCEEDED / ERROR / USER_CANCELED /
+  #   TERMINAL_STEP_TYPE / TERMINAL_CUSTOM_HOOK / INJECTED_RESPONSE
   reason="$(printf '%s' "$payload" | sed -n 's/.*"terminationReason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
   error_text="$(printf '%s' "$payload" | sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  if [ "$reason" = "NO_TOOL_CALL" ] &&
+     ! printf '%s' "$payload" | grep -q '"fullyIdle"[[:space:]]*:[[:space:]]*true'; then
+    exit 0
+  fi
   message="$reason"
   if [ -n "$error_text" ]; then
     if [ -n "$reason" ]; then message="$reason ($error_text)"; else message="$error_text"; fi
