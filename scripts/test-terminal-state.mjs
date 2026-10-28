@@ -25,7 +25,7 @@ const { TerminalState } = await import(pathToFileURL(terminalPath).href);
 const { paneAgentStatus, isCompletionTransition } = await import(
   pathToFileURL(agentStatusPath).href
 );
-const { fullLifecycleHookAuthority, sessionIdentityOnlyIntegration, detectStatus, evaluateManifest, MANIFESTS } = await import(
+const { fullLifecycleHookAuthority, sessionIdentityOnlyIntegration, screenCompletionIgnored, detectStatus, evaluateManifest, MANIFESTS } = await import(
   pathToFileURL(detectManifestPath).href
 );
 const { detectFromSnapshot } = await import(pathToFileURL(agentDetectorPath).href);
@@ -483,6 +483,154 @@ function setHook(t, source, agent, state, seq, now) {
   check('18.1 omp 无 manifest → idle（忽略 working 关键词）', detectStatus('omp', 'Working...', '', ''), 'idle');
   check('18.2 mastracode 无 manifest → idle（忽略 blocked 关键词）', detectStatus('mastracode', 'blocked waiting for confirmation', '', ''), 'idle');
   check('18.3 未知 agent → unknown', detectStatus(null, 'Working...', '', ''), 'unknown');
+}
+
+// ---------------------------------------------------------------------------
+// 19. claude 上报全生命周期状态后，/clear 仍能重绑会话（回归）
+// ---------------------------------------------------------------------------
+{
+  /*
+   * 回归的是两处：
+   * 1) 会话上报的脚本普遍不带 seq，而同一 agent 的状态上报由主进程补了 seq——
+   *    一旦记下水位，`hookReportIsNewer(src, null)` 恒为 false，SessionStart 被整条丢弃，
+   *    用户 /clear、/resume 之后 pane 还钉在旧会话上（实测复现）；
+   * 2) 状态上报里没有 source 字段，/clear 后带新 id 的上报会被判成「同 owner 换会话」
+   *    而退回旧引用。
+   * 这里按 router 的真实调用方式复现：状态上报补 seq，会话上报保持 seq=null。
+   */
+  const seqFor = (t, reported) =>
+    typeof reported === 'number' && reported > 0 ? reported : t.nextHookReportSeq();
+  const claudeRef = (id) => ({ kind: 'id', value: id });
+
+  const t = new TerminalState('p1');
+  setDetected(t, 'claude', 'idle', 1000);
+  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-orig'), null, 'startup', 2000);
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-orig'), seqFor(t, null), 3000);
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'idle', null, claudeRef('sess-orig'), seqFor(t, null), 4000);
+
+  // /clear：SessionStart(clear) 照脚本实际行为，不带 seq
+  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-cleared'), null, 'clear', 5000);
+  check('19.1 /clear 后被 hook 权威接管的会话仍是旧的', t.hookAuthority?.sessionRef?.value, 'sess-orig');
+
+  // /clear 之后第一轮状态上报带新 id → 应当允许替换
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-cleared'), seqFor(t, null), 6000);
+  check('19.2 状态上报可把会话引用刷新为新 id', t.hookAuthority?.sessionRef?.value, 'sess-cleared');
+  check('19.3 投影出去的会话是新 id', t.currentSessionForPersistence()?.value, 'sess-cleared');
+
+  // 不带 seq 的会话上报在有水位之后不能被丢弃（同一条链路的另一半）
+  const t2 = new TerminalState('p1');
+  setDetected(t2, 'claude', 'idle', 1000);
+  t2.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-a'), seqFor(t2, null), 2000);
+  t2.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-b'), null, 'resume', 3000);
+  check('19.4 已有水位后 SessionStart(不带 seq) 仍生效', t2.persistedAgentSession?.sessionRef?.value, 'sess-b');
+
+  // 放行必须只针对「真的在切换会话」：同一会话的重复上报仍受水位约束
+  const t4 = new TerminalState('p1');
+  setDetected(t4, 'claude', 'idle', 1000);
+  t4.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-x'), null, 'startup', 2000);
+  t4.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-x'), seqFor(t4, null), 3000);
+  t4.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-x'), null, 'resume', 4000);
+  check('19.6 同会话重复上报不放行（仍按水位丢弃）', t4.hookReportIsNewer('herdr:claude', null), false);
+
+  // nextHookReportSeq 必须严格递增（同毫秒内两条上报不能被 seq 比较丢掉）
+  const t3 = new TerminalState('p1');
+  const s1 = t3.nextHookReportSeq(1_700_000_000_000);
+  t3.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, null, s1, 3000);
+  const s2 = t3.nextHookReportSeq(1_700_000_000_000);
+  check('19.5 同毫秒补出的 seq 严格递增', s2 > s1, true);
+}
+
+// ---------------------------------------------------------------------------
+// 20. 工具完成心跳不得把已完成的 pane 拉回 working（async 心跳 vs 同步 Stop）
+// ---------------------------------------------------------------------------
+{
+  /*
+   * claude 的 PostToolUse（心跳，async）与 Stop（idle，同步）会乱序：模型在本轮末尾
+   * 只回一两句时 idle 先落地，迟到的心跳若被采纳就会把状态顶回 working，导致完成通知
+   * 在投递前复核时被判成「证据不成立」而丢弃，TTL 过期后又投影一次 done。
+   */
+  const t = new TerminalState('p1');
+  setDetected(t, 'claude', 'idle', 1000);
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, null, 100, 2000);
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'idle', null, null, 200, 3000);
+  check('20.1 一轮结束 → idle', t.state, 'idle');
+
+  // 迟到的心跳：必须被丢弃
+  check('20.2 已完成时心跳被判为过期', t.isStaleHeartbeat('working', true), true);
+  // 仍在工作时的心跳：不拦（它只负责刷新 TTL）
+  const t2 = new TerminalState('p1');
+  setDetected(t2, 'claude', 'idle', 1000);
+  t2.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, null, 100, 2000);
+  check('20.3 工作中时心跳放行', t2.isStaleHeartbeat('working', true), false);
+  // 非心跳的 working（回合起点）不受影响
+  check('20.4 回合起点 working 不受影响', t.isStaleHeartbeat('working', false), false);
+  check('20.5 缺省 heartbeat 字段视为非心跳', t.isStaleHeartbeat('working', null), false);
+  // 只拦 working：idle/blocked 上报不是心跳语义
+  check('20.6 idle 上报不被当作心跳拦截', t.isStaleHeartbeat('idle', true), false);
+  check('20.7 blocked 不被心跳规则拦截', t.isStaleHeartbeat('blocked', true), false);
+}
+
+// ---------------------------------------------------------------------------
+// 21. claude --fork-session 能重绑会话（source=fork 的允许表条目）
+// ---------------------------------------------------------------------------
+{
+  /*
+   * fork 出来的是新会话，理应接管 pane 的绑定。上游白名单只有 clear/resume/compact，
+   * 漏了 fork，表现为 --fork-session 之后 pane 仍钉在旧会话（重启续回原对话）。
+   * 注意它和「空 source」那条各管一段：fork 的 SessionStart 自带 source="fork"，
+   * 而状态上报没有 source——两条都要在，缺一条就会有一半场景重绑不了。
+   */
+  const seqFor = (t, reported) =>
+    typeof reported === 'number' && reported > 0 ? reported : t.nextHookReportSeq();
+  const r = (id) => ({ kind: 'id', value: id });
+
+  // 端到端：startup(s1) → 一轮 → fork(s2) → 新会话的状态上报
+  const t = new TerminalState('p1');
+  setDetected(t, 'claude', 'idle', 1000);
+  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('s1'), null, 'startup', 2000);
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, r('s1'), seqFor(t, null), 3000);
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'idle', null, r('s1'), seqFor(t, null), 4000);
+
+  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('s2'), null, 'fork', 5000);
+  check('21.1 fork 后落库为新会话', t.persistedAgentSession?.sessionRef?.value, 's2');
+
+  // fork 之后第一轮状态上报带新 id → 权威也应切过去（空 source 条目负责）
+  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, r('s2'), seqFor(t, null), 6000);
+  check('21.2 fork 后权威切到新会话', t.hookAuthority?.sessionRef?.value, 's2');
+  check('21.3 投影出去的会话是新 id', t.currentSessionForPersistence()?.value, 's2');
+
+  /*
+   * 反向：不在允许表里的 source 仍不得改写会话。
+   * 「fork 加进去」不能把整条通道放宽成「任何 source 都能换会话」。
+   */
+  const t2 = new TerminalState('p1');
+  setDetected(t2, 'claude', 'idle', 1000);
+  t2.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('k1'), null, 'startup', 2000);
+  t2.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, r('k1'), seqFor(t2, null), 3000);
+  t2.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('k2'), null, 'bogus-source', 4000);
+  check('21.4 未识别/未放行的 source 不改写会话', t2.currentSessionForPersistence()?.value, 'k1');
+}
+
+// ---------------------------------------------------------------------------
+// 22. 完成判定是否交给 hook（screenCompletionIgnored）
+// ---------------------------------------------------------------------------
+{
+  /*
+   * claude 纳入「完成只认 hook」：v5 集成用 Stop 上报 idle，屏幕不再参与完成判定。
+   * 此前它是误响的主要来源——`/resume`、`/clear` 载入会话时屏幕必然经历一次
+   * working → idle（载入态），于是每切一次会话就响一次完成提示音。
+   *
+   * 前提由 router 的 agentCompletionFromHooks 兜：它额外要求 hookStatuses 为
+   * `installed`，所以没装/没更新集成时仍然走屏幕判定，不会静默丢提示音。
+   */
+  check('22.1 claude 的完成交给 hook', screenCompletionIgnored('claude'), true);
+  check('22.2 antigravity 仍交给 hook', screenCompletionIgnored('antigravity'), true);
+  check(
+    '22.3 其它 agent 不受影响（仍由屏幕判定）',
+    ['codex', 'kimi', 'droid', 'opencode', 'pi', 'qwen'].map((a) => screenCompletionIgnored(a)),
+    [false, false, false, false, false, false],
+  );
+  check('22.4 未知 agent 不被抑制', screenCompletionIgnored(null), false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

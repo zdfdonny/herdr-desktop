@@ -747,7 +747,35 @@ export class TerminalState {
       return null;
     }
 
-    if (!unsequencedSelection && !this.acceptHookReport(source, seq)) {
+    /*
+     * 窄口径放行：带**可识别 source** 的会话上报，如果它确实在切换会话
+     * （和当前生效的引用不同），就不让 seq 水位把它挡掉。
+     *
+     * 背景：`hook_report_is_newer(source, null)` 在「已有带 seq 的上报记下水位」之后
+     * 恒为 false，于是脚本不带 seq 的会话上报会被整条丢弃。会话上报的脚本普遍不写
+     * seq（跨平台的毫秒时间戳不好拿），而同一个 agent 的状态上报由主进程补了 seq，
+     * 于是只要跑过一轮，之后的 SessionStart 就再也不生效——用户 /clear、/resume、
+     * --fork-session 之后 pane 还钉在旧会话上，重启会续回错的对话。
+     *
+     * 只对「明确的会话切换」放行：source 必须是 startup/clear/resume/compact/new/
+     * fork/select 之一，且新引用确实不同。普通的重复上报仍受水位约束。
+     *
+     * 只放行**非全生命周期**来源（claude、codex 这类）：全生命周期集成（mastracode、
+     * kimi、opencode、pi、omp、kilo）的会话锚定另有机制（stale 会话列表、抑制表），
+     * 在这里插入「按内容而非时序」的放行会把新会话推进 stale 列表，反而让它的
+     * working/idle 上报被整段丢掉，风险大于收益。
+     * 注意 opencode 的 select 走上面 unsequencedSelection 那条专门分支，不受影响。
+     *
+     * 这条放行**不推进水位**（与 unsequencedSelection 一致）：水位只由真正带 seq 的
+     * 上报推进。否则会给该来源记下一个「现在」量级的大水位，把它后续那些带小序号
+     * （opencode 的 TUI 发 5、6 这种）的状态上报全挡掉（实测：working/idle 全丢）。
+     */
+    const switchesSession =
+      seq === null &&
+      !fullLifecycleHookAuthority(source, agentLabel) &&
+      TerminalState.sessionStartSourceIsRecognized(normalizedStartSource) &&
+      this.sessionRefDiffersFromCurrent(source, agentLabel, sessionRef);
+    if (!unsequencedSelection && !switchesSession && !this.acceptHookReport(source, seq)) {
       return null;
     }
     if (this.knownAgentLabelConflictsWithDetectedAgent(agentLabel)) {
@@ -1012,6 +1040,28 @@ export class TerminalState {
       return last === undefined || seq > last;
     }
     return last === undefined;
+  }
+
+  /**
+   * 给一条上报补一个严格递增的 seq（调用方拿不到可移植时间戳时使用）。
+   *
+   * 不能用裸 `Date.now()`：同一毫秒内的两条上报会取到相同值，后一条被
+   * `hook_report_is_newer` 丢掉——若丢的是 Stop 的 idle，完成提示音就再也不会响。
+   *
+   * 因此取 `max(now, 本 pane 水位最大值 + 1)`：严格单调，且不落后于墙上时间。
+   * 水位是 per-pane、跨来源的单调计数器，所以这里扫的是该 pane 内所有来源的水位。
+   * 本方法只读水位、不写入——真正写水位仍在 acceptHookReport 里。
+   *
+   * 只用于**状态**上报（router 的状态分支）。会话上报分支刻意不补 seq：opencode 的
+   * select 依赖 `seq === null` 走「未排序选择」分支；而脚本不带 seq 的会话上报被水位
+   * 挡住的问题，由 setAgentSessionRefForSessionStart 的 switchesSession 窄口径放行解决。
+   */
+  nextHookReportSeq(now: number = Date.now()): number {
+    let max = now;
+    for (const last of this.hookReportSequences.values()) {
+      if (last >= max) max = last + 1;
+    }
+    return max;
   }
 
   /** 对应 herdr `effective_agent_label`。 */
@@ -1770,6 +1820,23 @@ export class TerminalState {
     );
   }
 
+  /**
+   * 这条会话上报是否真的在切换会话（和当前生效的引用不同）。
+   *
+   * 用于区分「用户 /clear、/resume 之后的权威会话切换」和「同一条上报重复投递」：
+   * 前者即使不带 seq 也必须放行，后者仍要受水位约束。
+   */
+  private sessionRefDiffersFromCurrent(
+    source: string,
+    agentLabel: string,
+    sessionRef: AgentSessionRef,
+  ): boolean {
+    const cur = this.currentSessionIdentityForPersistence();
+    if (cur === null) return true;
+    if (cur.source !== source || cur.agent !== agentLabel) return true;
+    return cur.kind !== sessionRef.kind || cur.value !== sessionRef.value;
+  }
+
   private static isUnsequencedOpencodeSelection(
     source: string,
     agentLabel: string,
@@ -1883,6 +1950,26 @@ export class TerminalState {
    */
   screenVisibleBlocker(): boolean {
     return this.fallbackVisibleBlocker;
+  }
+
+  /**
+   * 这条上报是不是「工具完成心跳」，而当前已经完成，因此应当丢弃。
+   *
+   * 背景：claude 的 PostToolUse（每完成一个工具报一次 working）走 async，而 Stop（idle）
+   * 是同步的。模型在本轮末尾只回一两句话时，Stop 的 idle 会先落地，随后迟到的心跳
+   * 带着更大的 seq 又把状态顶回 working，于是一轮结束之后 pane 又「工作」了 1.6 秒；
+   * 更糟的是完成通知要按投递时的状态复核（router 的 tickNotifies），
+   * 这段时间正好把提示音判成「证据不成立」丢掉。
+   *
+   * 心跳的语义只是「还在干活，别让 working 过期」，它没有资格把已完成的 pane
+   * 重新拉起来；把 idle → working 的跃迁留给真正的回合起点（UserPromptSubmit）。
+   *
+   * 注意只在 idle 时拦：working 时心跳照常刷新 TTL，blocked 时也不拦（心跳说明工具
+   * 已经跑完，权限框早就点掉了；屏幕上仍有可见 blocker 的情况由 screenVisibleBlocker
+   * 那条边界处理）。
+   */
+  isStaleHeartbeat(state: DetectedState, heartbeat: boolean | null | undefined): boolean {
+    return heartbeat === true && state === 'working' && this.state === 'idle';
   }
 
   private liveFullLifecycleHookAuthority(): boolean {

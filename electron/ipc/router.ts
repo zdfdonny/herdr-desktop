@@ -206,18 +206,14 @@ export class IpcRouter {
   /** 启动 hook 上报端点（app ready 后、spawn 任何 agent 之前调用）。 */
   async startHookServer(): Promise<void> {
     await this.reportServer.start((report) => {
-      this.reportAgentSession(report.paneId, {
-        source: report.source,
-        agent: report.agent,
-        sessionId: report.sessionId,
-        sessionPath: report.sessionPath,
-        state: report.state,
-        seq: report.seq,
-        message: report.message,
-        sessionStartSource: report.sessionStartSource,
-        replay: report.replay,
-        completion: report.completion,
-      });
+      /*
+       * 整条透传，不要逐字段重建。
+       *
+       * 之前这里是把 report 的字段一个个抄进新对象，结果新增 `heartbeat` 时漏了一行，
+       * 导致 claude 的心跳判定在 router 边界变成永远 undefined（是个静默失效的死代码：
+       * 单测直接打 TerminalState，看不见这层丢字段）。整条透传从结构上根除这一类问题。
+       */
+      this.reportAgentSession(report.paneId, report);
     });
   }
 
@@ -425,7 +421,7 @@ export class IpcRouter {
           break;
         }
         case 'agent:report-session': {
-          const { paneId, source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource } = JSON.parse(payload.data) as {
+          const { paneId, source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource, heartbeat } = JSON.parse(payload.data) as {
             paneId: string;
             source: string;
             agent: string;
@@ -435,8 +431,9 @@ export class IpcRouter {
             seq?: number | null;
             message?: string | null;
             sessionStartSource?: string | null;
+            heartbeat?: boolean;
           };
-          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource });
+          this.reportAgentSession(paneId, { source, agent, sessionId, sessionPath, state, seq, message, sessionStartSource, heartbeat });
           break;
         }
         case 'dsh:bind-session': {
@@ -716,6 +713,8 @@ export class IpcRouter {
       replay?: boolean;
       /** idle 时的结束原因：aborted（手动停止）→ 直接 idle，不投影 done、不响完成声音。 */
       completion?: 'completed' | 'aborted';
+      /** 工具完成心跳：只刷新 working，不得把已完成的 pane 拉回 working。 */
+      heartbeat?: boolean;
     },
   ): void {
     const ref = agentResume.sessionRefFromReport(
@@ -753,12 +752,33 @@ export class IpcRouter {
           continue;
         }
         /*
-         * seq 兜底：hook 脚本未必能给出可移植的单调序号
-         * （macOS 的 BSD date 不支持 %3N，退化成定值后所有上报都会被
-         *  `hookReportIsNewer` 判为过期而丢弃，表现为完成时没有提示音）。
-         * 缺省时用当前毫秒时间戳——每次 hook 都是独立进程，间隔远大于 1ms。
+         * 心跳不得把已完成的 pane 拉回 working。
+         *
+         * 工具完成心跳（claude 的 PostToolUse）走 async，Stop 是同步的；模型在本轮末尾
+         * 只回一两句话时 idle 会先落地，随后迟到的心跳以更大的 seq 把状态顶回 working，
+         * 于是完成通知在投递前复核时被判成「证据不成立」而丢掉（提示音丢失），TTL 过期
+         * 后又会再投影一次 done（重复徽标）。这里直接丢弃这种迟到心跳。
          */
-        const seq = report.seq ?? Date.now();
+        if (terminal.isStaleHeartbeat(report.state, report.heartbeat)) {
+          continue;
+        }
+        /*
+         * seq 兜底：hook 脚本未必能给出可移植的单调序号。
+         *
+         * macOS 的 BSD date 不支持 %3N，旧版脚本（集成 v5）会退化成恒发 "seq":0；
+         * 而状态机要求 seq 严格递增（`seq <= last` 即丢弃），于是 PreInvocation 的
+         * working 能进、Stop 的 idle 全被丢——表现为完成时没有提示音。
+         *
+         * 0 与负数都不是合法序号（正常来源是毫秒时间戳量级），一律当作「未提供」重新
+         * 赋值。这样即便用户装的是旧脚本、没重装集成，也能恢复正常。
+         *
+         * 脚本自己给了合法 seq 就照用（antigravity 的 .ps1 会发毫秒时间戳，用于丢弃
+         * 乱序投递的旧上报）；没给则问 TerminalState 要一个严格递增的——不能直接用
+         * `Date.now()`：同一毫秒内的两条上报会撞号，后一条被水位丢掉（若丢的是 Stop
+         * 的 idle，完成提示音就再也不会响）。
+         */
+        const reportedSeq = typeof report.seq === 'number' && report.seq > 0 ? report.seq : null;
+        const seq = reportedSeq ?? terminal.nextHookReportSeq();
         const mutation = terminal.setHookAuthorityAt(
           report.source,
           report.agent,
@@ -789,6 +809,14 @@ export class IpcRouter {
           report.source,
           report.agent,
           ref,
+          /*
+           * 刻意**不**补 seq（与状态上报不同）：opencode 的 select 靠 `seq === null` 走
+           * 「未排序选择」那条专门分支（isUnsequencedOpencodeSelection），补了 seq 就会
+           * 破坏它的重绑语义。
+           *
+           * 脚本不带 seq 时被 seq 水位挡住的问题，改在 terminal-state 里按「是否真的在
+           * 切换会话」窄口径放行（见 setAgentSessionRefForSessionStart 的 switchesSession）。
+           */
           report.seq ?? null,
           report.sessionStartSource ?? null,
           Date.now(),

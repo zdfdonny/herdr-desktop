@@ -1,0 +1,23 @@
+# 换行符与文本/二进制判定。
+#
+# 为什么需要这个文件：
+# 本仓库 core.autocrlf=true，git 在 Windows 检出时会把工作区文件写成 CRLF。
+# 而 electron/runtime/integration/assets/ 下的 *.sh 会被 ?raw 内联进产物、
+# 原样写到用户目录后交给 bash 执行——CRLF 会让 bash 在 `set -u\r` 处直接语法
+# 报错，整个 agent 集成静默失效、且不抛任何可见错误。
+#
+# 这个坑特别隐蔽：Windows 上跑的是 .ps1（PowerShell 容忍 CRLF），所以本地测试
+# 全绿，坏掉的只有 macOS/Linux 那条路径（实测：claude 的 .sh 被转成 CRLF 后
+# 所有上报都发不出去，而 .ps1 的 15 条用例仍然全过）。
+#
+# 因此对脚本资产强制 LF，与 core.autocrlf 的取值、检出平台都无关。
+
+# 默认交给 git 自行判断文本/二进制（等价于 core.autocrlf 的现有行为）。
+* text=auto
+
+# 会被 shell 直接执行的资产 —— 必须是 LF。
+*.sh  text eol=lf
+*.ps1 text eol=lf
+
+# 二进制资源，不做换行符转换。
+*.png binary

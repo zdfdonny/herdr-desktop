@@ -161,10 +161,18 @@ export function sessionIdentityOnlyIntegration(source: string, agentLabel: strin
  * 都会产生 working/blocked → idle 的跳变。只要让屏幕参与完成判定，前两者就会各响
  * 一次完成提示音。所以这些 agent 的完成只认 hook。
  *
+ * claude 在 v5 集成起用 Stop 上报 idle（UserPromptSubmit/PostToolUse 报 working），
+ * 同理换成 hook 判定。它此前不在名单里，于是这些场景都会误响完成提示音：
+ * - `/resume`、`/clear` 载入会话时 TUI 的载入态被屏幕读成 working→idle；
+ * - 工具跑完、初始化结束也被当成一轮结束。
+ * 其中 /resume 尤其明显：载入历史会话时屏幕必然经历一次 working→idle。
+ *
  * 往这里加 agent 时必须确认它的集成确实会上报状态，否则它永远不会响完成提示音。
+ * 这个前提由 router 的 agentCompletionFromHooks 兜住：它额外要求集成状态是
+ * `installed`，所以用户没装/没更新集成时会继续走屏幕判定，不会静默失去完成提示音。
  */
 export function screenCompletionIgnored(agentLabel: string | null): boolean {
-  return agentLabel === 'antigravity';
+  return agentLabel === 'antigravity' || agentLabel === 'claude';
 }
 
 export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(

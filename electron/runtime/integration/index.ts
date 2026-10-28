@@ -44,18 +44,50 @@ const HOOK_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-state.ps1' : 'herdr-de
 /** qwen / letta 用会话专用脚本名（对应 herdr 的 `*_HOOK_INSTALL_NAME`）。 */
 const SESSION_SCRIPT_NAME = isWindows ? 'herdr-desktop-agent-session.ps1' : 'herdr-desktop-agent-session.sh';
 
+/**
+ * claude 的 hook 事件集（对应 Claude Code hooks 文档）。
+ *
+ * 第三项表示是否后台执行（`async: true`）：
+ * - UserPromptSubmit / PostToolUse 一轮里会触发很多次，同步执行等于给每次工具调用
+ *   都加一次进程启动延迟（Windows 上尤其明显）——这正是上游把 claude 退化成
+ *   session-only 的原因；
+ * - Stop / StopFailure 一轮只触发一次，且 idle 是唯一的完成信号，必须同步执行，
+ *   否则异步进程可能在状态落地前被回收，完成提示音就丢了；
+ * - SessionStart 每个会话只有一次，保持同步。
+ *
+ * PostToolUse 用 `tick` 而不是 `working`：它上报的是带 `heartbeat: true` 的 working，
+ * 只允许刷新还在工作的 pane，不能把已完成的 pane 拉回 working。因为它是 async 而
+ * Stop 是同步的，迟到的心跳会把刚结束的一轮顶回 working——完成通知在投递前复核时
+ * 被判成「证据不成立」而丢掉，TTL 过期后又会再投影一次 done
+ * （见 TerminalState.isStaleHeartbeat）。
+ */
+const CLAUDE_HOOK_EVENTS: Array<[event: string, action: string, background?: boolean]> = [
+  ['SessionStart', 'session'],
+  ['UserPromptSubmit', 'working', true],
+  ['PostToolUse', 'tick', true],
+  ['Stop', 'idle'],
+  ['StopFailure', 'failed'],
+];
+
 /** 各智能体旧版事件（安装/卸载时一并移除，对应 herdr *_REMOVED_*_EVENTS）。 */
 
-/** claude 旧版事件（对应 herdr claude_settings.rs HOOK_REMOVALS；SessionStart/session 单独处理）。 */
+/**
+ * claude 旧版事件（不再安装，安装/卸载时一并移除；对应 herdr claude_settings.rs HOOK_REMOVALS）。
+ *
+ * PermissionRequest 在列：它报 blocked 后没有任何「权限已批准」事件可以清掉，
+ * 会一直挂到工具跑完，所以改回由屏幕检测负责权限对话框。
+ *
+ * `PostToolUse/working` 是集成 v4 装过的形态（那时它还是普通 working），v5 改成
+ * `PostToolUse/tick`；命令串带着 action，所以这条旧形态必须显式移除，否则升级后
+ * 两条都会留着，快手指出现在完成之后仍能把状态顶回 working。
+ */
 const CLAUDE_REMOVED_STATE_EVENTS: Array<[string, string]> = [
   ['PostToolUse', 'working'],
+  ['PreToolUse', 'working'],
   ['PostToolUseFailure', 'working'],
   ['SubagentStop', 'working'],
   ['PermissionRequest', 'blocked'],
   ['SessionStart', 'idle'],
-  ['UserPromptSubmit', 'working'],
-  ['PreToolUse', 'working'],
-  ['Stop', 'idle'],
   ['SessionEnd', 'release'],
 ];
 
@@ -547,15 +579,30 @@ function ensureNestedHook(
   hooks: Record<string, any>,
   event: string,
   command: string,
-  opts: { matcher?: string; timeout?: number; quiet?: boolean },
+  opts: { matcher?: string; timeout?: number; quiet?: boolean; background?: boolean },
 ): void {
   const entries = Array.isArray(hooks[event]) ? hooks[event] : (hooks[event] = []);
-  if (entries.some((e: any) => Array.isArray(e.hooks) && e.hooks.some((h: any) => hookMatches(h, command)))) {
-    return;
+  // 同一命令已存在时不重复插入；但若 async 形态与期望不符（例如从旧版本升级，
+  // 旧版把这条事件装成了同步），就地修正，避免用户重装后仍然是阻塞式执行。
+  //
+  // 只在调用方**明确声明** background 时才纠正：多数调用方压根不传，若把它们一律
+  // 当成 false，就会把用户手写的 `async: true` 抹掉——这个函数原本是「只增不改」的，
+  // 不该因为一个 agent 的需求改变其它 agent 的语义。
+  for (const entry of entries) {
+    if (!Array.isArray(entry?.hooks)) continue;
+    for (const hook of entry.hooks) {
+      if (!hookMatches(hook, command)) continue;
+      if (opts.background !== undefined && Boolean(hook.async) !== opts.background) {
+        if (opts.background) hook.async = true;
+        else delete hook.async;
+      }
+      return;
+    }
   }
   const invocation: Record<string, any> = { type: 'command', command };
   if (opts.timeout !== undefined) invocation.timeout = opts.timeout;
   if (opts.quiet) invocation.quiet = true;
+  if (opts.background) invocation.async = true;
   const entry: Record<string, any> = { hooks: [invocation] };
   if (opts.matcher !== undefined) entry.matcher = opts.matcher;
   entries.push(entry);
@@ -685,7 +732,7 @@ function jsonHooksTarget(opts: JsonHooksTargetOptions): HookTarget {
 }
 
 // ---------------------------------------------------------------------------
-// claude —— ~/.claude/settings.json（SessionStart，session-only）
+// claude —— ~/.claude/settings.json（session + 全生命周期状态）
 // ---------------------------------------------------------------------------
 
 /** claude SessionStart 的 matcher（对应 herdr SESSION_START_MATCHER）。 */
@@ -714,16 +761,18 @@ function claudeTarget(): HookTarget {
       const settingsPath = join(dir, 'settings.json');
       const settings = await readJson(settingsPath);
       const hooks = ensureHooksObject(settings);
-      // 先移除旧版（startup/resume 两条 SessionStart + 旧版生命周期事件），
-      // 再写入 herdr 的 session-only 版本。
+      // 先移除旧版（SessionStart 的旧形态 + 已废弃的生命周期事件），再写入当前事件集。
       removeHook(hooks, 'SessionStart', hookCommand(path, 'session'));
       for (const [event, action] of CLAUDE_REMOVED_STATE_EVENTS) {
         removeHook(hooks, event, hookCommand(path, action));
       }
-      ensureNestedHook(hooks, 'SessionStart', hookCommand(path, 'session'), {
-        matcher: CLAUDE_SESSION_START_MATCHER,
-        timeout: 10,
-      });
+      for (const [event, action, background] of CLAUDE_HOOK_EVENTS) {
+        ensureNestedHook(hooks, event, hookCommand(path, action), {
+          matcher: event === 'SessionStart' ? CLAUDE_SESSION_START_MATCHER : undefined,
+          timeout: 10,
+          background,
+        });
+      }
       await writeJsonKey(settingsPath, 'hooks', settings.hooks);
     },
     async uninstall() {
@@ -735,6 +784,9 @@ function claudeTarget(): HookTarget {
       const hooks = hooksObjectIfPresent(settings);
       if (hooks) {
         let changed = removeHook(hooks, 'SessionStart', hookCommand(path ?? '', 'session'));
+        for (const [event, action] of CLAUDE_HOOK_EVENTS) {
+          changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
+        }
         for (const [event, action] of CLAUDE_REMOVED_STATE_EVENTS) {
           changed = removeHook(hooks, event, hookCommand(path ?? '', action)) || changed;
         }

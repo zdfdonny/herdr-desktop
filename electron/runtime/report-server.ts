@@ -35,6 +35,13 @@ export interface SessionReport {
    * `aborted` 时 Main 直接把状态落到 idle、不投影 done、不触发完成声音/toast。
    */
   completion?: 'completed' | 'aborted';
+  /**
+   * 这条 working 只是「工具完成心跳」（如 claude 的 PostToolUse）。
+   *
+   * 心跳只允许刷新仍在工作的 pane，不能把已经完成（idle）的 pane 拉回 working——
+   * 心跳走 async，与同步的 Stop 会乱序（见 TerminalState.isStaleHeartbeat）。
+   */
+  heartbeat?: boolean;
 }
 
 export class ReportServer {
@@ -122,6 +129,7 @@ export class ReportServer {
             parsed.completion === 'completed' || parsed.completion === 'aborted'
               ? parsed.completion
               : undefined,
+          heartbeat: parsed.heartbeat === true,
         };
       } catch {
         res.writeHead(400).end();

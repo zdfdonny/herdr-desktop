@@ -119,7 +119,7 @@ export const DSH_STATUS_PLUGIN_NAME = 'herdr-desktop-agent-state.mjs';
  * agent 标记为「更新」，不再用全局统一版本。
  */
 export const INTEGRATION_VERSIONS: Record<string, number> = {
-  claude: 3,
+  claude: 4,
   codex: 3,
   kimi: 3,
   copilot: 3,

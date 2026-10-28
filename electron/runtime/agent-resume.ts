@@ -140,6 +140,25 @@ const SESSION_REPLACEMENT_ALLOWED = new Set([
   'herdr:claude\u0000claude\u0000clear',
   'herdr:claude\u0000claude\u0000resume',
   'herdr:claude\u0000claude\u0000compact',
+  /*
+   * --fork-session（source=fork）：fork 出来的是**新会话**，理应能接管 pane 的绑定。
+   *
+   * 上游白名单漏了这一项，导致 claude 走 --fork-session 之后 pane 仍钉在旧会话上，
+   * 重启会续回原对话而不是 fork 出来的分支（实测：加上之前 fork 后 projected 仍是旧 id）。
+   * 注意它和下面那条空 source 不是一回事：fork 的 SessionStart 自带 source="fork"，
+   * 走不到空 source 那条；反之状态上报没有 source，也走不到这条。
+   */
+  'herdr:claude\u0000claude\u0000fork',
+  /*
+   * 带空 source 的条目（对应 herdr 给 antigravity 的那条）。
+   *
+   * claude 现在除了 SessionStart 还会上报 working/idle，而那些上报里**没有** source
+   * 字段（只有 SessionStart 有）。用户 /clear 之后，下一条状态上报带的是新会话 id，
+   * 但因为没有 source，会按「同一个 owner 却换了会话」被判定冲突、退回旧引用——
+   * 于是 pane 一直钉在 /clear 之前的会话上，重启后续回错的对话（实测复现）。
+   * 因此这里和 antigravity 一样放行空 source：允许 claude 的状态上报直接刷新会话引用。
+   */
+  'herdr:claude\u0000claude\u0000',
   'herdr:codex\u0000codex\u0000startup',
   'herdr:codex\u0000codex\u0000clear',
   'herdr:codex\u0000codex\u0000resume',
