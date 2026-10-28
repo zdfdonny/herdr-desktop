@@ -1324,26 +1324,45 @@ export class IpcRouter {
       false,
       Date.now(),
     );
-    const transition = this.session.applyStateChange(paneId, mutation, false);
     /*
-     * 完成判定交给 hook 的 agent（见 screenCompletionIgnored），屏幕不再发完成通知。
+     * 完成判定交给 hook 的 agent（见 screenCompletionIgnored），屏幕观测不产生「完成」：
+     * 既不发通知，也不在投影层置 done / 写 completionSeq。
      *
      * 原因：屏幕分不清「初始化完成 / 工具跑完 / 会话真的结束」，三者都表现为 spinner
-     * 停下，都会产生 working/blocked → 完成 的跳变，于是各自响一次提示音。
+     * 停下，都会产生 working/blocked → 完成 的跳变。
+     *
+     * 只掐掉通知（历史实现）会留下另一半后果：pane 依然被记成「未看完成」——
+     * 后台 pane 的侧栏圆点变成绿色 done，要等用户聚焦回来才回落 idle。所以这里把
+     * 同一条判据也传给 applyStateChange（forceSuppressCompletion），让投影层连
+     * seen / completionSeq 一起不更新。
      *
      * 两个前提缺一不可：
      * 1. 该 agent 的集成**确实装了**（agentCompletionFromHooks）——没装时 hook 永远不会
-     *    上报 idle，若仍然抑制屏幕，它就此再也不会响完成提示音；
-     * 2. transition.to 是 **AgentStatus**（idle | done | working | blocked），不是原始
-     *    状态：paneAgentStatus 会把「未聚焦 pane 的完成」投影成 `done`（见 session.ts），
-     *    所以必须同时匹配 idle 与 done，否则只有聚焦的 pane 被抑制、后台 pane 照旧乱响。
+     *    上报 idle，若仍然抑制屏幕，它就此再也不会响完成提示音、也再不会出现 done 徽标；
+     * 2. 命中的是**原始状态**的完成跳变（mutation 里的 working/blocked → idle），
+     *    不是投影后的 AgentStatus。
+     */
+    const hooksOwnCompletion =
+      this.agentCompletionFromHooks(terminal.detectedAgent) || terminal.hookStateAuthorityActive();
+    const screenChange = mutation.effectiveStateChange;
+    const screenCompletion =
+      screenChange !== null &&
+      isCompletionTransition(screenChange.previousState, screenChange.state);
+    const transition = this.session.applyStateChange(
+      paneId,
+      mutation,
+      screenCompletion && hooksOwnCompletion,
+    );
+    /*
+     * 投影后的跳变仍用于通知判定：transition.to 是 **AgentStatus**
+     * （idle | done | working | blocked），paneAgentStatus 会把「未聚焦 pane 的完成」
+     * 投影成 `done`（见 session.ts），所以必须同时匹配 idle 与 done，否则只有聚焦的
+     * pane 被抑制、后台 pane 照旧乱响。
      */
     const screenSaysDone =
       transition !== null &&
       (transition.to === 'idle' || transition.to === 'done') &&
       (transition.from === 'working' || transition.from === 'blocked');
-    const hooksOwnCompletion =
-      this.agentCompletionFromHooks(terminal.detectedAgent) || terminal.hookStateAuthorityActive();
     if (!(screenSaysDone && hooksOwnCompletion)) {
       this.notifyForTransition(paneId, mutation, transition);
     }

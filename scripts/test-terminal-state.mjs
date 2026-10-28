@@ -15,17 +15,19 @@ const terminalPath = join(process.cwd(), '.tmp-terminal-state.mjs');
 const agentStatusPath = join(process.cwd(), '.tmp-agent-status.mjs');
 const detectManifestPath = join(process.cwd(), '.tmp-detect-manifest.mjs');
 const agentDetectorPath = join(process.cwd(), '.tmp-agent-detector.mjs');
-for (const p of [terminalPath, agentStatusPath, detectManifestPath, agentDetectorPath]) {
+const sessionPath = join(process.cwd(), '.tmp-session.mjs');
+for (const p of [terminalPath, agentStatusPath, detectManifestPath, agentDetectorPath, sessionPath]) {
   if (!existsSync(p)) {
     console.error(`missing ${p} — run: npm run test:terminal-state`);
     process.exit(2);
   }
 }
-const { TerminalState } = await import(pathToFileURL(terminalPath).href);
+const { TerminalState, AGENT_STARTUP_WINDOW_MS } = await import(pathToFileURL(terminalPath).href);
+const { Session } = await import(pathToFileURL(sessionPath).href);
 const { paneAgentStatus, isCompletionTransition } = await import(
   pathToFileURL(agentStatusPath).href
 );
-const { fullLifecycleHookAuthority, sessionIdentityOnlyIntegration, screenCompletionIgnored, detectStatus, evaluateManifest, MANIFESTS } = await import(
+const { fullLifecycleHookAuthority, sessionIdentityOnlyIntegration, screenCompletionIgnored, screenStartupIgnored, detectStatus, evaluateManifest, MANIFESTS } = await import(
   pathToFileURL(detectManifestPath).href
 );
 const { detectFromSnapshot } = await import(pathToFileURL(agentDetectorPath).href);
@@ -631,6 +633,203 @@ function setHook(t, source, agent, state, seq, now) {
     [false, false, false, false, false, false],
   );
   check('22.4 未知 agent 不被抑制', screenCompletionIgnored(null), false);
+
+  /*
+   * 启动窗口（初始化不产生状态变化）只对 antigravity 启用：它的初始化是一段纯加载。
+   * claude 的输入框首帧就出现，开窗口收益接近零、却会在页脚规则不匹配时压住第一轮。
+   */
+  check(
+    '22.5 启动窗口只对 antigravity 启用',
+    ['antigravity', 'claude', 'codex', 'opencode'].map((a) => screenStartupIgnored(a)),
+    [true, false, false, false],
+  );
+  check('22.6 启动窗口不误伤未知 agent', screenStartupIgnored(null), false);
+}
+
+// ---------------------------------------------------------------------------
+// 23. antigravity 就绪信号（visibleIdle）：启动窗口的关闭依据
+// ---------------------------------------------------------------------------
+{
+  /*
+   * 这条 idle 规则的唯一用途是给状态机一个「CLI 已就绪」的可见信号
+   * （见 terminal-state 的 agentStartupInProgress）。判 idle 本身不依赖它
+   * （无命中时本就会回落 idle），但启动窗口需要它来判定初始化结束。
+   */
+  const ready = ['> 写一个 hello world', '', '? for shortcuts'].join('\n');
+  const readyDetection = evaluateManifest(MANIFESTS.antigravity, {
+    screen: ready,
+    oscTitle: '',
+    oscProgress: '',
+  });
+  check('23.1 就绪页脚 → idle + visibleIdle', [readyDetection.state, readyDetection.visibleIdle], ['idle', true]);
+
+  // 工作中（spinner 压在页脚上方）visibleIdle 必须为 false，否则启动窗口会在加载中误关
+  const working = ['⠋ streaming response', '> 写一个 hello world', '', '? for shortcuts'].join('\n');
+  const workingDetection = evaluateManifest(MANIFESTS.antigravity, {
+    screen: working,
+    oscTitle: '',
+    oscProgress: '',
+  });
+  check('23.2 工作中 visibleIdle=false', [workingDetection.state, workingDetection.visibleIdle], ['working', false]);
+
+  // 空白/半帧（进程刚拉起）：无规则命中 → fallback idle，但不能当成就绪
+  const blank = evaluateManifest(MANIFESTS.antigravity, { screen: 'loading…', oscTitle: '', oscProgress: '' });
+  check('23.3 半帧屏幕不算就绪', [blank.state, blank.visibleIdle], ['idle', false]);
+}
+
+// ---------------------------------------------------------------------------
+// 24. CLI 启动窗口：初始化不产生状态变化
+// ---------------------------------------------------------------------------
+{
+  /*
+   * 回归：antigravity 初始化期间屏幕有 spinner / `esc to cancel`，hook 也可能在启动期
+   * 触发一次 PreInvocation（都是 working）。这段 working 不是一轮工作，若照常写入状态机，
+   * 初始化结束时的 working → idle 就会被判成一次「完成」——
+   * 后台 pane 投影成 done（侧栏绿点），聚焦 pane 也会写一条 completionSeq。
+   *
+   * 期望：初始化全程状态不变（unknown），就绪页脚出现时才落到 idle，且不是完成跳变。
+   */
+  const t = new TerminalState('p1');
+  // attachPane：命令 `agy` → 检出 agent 进程，打开启动窗口
+  t.setDetectedAgentProcessAt('antigravity', 1000);
+  check('24.1 拉起后状态仍是 unknown', t.state, 'unknown');
+
+  // 初始化 spinner（屏幕 working）→ 不改状态
+  setDetected(t, 'antigravity', 'working', 1100);
+  check('24.2 启动窗口内屏幕 working 不参与状态', t.state, 'unknown');
+
+  // 启动期 hook 的 PreInvocation working → 同样不参与状态
+  setHook(t, 'herdr:antigravity', 'antigravity', 'working', 1, 1200);
+  check('24.3 启动窗口内 hook working 不参与状态', t.state, 'unknown');
+
+  // 初始化结束：只剩下就绪页脚（visibleIdle）→ 关窗，落到 idle
+  t.setDetectedStateWithScreenSignalsAt('antigravity', 'idle', false, true, false, false, 6000);
+  check('24.4 就绪后落到 idle', t.state, 'idle');
+
+  // 此后屏幕 working 恢复正常参与状态（真实一轮）
+  setDetected(t, 'antigravity', 'working', 7000);
+  check('24.5 关窗后 working 恢复正常', t.state, 'working');
+
+  // 初始化完成时的原始跳变是 unknown → idle，不是 completion（不会投影 done）
+  const t2 = new TerminalState('p1');
+  t2.setDetectedAgentProcessAt('antigravity', 1000);
+  setDetected(t2, 'antigravity', 'working', 1100);
+  const readyMutation = t2.setDetectedStateWithScreenSignalsAt(
+    'antigravity',
+    'idle',
+    false,
+    true,
+    false,
+    false,
+    6000,
+  );
+  const readyChange = readyMutation.effectiveStateChange;
+  check(
+    '24.6 初始化完成不是完成跳变',
+    readyChange !== null &&
+      isCompletionTransition(readyChange.previousState, readyChange.state),
+    false,
+  );
+
+  // 同一道防线还有 herdr 的 acquisition：进程检出后第一次落到 idle 不算完成（双保险）
+  check('24.7 首次 idle 仍被 acquisition 抑制', t2.finishAgentProcessAcquisition(), true);
+
+  // 启动窗口只对 antigravity 生效：其它 agent 的屏幕 working 照常生效
+  const t3 = new TerminalState('p1');
+  t3.setDetectedAgentProcessAt('claude', 1000);
+  setDetected(t3, 'claude', 'working', 1100);
+  check('24.8 claude 的启动期 working 照常生效', t3.state, 'working');
+
+  const t3b = new TerminalState('p1');
+  t3b.setDetectedAgentProcessAt('codex', 1000);
+  setDetected(t3b, 'codex', 'working', 1100);
+  check('24.9 codex 的启动期 working 照常生效', t3b.state, 'working');
+
+  // 防御：窗口在上限后自动失效，避免屏幕 working 被永久屏蔽
+  const t4 = new TerminalState('p1');
+  t4.setDetectedAgentProcessAt('antigravity', 1000);
+  setDetected(t4, 'antigravity', 'working', 1000 + AGENT_STARTUP_WINDOW_MS + 1);
+  check('24.10 超过窗口上限后 working 生效', t4.state, 'working');
+
+  /*
+   * trust 提示（blocked）出现在初始化期间：对话框本身就是「TUI 已画出交互界面」的证据，
+   * 必须关窗——否则用户答完之后，紧接着的加载层会一直被压住，状态停在 blocked 上
+   * （看起来还需要操作，实际什么都不用做）。
+   */
+  const t5 = new TerminalState('p1');
+  t5.setDetectedAgentProcessAt('antigravity', 1000);
+  t5.setDetectedStateWithScreenSignalsAt('antigravity', 'blocked', true, false, false, false, 1500);
+  check('24.11 trust 提示照常显示 blocked', t5.state, 'blocked');
+  setDetected(t5, 'antigravity', 'working', 2000);
+  check('24.12 答完对话框后的加载层照常 working', t5.state, 'working');
+}
+
+// ---------------------------------------------------------------------------
+// 25. 完成投影：屏幕观测不置 done（后台 pane 的绿点回归）
+// ---------------------------------------------------------------------------
+{
+  /*
+   * router.refreshAgent 对「完成判定已交给 hook」的 agent 传入 forceSuppressCompletion，
+   * 这里验证 Session 侧的投影：抑制后 seen 不变（不投影 done / 不写 completionSeq），
+   * 而 hook 真正的 Stop+fullyIdle 仍然投影 done。
+   */
+  function backgroundAgy() {
+    const session = new Session();
+    const project = session.addProject({ path: 'D:\\demo', name: 'demo' });
+    const agy = session.createAgent({ projectId: project.projectId, command: 'agy', label: 'antigravity' });
+    // 焦点切到另一个 pane：agy 在后台
+    session.createAgent({ projectId: project.projectId, command: 'claude', label: 'claude' });
+    const terminal = session.getTerminal(agy.paneId);
+    terminal.setDetectedAgentProcessAt('antigravity', 1000);
+    return { session, terminal, paneId: agy.paneId };
+  }
+  const projectionOf = (session, paneId) => {
+    const agent = session.snapshot().agents.find((a) => a.paneId === paneId);
+    return { status: agent.status, completionSeq: agent.completionSeq };
+  };
+
+  // 后台 pane：就绪 → 屏幕 working → 屏幕 idle（工具跑完/假完成）
+  const s1 = backgroundAgy();
+  s1.session.applyStateChange(
+    s1.paneId,
+    s1.terminal.setDetectedStateWithScreenSignalsAt('antigravity', 'idle', false, true, false, false, 3000),
+    true,
+  );
+  s1.session.applyStateChange(s1.paneId, setDetected(s1.terminal, 'antigravity', 'working', 5000), true);
+  const idleMutation = setDetected(s1.terminal, 'antigravity', 'idle', 8000);
+  s1.session.applyStateChange(s1.paneId, idleMutation, true);
+  check('25.1 抑制完成后不投影 done', projectionOf(s1.session, s1.paneId), { status: 'idle', completionSeq: null });
+
+  // 同样的跳变不抑制 → done（证明抑制确实起了作用，而不是别的路径导致的 idle）
+  const s2 = backgroundAgy();
+  s2.session.applyStateChange(
+    s2.paneId,
+    s2.terminal.setDetectedStateWithScreenSignalsAt('antigravity', 'idle', false, true, false, false, 3000),
+    false,
+  );
+  s2.session.applyStateChange(s2.paneId, setDetected(s2.terminal, 'antigravity', 'working', 5000), false);
+  s2.session.applyStateChange(s2.paneId, setDetected(s2.terminal, 'antigravity', 'idle', 8000), false);
+  check('25.2 不抑制时投影 done', projectionOf(s2.session, s2.paneId).status, 'done');
+
+  // hook 真正的完成不能被误伤
+  const s3 = backgroundAgy();
+  s3.session.applyStateChange(
+    s3.paneId,
+    s3.terminal.setDetectedStateWithScreenSignalsAt('antigravity', 'idle', false, true, false, false, 3000),
+    false,
+  );
+  s3.session.applyStateChange(
+    s3.paneId,
+    setHook(s3.terminal, 'herdr:antigravity', 'antigravity', 'working', 1, 4000),
+    false,
+  );
+  s3.session.applyStateChange(
+    s3.paneId,
+    setHook(s3.terminal, 'herdr:antigravity', 'antigravity', 'idle', 2, 6000),
+    false,
+  );
+  const hookDone = projectionOf(s3.session, s3.paneId);
+  check('25.3 hook 的真正完成仍投影 done', [hookDone.status, hookDone.completionSeq !== null], ['done', true]);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

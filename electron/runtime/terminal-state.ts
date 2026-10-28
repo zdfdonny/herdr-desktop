@@ -19,6 +19,7 @@ import type { AgentSessionRefKind, DetectedState } from '../../shared/state';
 import {
   fullLifecycleHookAuthority,
   parseAgentLabel,
+  screenStartupIgnored,
   sessionIdentityOnlyIntegration,
 } from '../../shared/detect-manifest';
 import {
@@ -45,6 +46,20 @@ import {
  * 错误地拉回 idle。
  */
 export const HOOK_WORKING_TTL_MS = 1_500;
+
+/**
+ * CLI 启动窗口的上限（毫秒），见 `TerminalState.agentStartupInProgress`。
+ *
+ * 窗口正常由「屏幕画出 agent 的就绪画面」（manifest 的 idle 规则命中 → visibleIdle）、
+ * 对话框、或 hook 的非 working 上报关闭，这个上限只是防御：页脚改版不再命中规则时，
+ * 别让屏幕的 working 被永久屏蔽。
+ *
+ * 取 20 秒的取舍：上限太长（如一分钟）会把用户「启动完立刻提问」的第一轮也一起吞掉——
+ * 窗口内 working 被屏蔽，那一轮结束时就没有 working → idle 的跳变，完成提示音会丢；
+ * 上限太短则慢启动的尾段会照常闪出 working。正常的冷启动远小于 20 秒，
+ * 而用户从看到输入框到发出第一条消息通常也大于这个时间。
+ */
+export const AGENT_STARTUP_WINDOW_MS = 20_000;
 
 /** hook 上报的权威状态（对应 herdr `HookAuthority`）。 */
 export interface HookAuthority {
@@ -184,6 +199,10 @@ export class TerminalState {
   private staleFullLifecycleHookSessions = new Map<string, StaleFullLifecycleHookSession[]>();
   private recentAgentProcessExit: RecentAgentProcessExit | null;
   private agentProcessAcquisitionPending: boolean;
+  /** CLI 启动窗口是否打开（见 agentStartupInProgress）。 */
+  private agentStartupPending: boolean;
+  /** 启动窗口的打开时间（单调毫秒），用于窗口上限。 */
+  private agentStartupSince: number;
 
   constructor(paneId: string) {
     this.paneId = paneId;
@@ -202,6 +221,8 @@ export class TerminalState {
     this.lastAgentCompletionSeq = null;
     this.recentAgentProcessExit = null;
     this.agentProcessAcquisitionPending = false;
+    this.agentStartupPending = false;
+    this.agentStartupSince = 0;
   }
 
   /** 对应 herdr `set_detected_agent_process_at`。 */
@@ -221,6 +242,9 @@ export class TerminalState {
     if (startsAcquisition) {
       this.codexPromptReady = false;
       this.agentProcessAcquisitionPending = true;
+      // 进程刚被拉起：打开 CLI 启动窗口（见 agentStartupInProgress）。
+      this.agentStartupPending = true;
+      this.agentStartupSince = now;
     }
     return mutation;
   }
@@ -240,7 +264,7 @@ export class TerminalState {
     agent: string | null,
     fallbackState: DetectedState,
     visibleBlocker: boolean,
-    _visibleIdle: boolean,
+    visibleIdle: boolean,
     _visibleWorking: boolean,
     processExited: boolean,
     now: number,
@@ -308,6 +332,28 @@ export class TerminalState {
       };
     }
 
+    /*
+     * CLI 启动窗口内的 working 不参与状态（见 agentStartupInProgress）。
+     *
+     * 屏幕上的 spinner / `esc to cancel` 在启动期只表示「CLI 还在加载」，不是一轮工作；
+     * 若照常写入状态机，初始化结束的 working → idle 就会被判成一次「完成」。
+     */
+    if (!processExited && fallbackState === 'working' && this.agentStartupInProgress(agent, now)) {
+      return {
+        effectiveStateChange: this.recomputeEffectiveState(
+          previousAgentLabel,
+          previousKnownAgent,
+          previousState,
+          now,
+        ),
+        sessionRefChanged: !sessionIdentityEqual(
+          previousSession,
+          this.currentSessionIdentityForPersistence(),
+        ),
+        agentReleased: false,
+      };
+    }
+
     this.detectedAgent = agent;
     if (processExited || agent !== 'codex' || fallbackState === 'blocked') {
       this.codexPromptReady = false;
@@ -323,7 +369,23 @@ export class TerminalState {
     }
     this.fallbackState = fallbackState;
     this.fallbackVisibleBlocker = visibleBlocker && fallbackState === 'blocked';
+    /*
+     * 启动窗口关闭：屏幕上出现了 agent manifest 确认过的**非 working** 画面——
+     * 就绪页脚（visibleIdle，如 antigravity 的 "? for shortcuts"）或对话框
+     * （visibleBlocker，如 trust / permission 提示）。此时 TUI 已经画出交互界面，
+     * 初始化结束。
+     *
+     * 不看 fallback 的 idle：进程刚拉起时屏幕往往是空白/半帧，manifest 无规则命中
+     * 也会回落 idle，用它关窗会让整段初始化失去保护。
+     *
+     * 对话框也要关窗：否则用户答完 trust 提示后，后续的加载层会被一直压住，
+     * 状态停在 blocked 上（看起来还需要操作，实际上什么都不用做）。
+     */
+    if (!processExited && (visibleIdle || visibleBlocker)) {
+      this.agentStartupPending = false;
+    }
     if (processExited) {
+      this.agentStartupPending = false;
       if (agent !== null) {
         this.recentAgentProcessExit = { agent, observedAt: now };
       }
@@ -581,6 +643,16 @@ export class TerminalState {
     );
     if (state === 'working' && this.state === 'working') {
       this.agentProcessAcquisitionPending = false;
+    }
+    /*
+     * hook 报来非 working → 这条上报本身就是「CLI 已经在真实交互」的证据
+     * （antigravity 的 Stop + fullyIdle 只在一轮真正结束后发出），关闭启动窗口。
+     *
+     * working 不关窗：启动期的 PreInvocation 也会报 working（初始化调用），
+     * 见 agentStartupInProgress。
+     */
+    if (state !== 'working') {
+      this.agentStartupPending = false;
     }
     return {
       effectiveStateChange,
@@ -1313,6 +1385,8 @@ export class TerminalState {
     this.lastAgentCompletionSeq = null;
     this.recentAgentProcessExit = null;
     this.agentProcessAcquisitionPending = false;
+    this.agentStartupPending = false;
+    this.agentStartupSince = 0;
     this.clearAgentName();
   }
 
@@ -2049,6 +2123,10 @@ export class TerminalState {
   private effectiveHookState(now: number): DetectedState | null {
     const authority = this.hookAuthority;
     if (authority === null || !this.hookAuthorityIsEffective(authority)) return null;
+    // 启动窗口内的 working 不参与状态（见 agentStartupInProgress）
+    if (authority.state === 'working' && this.agentStartupInProgress(authority.agentLabel, now)) {
+      return null;
+    }
     /*
      * 只对「屏幕真的观测过」的 pane 套用 TTL。
      *
@@ -2061,5 +2139,31 @@ export class TerminalState {
       !fullLifecycleHookAuthority(authority.source, authority.agentLabel) &&
       now - authority.reportedAt > HOOK_WORKING_TTL_MS;
     return staleWorking ? null : authority.state;
+  }
+
+  /**
+   * 是否处在「CLI 启动窗口」内：进程刚被拉起，屏幕还没画出 agent 的就绪画面。
+   *
+   * 这段窗口里的 `working` 不是一轮工作，而是 CLI 自身的启动加载（读配置、拉模型、
+   * 渲染首屏）：屏幕上的 spinner / `esc to cancel`、以及 hook 的 PreInvocation 都会这样报。
+   * 若照常写入状态机，初始化结束时的 working → idle 就会被判成一次「完成」——
+   * 未聚焦的 pane 因此投影成 done（侧栏绿点），聚焦的 pane 也会写一条 completionSeq。
+   * 所以窗口内**只有非 working 的观测**才允许改状态（blocked 照常放行：它必须提醒用户）。
+   *
+   * 只对 `screenStartupIgnored` 的 agent 生效（目前是 antigravity）：它的初始化是一段纯
+   * 加载，屏幕的 working 完全没有信息量；其它 agent 的输入区在首帧就出现，给它们开窗口
+   * 只会压住第一轮的显示与提示音。
+   *
+   * 关闭条件（见调用点）：
+   * - 屏幕出现 manifest 确认过的非 working 画面（visibleIdle 就绪页脚 / visibleBlocker 对话框）；
+   * - hook 报来非 working 状态；
+   * - 进程退出 / 重启重置；
+   * - 超过 AGENT_STARTUP_WINDOW_MS（防御，见常量注释）。
+   */
+  private agentStartupInProgress(agent: string | null, now: number): boolean {
+    if (!this.agentStartupPending || this.recentAgentProcessExit !== null) return false;
+    if (now - this.agentStartupSince > AGENT_STARTUP_WINDOW_MS) return false;
+    const known = agent === null ? null : (parseAgentLabel(agent) ?? agent);
+    return known !== null && screenStartupIgnored(known);
   }
 }

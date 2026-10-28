@@ -175,6 +175,22 @@ export function screenCompletionIgnored(agentLabel: string | null): boolean {
   return agentLabel === 'antigravity' || agentLabel === 'claude';
 }
 
+/**
+ * 启动阶段「屏幕 working 一律不参与状态」的 agent —— 初始化不产生状态变化。
+ *
+ * antigravity 的初始化是一段**纯加载**：首屏只有 spinner / `esc to cancel`，没有任何
+ * 交互证据，直到加载结束才画出 `? for shortcuts` 页脚。这段 working 没有信息量，
+ * 照常写进状态机就会让初始化结束时凭空产生一次 working → idle（后者还会被当成完成）。
+ *
+ * 只列 antigravity：
+ * - claude 这类 TUI 首帧就画出输入框（立即命中 visibleIdle，窗口等于没开），
+ *   给它开窗口的收益接近零，反而会在页脚规则不匹配时压住第一轮的显示与提示音；
+ * - 其余 agent 的完成判定本来就在屏幕上，屏蔽 working 会直接吃掉完成通知。
+ */
+export function screenStartupIgnored(agentLabel: string | null): boolean {
+  return agentLabel === 'antigravity';
+}
+
 export const BUILTIN_MANIFESTS: AgentDetectManifest[] = AGENT_IDENTITY.map(
   ([agent, pattern]) => ({
     agent,

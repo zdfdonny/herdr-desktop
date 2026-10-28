@@ -151,6 +151,13 @@ herdr-desktop **不走这条捷径**：它不依赖 herdr 二进制，而是自�
   用于排序与通知去重。
 - **证据驱动**：读取终端 bottom-buffer 快照（而非用户可滚动的 viewport），用
   AND/OR/NOT 规则匹配。
+- **初始化不产生状态变化**：进程拉起后到屏幕上出现 manifest 确认过的就绪画面
+  （`visibleIdle`）之间是「CLI 启动窗口」，窗口内屏幕与 hook 报来的 `working` 都不参与
+  状态——否则初始化结束的 `working → idle` 会被判成一次完成。目前只对 antigravity
+  启用（见 `screenStartupIgnored`）：它的初始化是一段纯加载，首屏没有任何交互证据。
+- **完成判定可交给 hook**：`screenCompletionIgnored` 名单里的 agent（antigravity、
+  claude）装了集成后，屏幕的 `working/blocked → idle` 既不发通知、也不投影 `done`；
+  完成只认 hook 的 idle 上报。
 
 ### 5.6 平台抽象
 

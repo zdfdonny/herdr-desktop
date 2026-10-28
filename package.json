@@ -43,7 +43,7 @@
     "test:integrations-store": "esbuild scripts/test-integrations-store.entry.mjs --bundle --platform=node --format=esm --outfile=.tmp-integrations-store.mjs && node scripts/test-integrations-store.mjs",
     "test:conpty-dll": "node scripts/test-conpty-dll.mjs",
     "test:shortcuts": "esbuild src/shortcuts/capture.ts --bundle --platform=node --format=esm --outfile=.tmp-shortcuts.mjs && node scripts/test-shortcuts.mjs",
-    "test:terminal-state": "esbuild electron/runtime/terminal-state.ts --bundle --platform=node --format=esm --outfile=.tmp-terminal-state.mjs && esbuild shared/agent-status.ts --bundle --platform=node --format=esm --outfile=.tmp-agent-status.mjs && esbuild shared/detect-manifest.ts --bundle --platform=node --format=esm --outfile=.tmp-detect-manifest.mjs && esbuild electron/runtime/agent-detector.ts --bundle --platform=node --format=esm --outfile=.tmp-agent-detector.mjs && node scripts/test-terminal-state.mjs",
+    "test:terminal-state": "esbuild electron/runtime/terminal-state.ts --bundle --platform=node --format=esm --outfile=.tmp-terminal-state.mjs && esbuild shared/agent-status.ts --bundle --platform=node --format=esm --outfile=.tmp-agent-status.mjs && esbuild shared/detect-manifest.ts --bundle --platform=node --format=esm --outfile=.tmp-detect-manifest.mjs && esbuild electron/runtime/agent-detector.ts --bundle --platform=node --format=esm --outfile=.tmp-agent-detector.mjs && esbuild electron/runtime/session.ts --bundle --platform=node --format=esm --outfile=.tmp-session.mjs && node scripts/test-terminal-state.mjs",
     "check:artifacts": "node scripts/check-artifacts.js",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:mac": "electron-vite build && electron-builder --mac",
