@@ -23,9 +23,9 @@ import { tmpdir } from 'node:os';
 import { join, delimiter, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-unix.mjs');
+const bundlePath = join(process.cwd(), '.tmp/unix.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-unix.mjs — run: npm run test:unix');
+  console.error('missing .tmp/unix.mjs — run: npm run test:unix');
   process.exit(2);
 }
 const { resolveExecutable, isWindowsBatchFile } = await import(pathToFileURL(bundlePath).href);

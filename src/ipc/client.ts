@@ -11,7 +11,7 @@ import type {
   HookStatus,
   ClipboardPayload,
 } from '@shared/protocol';
-import type { ThemePreference, Language } from '@shared/state';
+import type { ThemePreference, Language, SpawnAgentParams, SpawnWebAgentParams } from '@shared/state';
 
 function api(): HerdrDesktopApi {
   const bridge = window.herdrDesktop;
@@ -110,34 +110,35 @@ export function toggleProject(projectId: string, collapsed: boolean): void {
 export function spawnAgent(
   projectId: string,
   command: string,
-  opts?: { args?: string[]; cwd?: string; label?: string },
+  opts?: { agentId?: string | null; args?: string[]; cwd?: string; label?: string },
 ): void {
-  sendControl({
-    type: 'control:spawn-agent',
-    version: 1,
-    payload: {
-      projectId,
-      command,
-      args: opts?.args,
-      cwd: opts?.cwd,
-      label: opts?.label,
-    },
-  });
+  // 显式标注 payload 类型：ControlMessage 是 `IpcEnvelope<T> & {type}` 的交集联合，
+  // 直接写字面量时 TS 无法正确选择成员（会退化成 never），所以先构造再传。
+  const payload: SpawnAgentParams = {
+    projectId,
+    // 声明的智能体身份：主进程据此查询策略，不再靠命令名反推。
+    agentId: (opts?.agentId ?? null) as SpawnAgentParams['agentId'],
+    command,
+    args: opts?.args,
+    cwd: opts?.cwd,
+    label: opts?.label,
+  };
+  sendControl({ type: 'control:spawn-agent', version: 1, payload });
 }
 
-/** 在项目内创建 DeepSeek Harness Web agent（内嵌 Web GUI）。 */
+/** 在项目内创建 web 型智能体（内嵌 Web GUI）。 */
 export function spawnWebAgent(
   projectId: string,
-  opts?: { label?: string },
+  opts?: { agentId?: string | null; label?: string },
 ): void {
-  sendControl({
-    type: 'control:spawn-web-agent',
-    version: 1,
-    payload: {
-      projectId,
-      label: opts?.label,
-    },
-  });
+  // 与 spawnAgent 同理：显式标注 payload 类型，绕开联合类型的字面量推断问题。
+  const payload: SpawnWebAgentParams = {
+    projectId,
+    // 要创建哪个 web 型智能体；缺省时主进程取唯一的 web 型（向后兼容）。
+    agentId: (opts?.agentId ?? null) as SpawnWebAgentParams['agentId'],
+    label: opts?.label,
+  };
+  sendControl({ type: 'control:spawn-web-agent', version: 1, payload });
 }
 
 /** 关闭 pane。 */

@@ -13,9 +13,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-shortcuts.mjs');
+const bundlePath = join(process.cwd(), '.tmp/shortcuts.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-shortcuts.mjs — run: npm run test:shortcuts');
+  console.error('missing .tmp/shortcuts.mjs — run: npm run test:shortcuts');
   process.exit(2);
 }
 const { eventToAccelerator, isUnsafeAccelerator, validateShortcut, matchShortcut } =

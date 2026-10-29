@@ -372,7 +372,7 @@ export function SettingsDialog() {
                 <Row label={t('settings.proxyAgents')} hint={t('settings.proxyAgentsHint')} stacked>
                   <div className="proxy-agent-list">
                     {AGENT_PRESETS.map((preset) => {
-                      const enabled = settings.proxyAgents[preset.command] === true;
+                const enabled = settings.proxyAgents[preset.id] === true;
                       return (
                         <div key={preset.id} className="proxy-agent">
                           <span className="proxy-agent__name">{preset.label}</span>
@@ -382,7 +382,7 @@ export function SettingsDialog() {
                             aria-checked={enabled}
                             aria-label={`${preset.label} — ${t('settings.proxyAgents')}`}
                             className={`switch ${enabled ? 'switch--on' : ''}`}
-                            onClick={() => setAgentProxy(preset.command, !enabled)}
+                  onClick={() => setAgentProxy(preset.id, !enabled)}
                           >
                             <span className="switch__knob" aria-hidden="true" />
                           </button>

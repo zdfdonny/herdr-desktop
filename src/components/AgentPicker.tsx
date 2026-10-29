@@ -8,6 +8,7 @@
  * 未探测完成前显示提示，避免先列出全部再收缩的闪烁。
  */
 
+import { TERMINAL_PRESET_ID } from '@shared/agents/agent-id';
 import { AGENT_PRESETS, useAgentsStore } from '../stores/agentsStore';
 import { spawnAgent, spawnWebAgent } from '../ipc/client';
 import { useT } from '../i18n';
@@ -47,9 +48,12 @@ export function AgentPicker({ projectId, onPick }: AgentPickerProps) {
           className="agent-picker__item"
           onClick={() => {
             if (preset.kind === 'web') {
-              spawnWebAgent(projectId, { label: preset.label });
+              // 显式传 agentId：web 是宿主形态，不假定它就是某个固定智能体。
+              spawnWebAgent(projectId, { agentId: preset.id, label: preset.label });
             } else {
-              spawnAgent(projectId, preset.command, { label: preset.label });
+              // 普通终端不是智能体：声明身份传 null，让主进程在运行期观测。
+              const agentId = preset.id === TERMINAL_PRESET_ID ? null : preset.id;
+              spawnAgent(projectId, preset.command, { agentId, label: preset.label });
             }
             onPick?.();
           }}

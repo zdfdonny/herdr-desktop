@@ -3,15 +3,22 @@
  *
  * Agent 选择体验：只突出显示本机真实可用的 agent，
  * 未安装的给出明确提示而不是让 spawn 失败。
+ *
+ * **预设清单从 `shared/agents` 的注册表派生**，不再手写第二份目录。
+ * 重构前这里有 26 条字面量、与主进程的 5 张表平行维护，任何一侧漏改都会
+ * 让「渲染端能选、主进程认不出」这类问题静默发生。
  */
 
+import { allAgents } from '@shared/agents/registry';
+import type { HostEnv } from '@shared/agents/spec/host';
+import { TERMINAL_PRESET_ID } from '@shared/agents/agent-id';
 import { create } from 'zustand';
 import { getAgentAvailability } from '../ipc/client';
 import { isMac, isWindows } from '../platform';
 import { compareAgentNames } from './agentSort';
 
 export interface AgentPreset {
-  /** 稳定标识。 */
+  /** 稳定标识（智能体用 canonical id；普通终端用 `terminal`）。 */
   id: string;
   /** 展示名（品牌名，通常不翻译）。 */
   label: string;
@@ -22,9 +29,21 @@ export interface AgentPreset {
 }
 
 /**
+ * 渲染进程的宿主环境。
+ *
+ * 只用于解析**启动命令**（`cursor` 在 Windows 上是 `.cmd` 垫片、普通终端取平台
+ * 默认 shell），不涉及任何路径拼接 —— 所以 `home` 与 `env` 留空即可。
+ */
+const RENDERER_HOST: HostEnv = {
+  platform: isWindows ? 'win32' : isMac ? 'darwin' : 'linux',
+  env: {},
+  home: '',
+};
+
+/**
  * 普通终端预设的启动命令（按平台）。
  *
- * 这是桌面端自有预设，不属于 herdr 的 agent 清单：
+ * 这是桌面端自有预设，不属于任何智能体：
  * - Windows：PowerShell（不存在时主进程会回退到 ComSpec）
  * - macOS / Linux：由主进程 `resolveDefaultShell()` 解析登录 shell
  *
@@ -34,53 +53,22 @@ export interface AgentPreset {
 const TERMINAL_COMMAND = isWindows ? 'powershell.exe' : isMac ? '/bin/zsh' : '/bin/bash';
 
 /**
- * Cursor Agent 的启动命令。
- * Windows 上是 npm 生成的 `.cmd` 垫片；macOS / Linux 上是无扩展名的可执行文件。
- */
-const CURSOR_COMMAND = isWindows ? 'cursor-agent.cmd' : 'cursor-agent';
-
-/**
- * 内置 agent 预设（按显示名字母序）。
+ * 全部可创建的预设 = 智能体注册表 + 普通终端。
  *
- * 对照 herdr `src/detect/mod.rs` 的 `Agent::ALL`（24 个智能体），
- * 启动命令取 `interactive_agent_executable` 的对应平台值。
- * `terminal`（普通终端）为桌面端自有预设，保留不动。
- *
- * 声明顺序按上游对照表书写，导出前统一排序——三个消费方（AgentPicker、
- * 设置里的安装状态列表、代理开关列表）都直接 map 这个数组，在这里排一次
- * 即可保证各处顺序一致，不必每个组件各排一遍。
+ * 说明：主进程与渲染进程共用同一份 descriptor，因此两侧的 id / 展示名 /
+ * 启动命令不可能漂移（重构前渲染端是自己那份 26 条字面量）。
  */
-const AGENT_PRESETS_UNSORTED: AgentPreset[] = [
-  { id: 'pi', label: 'Pi', command: 'pi' },
-  { id: 'claude', label: 'Claude Code', command: 'claude' },
-  { id: 'codex', label: 'Codex', command: 'codex' },
-  { id: 'gemini', label: 'Gemini CLI', command: 'gemini' },
-  { id: 'cursor', label: 'Cursor Agent CLI', command: CURSOR_COMMAND },
-  { id: 'devin', label: 'Devin CLI', command: 'devin' },
-  { id: 'antigravity', label: 'Antigravity CLI', command: 'agy' },
-  { id: 'cline', label: 'Cline', command: 'cline' },
-  { id: 'omp', label: 'OMP', command: 'omp' },
-  { id: 'mastracode', label: 'MastraCode', command: 'mastracode' },
-  { id: 'opencode', label: 'OpenCode', command: 'opencode' },
-  { id: 'copilot', label: 'GitHub Copilot CLI', command: 'copilot' },
-  { id: 'kimi', label: 'Kimi Code CLI', command: 'kimi' },
-  { id: 'kiro', label: 'Kiro CLI', command: 'kiro-cli' },
-  { id: 'droid', label: 'Droid', command: 'droid' },
-  { id: 'amp', label: 'Amp', command: 'amp' },
-  { id: 'grok', label: 'Grok CLI', command: 'grok' },
-  { id: 'hermes', label: 'Hermes Agent', command: 'hermes' },
-  { id: 'kilo', label: 'Kilo Code CLI', command: 'kilo' },
-  { id: 'qodercli', label: 'Qoder CLI', command: 'qodercli' },
-  { id: 'qwen', label: 'Qwen Code', command: 'qwen' },
-  { id: 'letta', label: 'Letta Code', command: 'letta' },
-  { id: 'maki', label: 'Maki', command: 'maki' },
-  { id: 'muse', label: 'Muse', command: 'muse' },
-  { id: 'terminal', label: 'Terminal', command: TERMINAL_COMMAND },
-  /*
-   * DeepSeek Harness（Web GUI）：不是终端 TUI，而是由主进程托管 `dsh web`
-   * 后经 <webview> 内嵌。command 仅用于可用性探测（探测 `dsh` 是否在 PATH）。
-   */
-  { id: 'dsh-web', label: 'DeepSeek Harness', command: 'dsh', kind: 'web' },
+const PRESETS_UNSORTED: AgentPreset[] = [
+  ...allAgents().map((descriptor) => {
+    const preset: AgentPreset = {
+      id: descriptor.id,
+      label: descriptor.label,
+      command: descriptor.command(RENDERER_HOST),
+    };
+    if (descriptor.hosting === 'web') preset.kind = 'web';
+    return preset;
+  }),
+  { id: TERMINAL_PRESET_ID, label: 'Terminal', command: TERMINAL_COMMAND },
 ];
 
 /*
@@ -88,7 +76,7 @@ const AGENT_PRESETS_UNSORTED: AgentPreset[] = [
  * 直接比码点会把大写全排在小写前，且数字段无法自然排序。
  * 同名时回退 id 保证稳定。
  */
-export const AGENT_PRESETS: AgentPreset[] = [...AGENT_PRESETS_UNSORTED].sort(
+export const AGENT_PRESETS: AgentPreset[] = [...PRESETS_UNSORTED].sort(
   (a, b) => compareAgentNames(a.label, b.label) || a.id.localeCompare(b.id),
 );
 

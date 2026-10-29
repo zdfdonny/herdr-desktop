@@ -18,6 +18,8 @@ export type DetectedState = 'idle' | 'working' | 'blocked' | 'unknown';
 export type PaneAgentState = DetectedState;
 export type AgentStatus = DetectedState | 'done';
 
+import type { AgentId } from './agents/agent-id';
+
 /** pane 类型：终端进程（默认）或内嵌 Web GUI。 */
 export type PaneKind = 'pty' | 'web';
 
@@ -28,10 +30,11 @@ export type AgentSessionRefKind = 'id' | 'path';
  * 持久化的 agent 会话引用（对应 herdr 的 PaneAgentSessionSnapshot）。
  *
  * 恢复 pane 时据此重建该 agent 的恢复命令（如 `claude --resume <value>`）。
- * source 约定为 `herdr:<agent>`，恢复侧只接受官方来源。
+ * source 约定为 `herdr-desktop:<agent>`，恢复侧只接受官方来源。
+ * 旧版本快照里可能是 `herdr:<agent>`，读取时会归一化（见 normalizeAgentSource）。
  */
 export interface PaneAgentSession {
-  /** 上报来源，形如 "herdr:claude"。 */
+  /** 上报来源，形如 "herdr-desktop:claude"。 */
   source: string;
   /** agent 识别名（与启动命令对应，如 claude / codex / opencode）。 */
   agent: string;
@@ -99,6 +102,17 @@ export interface PaneState {
   label: string | null;
   cwd: string | null;
   focused: boolean;
+  /**
+   * 创建时声明的智能体 id。
+   *
+   * 与 `AgentInfo.name`（运行期**观测**到的智能体）分工不同：
+   * - 本字段是**声明身份**，创建时就确定，是策略查询的权威来源；
+   * - `name` 是观测结果，用于证明「实际跑起来的确实是它」，也用于
+   *   纯终端 pane 里用户自己敲 `claude` 的场景。
+   *
+   * 旧版本 session.json 缺失时按 null 处理，回退到命令解析。
+   */
+  agentId?: AgentId | null;
   /**
    * 该 pane 启动的命令（如 "opencode"）。
    *
@@ -192,6 +206,14 @@ export interface AddProjectParams {
 export interface SpawnAgentParams {
   /** agent 归属的项目。 */
   projectId: string;
+  /**
+   * 用户选择的智能体 id（`terminal` 或任意用户自定命令时为 null）。
+   *
+   * 这是**声明身份**：创建时记录一次，之后策略查询（状态仲裁、集成状态、
+   * 恢复命令、UI 展示）都以此为准，不再靠命令名/屏幕内容反推。
+   * 旧版渲染端不传该字段，主进程回退到命令解析（行为与重构前一致）。
+   */
+  agentId?: AgentId | null;
   /** agent 命令，如 "claude"、"codex"、"opencode" 或任意 shell 命令。 */
   command: string;
   /** 附加参数。 */
@@ -202,11 +224,19 @@ export interface SpawnAgentParams {
   label?: string;
 }
 
-/** 创建 DeepSeek Harness Web agent 的参数。 */
+/** 创建 Web 型智能体（内嵌 Web GUI）的参数。 */
 export interface SpawnWebAgentParams {
   /** agent 归属的项目。 */
   projectId: string;
-  /** 可选展示标签，缺省为「DeepSeek Harness」。 */
+  /**
+   * 要创建的 **web 型智能体** id。
+   *
+   * web 只是宿主形态，不是某个具体智能体 —— 目前只有 dsh（DeepSeek Harness）
+   * 是 web 型，但未来会有别的。缺省时取注册表里唯一的 web 型智能体，
+   * 保证旧渲染端不传该字段也能工作。
+   */
+  agentId?: AgentId | null;
+  /** 可选展示标签，缺省取该智能体的展示名。 */
   label?: string;
 }
 
@@ -234,10 +264,13 @@ export interface AppSettings {
    */
   proxyUrl: string;
   /**
-   * 按启动命令开启代理注入（command → 是否注入）。
+   * 按**智能体**开启代理注入（agentId → 是否注入）。
    *
-   * 键是 agent 的启动命令（如 "claude"），与 SpawnAgentParams.command 对应，
-   * 主进程据此在 spawn 时决定是否注入代理环境变量。
+   * 键必须用 agentId 而不是启动命令：命令含平台分支（cursor 在 Windows 上是
+   * `cursor-agent.cmd`、macOS 上是 `cursor-agent`），用命令作键会让同一智能体
+   * 在两个平台互不承认，且用户一旦改启动命令就会静默丢掉开关。
+   *
+   * 主进程在 spawn 时按此决定是否注入代理环境变量。
    */
   proxyAgents: Record<string, boolean>;
   /**
@@ -269,19 +302,4 @@ export interface AppSettings {
    * 值为 null/空串的条目会被归一化丢弃。旧版本 settings.json 缺失时按空处理。
    */
   shortcuts?: Record<string, string>;
-}
-
-/** agent 检测 manifest（继承 herdr 的声明式检测思想）。 */
-export interface AgentDetectManifest {
-  /** agent 名（与 AgentInfo.name 对应）。 */
-  agent: string;
-  /** 用于在终端快照中识别该 agent 的规则。 */
-  rules: AgentDetectRule[];
-}
-
-export interface AgentDetectRule {
-  /** 匹配模式，正则字符串。 */
-  pattern: string;
-  /** 命中该 pattern 时应判定的检测层状态（不含 done，done 只由投影派生）。 */
-  status: DetectedState;
 }

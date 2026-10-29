@@ -6,4 +6,6 @@ out/
 .npm-cache/
 *.log
 .DS_Store
+
+.tmp/
 .tmp-*

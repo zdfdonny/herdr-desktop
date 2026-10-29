@@ -7,9 +7,10 @@
 import { app, BrowserWindow, Menu, shell, ipcMain, nativeTheme } from 'electron';
 import { join } from 'node:path';
 import { IpcRouter } from './ipc/router';
-import { IPC } from './ipc/protocol';
-import { readClipboard } from './runtime/clipboard';
-import { logLine, flushLogSync } from './runtime/logger';
+import { validateManifestRegionsAtStartup } from '../shared/detect/facade';
+import { IPC } from './ipc/channels';
+import { readClipboard } from './support/clipboard';
+import { logLine, flushLogSync } from './support/logger';
 import { translate, type MessageKey } from '../shared/i18n';
 import { SHORTCUTS, indexedAccelerator, type ShortcutActionId } from '../shared/shortcuts';
 
@@ -472,6 +473,14 @@ app.whenReady().then(async () => {
 
   router = new IpcRouter();
   router.loadSettings();
+  /*
+   * 启动期校验：所有 manifest 的 region 名必须能被解析（附录 D #21）。
+   *
+   * region 名是静态数据，写错是开发期错误 —— 在这里炸掉，好过让某个智能体的
+   * 检测规则静默失效、用户只看到「状态一直不对」。放在 restoreSession 之前：
+   * 恢复会话会启动 pane，那时就会用到检测规则。
+   */
+  validateManifestRegionsAtStartup();
   router.onTitleBarTheme = setTitleBarOverlay;
   // 语言变化会改变菜单文案，交给 buildMenu 重建
   router.onLanguageChange = buildMenu;
@@ -483,15 +492,15 @@ app.whenReady().then(async () => {
   router.register();
   // hook 上报端点在创建窗口/spawn agent 之前启动，保证环境变量注入时有地址。
   await router.startHookServer();
-  ipcMain.handle('herdr:app-info', () => ({
+  ipcMain.handle('herdr-desktop:app-info', () => ({
     version: app.getVersion(),
     platform: process.platform,
   }));
-  ipcMain.handle('herdr:read-clipboard', () => readClipboard());
-  ipcMain.handle('herdr:settings', () => router.getSettings());
-  ipcMain.handle('herdr:hook-statuses', () => router.getHookStatuses());
-  ipcMain.handle('herdr:hook-install', (_event, agentId: string) => router.installHook(agentId));
-  ipcMain.handle('herdr:hook-uninstall', (_event, agentId: string) => router.uninstallHook(agentId));
+  ipcMain.handle('herdr-desktop:read-clipboard', () => readClipboard());
+  ipcMain.handle('herdr-desktop:settings', () => router.getSettings());
+  ipcMain.handle('herdr-desktop:hook-statuses', () => router.getHookStatuses());
+  ipcMain.handle('herdr-desktop:hook-install', (_event, agentId: string) => router.installHook(agentId));
+  ipcMain.handle('herdr-desktop:hook-uninstall', (_event, agentId: string) => router.uninstallHook(agentId));
   buildMenu();
   createMainWindow();
 });
@@ -513,6 +522,8 @@ app.on('before-quit', (event) => {
   exitCleanupStarted = true;
   event.preventDefault();
   // 先结束 dsh web 子进程树与 hook 上报端点，再排空持久化写入
+  // 先释放状态服务的定时器、结束 dsh web 子进程树与 hook 上报端点，再排空持久化写入
+  router.disposeAgentState();
   router.disposeWebAgents();
   router.disposeHookServer();
   void router.flush().finally(() => {

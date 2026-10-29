@@ -22,9 +22,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-integrations-store.mjs');
+const bundlePath = join(process.cwd(), '.tmp/integrations-store.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-integrations-store.mjs — run: npm run test:integrations-store');
+  console.error('missing .tmp/integrations-store.mjs — run: npm run test:integrations-store');
   process.exit(2);
 }
 
@@ -215,7 +215,7 @@ useNotificationStore.setState({
   },
 });
 installError = new Error(
-  "Error invoking remote method 'herdr:install-hook': Error: EACCES: permission denied",
+  "Error invoking remote method 'herdr-desktop:install-hook': Error: EACCES: permission denied",
 );
 await useIntegrationsStore.getState().install('claude');
 useNotificationStore.setState({ push: originalPush });

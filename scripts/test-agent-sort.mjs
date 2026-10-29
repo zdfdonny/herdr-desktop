@@ -15,8 +15,8 @@ import {
   agentDisplayName,
   compareAgentsByCreatedAt,
   compareAgentNames,
-} from '../.tmp-agentsort.mjs';
-import { AGENT_PRESETS } from '../.tmp-agentpresets.mjs';
+} from '../.tmp/agentsort.mjs';
+import { AGENT_PRESETS } from '../.tmp/agentpresets.mjs';
 
 let pass = 0;
 let fail = 0;

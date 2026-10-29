@@ -15,9 +15,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-pane-nav.mjs');
+const bundlePath = join(process.cwd(), '.tmp/pane-nav.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-pane-nav.mjs — run: npm run test:pane-nav');
+  console.error('missing .tmp/pane-nav.mjs — run: npm run test:pane-nav');
   process.exit(2);
 }
 const { findAdjacentPaneId } = await import(pathToFileURL(bundlePath).href);

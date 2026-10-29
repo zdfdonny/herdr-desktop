@@ -17,9 +17,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-agent-picker-position.mjs');
+const bundlePath = join(process.cwd(), '.tmp/agent-picker-position.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-agent-picker-position.mjs — run: npm run test:picker');
+  console.error('missing .tmp/agent-picker-position.mjs — run: npm run test:picker');
   process.exit(2);
 }
 const {

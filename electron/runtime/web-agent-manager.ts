@@ -25,19 +25,25 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
+import type { AgentDescriptor } from '../../shared/agents/descriptor';
+import type { HostEnv } from '../../shared/agents/spec/host';
 import { resolveExecutable, isWindows } from '../platform';
 
-/** dsh 启动命令（web profile 通过子命令名解析）。 */
-const DSH_COMMAND = 'dsh';
 /**
- * 共享 dsh web 进程的固定监听端口。
+ * Web 型智能体的服务托管器。
  *
- * 固定端口 → origin（`http://127.0.0.1:PORT`）跨重启稳定 → 每个 <webview> 的
- * partition localStorage 才能续用，dsh GUI 才能恢复「最近打开的会话」。
- * 与浏览器默认的 `dsh web`（3080）区分开，避免端口冲突。
+ * 注意职责边界：**web 是宿主形态，不是具体智能体**。本类负责「把一个 web 型
+ * 智能体作为共享单进程托管起来」，具体是哪一个由构造时传入的 descriptor 决定
+ * （可执行文件、`launchArgs` 都从它派生），不再写死成 dsh。
+ *
+ * 已知限制：就绪广播行的解析（`<command> web: <url>`）与 `--no-open/--host/--port`
+ * 这套参数目前是 dsh 的 CLI 约定。将来出现第二个 web 型智能体时，应把「如何判定
+ * 就绪」也做成 descriptor 上的声明，或为该智能体提供独立的托管实现。
  */
-const DSH_WEB_PORT = 8399;
-/** 等待 `dsh web:` 启动广播行的超时时间。 */
+
+/** 固定监听端口（见下方稳定性说明）。 */
+const WEB_PORT = 8399;
+/** 等待就绪广播行的超时时间。 */
 const WEB_START_TIMEOUT_MS = 60_000;
 /** 启动输出缓冲上限，防止异常输出无界增长。 */
 const MAX_STARTUP_BUFFER = 64 * 1024;
@@ -76,9 +82,19 @@ export class WebAgentManager {
   /** 进行中的首次启动（并发 acquire 复用同一次启动，避免重复 spawn）。 */
   private pendingAcquire: Promise<WebSpawnResult> | null = null;
   private callbacks: WebAgentCallbacks;
+  /** 托管的是哪个 web 型智能体（不再写死）。 */
+  private readonly agent: AgentDescriptor;
+  private readonly host: HostEnv;
 
-  constructor(callbacks: WebAgentCallbacks) {
+  constructor(callbacks: WebAgentCallbacks, agent: AgentDescriptor, host: HostEnv) {
     this.callbacks = callbacks;
+    this.agent = agent;
+    this.host = host;
+  }
+
+  /** 本管理器托管的智能体 id。 */
+  get agentId(): string {
+    return this.agent.id;
   }
 
   /** 该 pane 是否正在使用共享进程。 */
@@ -148,16 +164,17 @@ export class WebAgentManager {
      * npm global 都不在其中，否则会出现「列表显示已安装、点进去却报
      * Command not found」的自相矛盾结果。
      */
-    const executable = resolveExecutable(DSH_COMMAND, env.PATH ?? env.Path ?? '');
+    const command = this.agent.command(this.host);
+    const executable = resolveExecutable(command, env.PATH ?? env.Path ?? '');
     if (!executable) {
       return {
         ok: false,
         reason: 'not-found',
-        error: `Command not found: ${DSH_COMMAND}. Install it and make sure it is on PATH.`,
+        error: `Command not found: ${command}. Install it and make sure it is on PATH.`,
       };
     }
 
-    const port = await pickPort(DSH_WEB_PORT);
+    const port = await pickPort(WEB_PORT);
     if (port === 0) {
       return {
         ok: false,
@@ -174,7 +191,16 @@ export class WebAgentManager {
     const useShell = isWindows;
     const file =
       isWindows && /[\s"]/.test(executable) ? `"${executable}"` : executable;
-    const args = ['web', '--no-open', '--host', '127.0.0.1', '--port', String(port)];
+    // 子命令与监听参数来自 descriptor 的 launchArgs（dsh 是 `web`），
+    // 其余 `--no-open/--host/--port` 是该 CLI 的约定（见文件头部的已知限制）。
+    const args = [
+      ...(this.agent.launchArgs ?? []),
+      '--no-open',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+    ];
 
     let child: ChildProcess;
     try {
@@ -189,7 +215,7 @@ export class WebAgentManager {
       return {
         ok: false,
         reason: 'spawn-failed',
-        error: `Failed to start ${DSH_COMMAND}: ${describeError(error)}`,
+        error: `Failed to start ${this.agent.command(this.host)}: ${describeError(error)}`,
       };
     }
 
@@ -274,7 +300,7 @@ export class WebAgentManager {
 
       const onData = (chunk: Buffer) => {
         buf = (buf + chunk.toString('utf8')).slice(-MAX_STARTUP_BUFFER);
-        const url = extractWebUrl(buf);
+        const url = extractWebUrl(buf, this.agent.command(this.host), this.agent.launchArgs ?? []);
         if (url) {
           finish({ ok: true, url, cleanUrl: stripToken(url) });
         }
@@ -315,9 +341,16 @@ export class WebAgentManager {
   }
 }
 
-/** 从启动输出中提取 `dsh web: <url>` 广播行里的 URL。 */
-function extractWebUrl(text: string): string | null {
-  const match = text.match(/dsh web:\s*(\S+)/);
+/**
+ * 从启动输出中提取就绪广播行里的 URL。
+ *
+ * 匹配 `<command> <launchArgs>: <url>`，即 dsh 的 `dsh web: http://…`。
+ * 用 descriptor 的 command/launchArgs 拼前缀，避免写死成 dsh（见文件头部的已知限制）。
+ */
+function extractWebUrl(text: string, command: string, launchArgs: readonly string[]): string | null {
+  const label = [command, ...launchArgs].join(' ');
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = text.match(new RegExp(`${escaped}:\\s*(\\S+)`));
   return match ? match[1] : null;
 }
 

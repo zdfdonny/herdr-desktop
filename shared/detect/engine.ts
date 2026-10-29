@@ -65,8 +65,26 @@ export interface DetectionInput {
   oscProgress: string;
 }
 
+/** 智能体私有的 region 解析器（由 DetectionSpec.regions 提供）。 */
+export type RegionResolver = (input: DetectionInput) => string;
+
+/**
+ * 编译后的正则缓存（附录 D #22）。
+ *
+ * 为什么需要：`gateMatches` 会被每条 PTY chunk × 每条规则调用，
+ * 而规则数在百条量级（19 个 manifest 合计）。不缓存时每个 chunk 要做上百次
+ * `new RegExp` —— 正则编译是其中相对昂贵的部分，纯属重复劳动。
+ *
+ * 安全性：pattern 来自静态 manifest，总数有界（不会无界增长）；flags 只取自
+ * `[imsu]`，不含 `g`/`y`，因此不存在 `lastIndex` 状态残留问题，可安全复用。
+ */
+const regexCache = new Map<string, RegExp>();
+
 /** 把 Rust regex 内联标志 (?i)(?m)(?s) 转换为 JS flags，并翻译 \p{} 属性。 */
 function compileRegex(pattern: string): RegExp {
+  const cached = regexCache.get(pattern);
+  if (cached) return cached;
+
   let flags = '';
   let source = pattern;
   const inline = /^\(\?([imsu]+)\)/.exec(source);
@@ -79,7 +97,9 @@ function compileRegex(pattern: string): RegExp {
     if (!flags.includes('u')) flags += 'u';
     source = source.replace(/\\p\{Alphabetic\}/g, '\\p{L}');
   }
-  return new RegExp(source, flags);
+  const compiled = new RegExp(source, flags);
+  regexCache.set(pattern, compiled);
+  return compiled;
 }
 
 /** 取 rule 顶层的 matcher 组合成 gate（对应 herdr manifest_gate_from_rule）。 */
@@ -94,7 +114,30 @@ function ruleGate(rule: ManifestRule): ManifestGate {
   };
 }
 
+/** gate 是否没有任何实际条件（全 undefined / 全空数组）。 */
+function gateIsEmpty(gate: ManifestGate): boolean {
+  const has = (list: unknown[] | undefined): boolean => Boolean(list && list.length > 0);
+  return !(
+    has(gate.contains) ||
+    has(gate.regex) ||
+    has(gate.lineRegex) ||
+    has(gate.all) ||
+    has(gate.any) ||
+    has(gate.not)
+  );
+}
+
 function gateMatches(gate: ManifestGate, text: string, lowerText: string): boolean {
+  /*
+   * 空 gate 一律不匹配（附录 D #23）。
+   *
+   * 原先所有条件都是 undefined 时会直接落到 return true —— 一条忘写条件的规则
+   * 会命中任何屏幕，把状态永久钉死在该规则的 status 上，且没有任何报错。
+   * 按「没有条件 = 不匹配」处理，配合 validateManifests 的加载期校验，
+   * 写错会立刻被发现而不是静默生效。
+   */
+  if (gateIsEmpty(gate)) return false;
+
   if (gate.contains && !gate.contains.every((needle) => lowerText.includes(needle.toLowerCase()))) {
     return false;
   }
@@ -218,61 +261,79 @@ function topNonEmptyLines(content: string, count: number): string {
   return endIndex < 0 ? '' : lines.slice(0, endIndex + 1).join('\n');
 }
 
-/** codex 提示行：`›` 或 `› ...`（对应 herdr codex_prompt_line）。 */
-function codexPromptLine(line: string): boolean {
-  return line === '›' || line.startsWith('› ');
+/**
+ * 引擎内置的 region 名（不含各智能体的 `extraRegions`）。
+ *
+ * 与 `region()` 里的分支一一对应；校验时用它 + 各 agent 的 extraRegions 判定合法名。
+ */
+const BUILTIN_REGIONS = [
+  'osc_title',
+  'osc_progress',
+  'whole_recent',
+  'after_last_horizontal_rule',
+  'prompt_box_body',
+  'last_non_empty_above_prompt_box',
+] as const;
+
+/** 带参数的内置 region 形态（`bottom_non_empty_lines(3)` 之类）。 */
+const PARAMETRIC_REGION = /^(?:bottom|top)_non_empty_lines\(\d+\)$/;
+
+/** 某个 region 名是否被引擎或该 manifest 的 extraRegions 识别。 */
+export function isKnownRegion(
+  name: string,
+  extraRegions?: Record<string, RegionResolver>,
+): boolean {
+  const trimmed = name.trim();
+  if (extraRegions && trimmed in extraRegions) return true;
+  if ((BUILTIN_REGIONS as readonly string[]).includes(trimmed)) return true;
+  return PARAMETRIC_REGION.test(trimmed);
 }
 
-/** codex 块标记行：`•`/`■`/`✗`/`✓` 开头（对应 herdr codex_block_marker_line）。 */
-function codexBlockMarkerLine(line: string): boolean {
-  return line.startsWith('•') || line.startsWith('■') || line.startsWith('✗') || line.startsWith('✓');
-}
-
-/** 最后一条 codex 提示行之后的内容（对应 herdr after_last_prompt_marker）。 */
-function afterLastPromptMarker(content: string): string {
-  const lines = content.split('\n');
-  let index = -1;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (codexPromptLine(lines[i])) {
-      index = i;
-      break;
+/**
+ * 校验 manifest 里所有 region 名都能被解析（附录 D #21）。
+ *
+ * 原先未知 region 名静默返回空串，规则因此永久不命中且毫无提示 ——
+ * 一个拼写错误就能让某条检测规则彻底失效。改为在**加载期**抛错：
+ * region 名是静态数据，写错是开发期错误，应该在启动时立刻炸掉，
+ * 而不是等到用户发现「这个智能体状态一直不对」。运行期不再抛错，
+ * 避免每帧都付校验代价。
+ */
+export function validateManifestRegions(
+  manifest: AgentManifest,
+  extraRegions?: Record<string, RegionResolver>,
+): void {
+  const unknown: string[] = [];
+  for (const rule of manifest.rules) {
+    if (!isKnownRegion(rule.region, extraRegions)) {
+      unknown.push(`rule "${rule.id}" → region "${rule.region}"`);
     }
   }
-  return index < 0 ? content : lines.slice(index + 1).join('\n');
-}
-
-/** 当前 codex 提示行下标（最后一条，且其后无块标记，对应 herdr current_codex_prompt_index）。 */
-function currentCodexPromptIndex(lines: string[]): number {
-  let index = -1;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (codexPromptLine(lines[i])) {
-      index = i;
-      break;
-    }
+  if (unknown.length > 0) {
+    throw new Error(
+      `manifest "${manifest.id}" 引用了未知 region：\n  ${unknown.join('\n  ')}\n` +
+        `已知内置 region：${BUILTIN_REGIONS.join(', ')}，` +
+        `或形如 bottom_non_empty_lines(3) / top_non_empty_lines(2)；` +
+        `智能体私有 region 需在该 agent 的 DetectionSpec.regions 里声明。`,
+    );
   }
-  if (index < 0) return -1;
-  for (let i = index + 1; i < lines.length; i += 1) {
-    if (codexBlockMarkerLine(lines[i])) return -1;
-  }
-  return index;
 }
 
-/** 当前 codex 提示行之前的内容（对应 herdr before_current_prompt_marker）。 */
-function beforeCurrentPromptMarker(content: string): string {
-  const lines = content.split('\n');
-  const index = currentCodexPromptIndex(lines);
-  return index < 0 ? content : lines.slice(0, index).join('\n');
-}
-
-/** 无当前提示标记时返回全文，否则空串（对应 herdr whole_recent_without_current_prompt_marker）。 */
-function wholeRecentWithoutCurrentPromptMarker(content: string): string {
-  const lines = content.split('\n');
-  return currentCodexPromptIndex(lines) < 0 ? content : '';
-}
-
-/** 取 region 对应的文本（对应 herdr region()）。 */
-function region(input: DetectionInput, spec: string): string {
+/**
+ * 取 region 对应的文本（对应 herdr region()）。
+ *
+ * 只包含**所有智能体通用**的区域切片原语；某个智能体私有的屏幕结构概念
+ * （如 codex 的 prompt 标记区域）由它自己的 descriptor 通过 `extraRegions` 提供，
+ * 通用引擎不再认识具体智能体。
+ */
+function region(
+  input: DetectionInput,
+  spec: string,
+  extraRegions: Record<string, RegionResolver> | undefined,
+): string {
   const trimmed = spec.trim();
+  const extra = extraRegions?.[trimmed];
+  if (extra) return extra(input);
+
   if (trimmed === 'osc_title') return input.oscTitle;
   if (trimmed === 'osc_progress') return input.oscProgress;
 
@@ -282,11 +343,6 @@ function region(input: DetectionInput, spec: string): string {
   if (trimmed === 'prompt_box_body') return promptBoxBody(content);
   if (trimmed === 'last_non_empty_above_prompt_box') {
     return lastNonEmptyAbovePromptBox(content);
-  }
-  if (trimmed === 'after_last_prompt_marker') return afterLastPromptMarker(content);
-  if (trimmed === 'before_current_prompt_marker') return beforeCurrentPromptMarker(content);
-  if (trimmed === 'whole_recent_without_current_prompt_marker') {
-    return wholeRecentWithoutCurrentPromptMarker(content);
   }
   const bottomCount = /^bottom_non_empty_lines\((\d+)\)$/.exec(trimmed);
   if (bottomCount) {
@@ -299,15 +355,20 @@ function region(input: DetectionInput, spec: string): string {
   return '';
 }
 
-/** 求值一个 manifest（对应 herdr evaluate_loaded_manifest）。 */
+/**
+ * 求值一个 manifest（对应 herdr evaluate_loaded_manifest）。
+ *
+ * @param extraRegions 智能体私有的 region 解析器（见 DetectionSpec.regions）
+ */
 export function evaluateManifest(
   manifest: AgentManifest,
   input: DetectionInput,
+  extraRegions?: Record<string, RegionResolver>,
 ): ManifestDetection {
   let matched: ManifestRule | null = null;
 
   for (const rule of manifest.rules) {
-    const regionText = region(input, rule.region);
+    const regionText = region(input, rule.region, extraRegions);
     const ok = gateMatches(ruleGate(rule), regionText, regionText.toLowerCase());
     if (!ok) continue;
     if (matched === null || rule.priority > matched.priority) {

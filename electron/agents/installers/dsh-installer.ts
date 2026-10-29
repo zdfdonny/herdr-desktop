@@ -1,0 +1,168 @@
+/**
+ * DeepSeek Harness 的集成安装器。
+ *
+ * `JsonHooksInstaller` 的子类。差异最大的一个：
+ * - 产物是**一个自包含的 `.mjs` 插件**，不是 hook 脚本，也不需要可执行位；
+ * - 注册位置是 `cordis.patch.yml` 里的一个块（YAML），不是 JSON hooks 数组；
+ * - 因此不走通用 hooks 流程（`managesHooksConfig() === false`）。
+ *
+ * 安装位置用 Harness 全局 home（`$DSH_HOME`，默认 `~/.dsh`）而非某个 profile：
+ * 插件是自包含、无依赖的单文件，未设置 `HERDR_DESKTOP_REPORT_URL` 时是 no-op，
+ * 挂到 home 层不会影响任何非 Herdr 启动的 dsh 进程；home 层的 `cordis.patch.yml`
+ * 也不属于 profile 自动初始化写入的文件，避免被 `dsh web` 首次启动覆盖。
+ */
+
+import { promises as fs } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type { IntegrationInstaller } from '../installer';
+import {
+  JsonHooksInstaller,
+  type JsonHooksInstallerDeps,
+  type JsonHooksLayout,
+  type JoinPath,
+} from './json-hooks-installer';
+import {
+  declaredVersion,
+  ensureHook,
+  ensureHooksObject,
+  hooksObjectIfPresent,
+  jsonHooksIo,
+  removeHook,
+  scriptInstalled,
+} from './kit';
+import dshPlugin from '../assets/dsh/herdr-desktop-agent-state.mjs?raw';
+
+/** 状态插件的文件名（带 `.mjs`，确保按 ESM 加载，与 profile 的 package.json 无关）。 */
+export const DSH_STATUS_PLUGIN_NAME = 'herdr-desktop-agent-state.mjs';
+
+/** `cordis.patch.yml` 里的块标记。 */
+const DSH_PATCH_BEGIN = '# >>> herdr dsh integration';
+const DSH_PATCH_END = '# <<< herdr dsh integration';
+
+/** dsh 需要的额外 IO：YAML 块的新增/删除。 */
+export interface DshInstallerIo {
+  /** 在 `cordis.patch.yml` 里 upsert 我们的块。 */
+  upsertPatch(patchPath: string): Promise<void>;
+  /** 从 `cordis.patch.yml` 里移除我们的块（幂等）。 */
+  removePatchBlock(patchPath: string): Promise<void>;
+}
+
+export class DshInstaller extends JsonHooksInstaller {
+  constructor(
+    layout: JsonHooksLayout,
+    deps: JsonHooksInstallerDeps,
+    join: JoinPath,
+    private readonly dsh: DshInstallerIo,
+  ) {
+    super(layout, deps, join);
+  }
+
+  /** 注册在 YAML 块里，不走 JSON hooks 流程。 */
+  protected override managesHooksConfig(): boolean {
+    return false;
+  }
+
+  /** 插件由 Node 直接加载，不需要可执行位（与 hook 脚本不同）。 */
+  protected override needsExecutableBit(): boolean {
+    return false;
+  }
+
+  /** 产物已由基类写入；这里补 `cordis.patch.yml` 的块。 */
+  protected override async registerExtra(
+    dir: string,
+    _artifactPath: string,
+    _configPath: string,
+  ): Promise<void> {
+    await this.dsh.upsertPatch(this.join(dir, 'cordis.patch.yml'));
+  }
+
+  /** 先摘 YAML 块（产物由基类删除）。 */
+  protected override async unregisterExtra(
+    dir: string,
+    _artifactPath: string | null,
+    _configPath: string,
+  ): Promise<void> {
+    await this.dsh.removePatchBlock(this.join(dir, 'cordis.patch.yml'));
+  }
+}
+
+/** `cordis.patch.yml` 里插入的块内容。 */
+function dshPatchBlock(): string {
+  return [
+    DSH_PATCH_BEGIN,
+    '- patch:',
+    '    - insert:',
+    `        - plugins/${DSH_STATUS_PLUGIN_NAME}`,
+    DSH_PATCH_END,
+  ].join('\n');
+}
+
+/** 纯函数版：从内容里删掉块标记区间。 */
+function removeDshPatchBlockFrom(content: string): string {
+  const begin = content.indexOf(DSH_PATCH_BEGIN);
+  if (begin < 0) return content;
+  const end = content.indexOf(DSH_PATCH_END);
+  const after = end >= 0 ? end + DSH_PATCH_END.length : content.length;
+  return (content.slice(0, begin) + content.slice(after)).replace(/\n{3,}/g, '\n\n');
+}
+
+/** 读文本（不存在返回空串）。 */
+async function readTextSafe(path: string): Promise<string> {
+  try {
+    return await fs.readFile(path, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/** upsert：先移除旧块，再追加新块（保证重装同步最新内容）。 */
+async function upsertDshPatch(patchPath: string): Promise<void> {
+  const content = await readTextSafe(patchPath);
+  const stripped = removeDshPatchBlockFrom(content).replace(/\n+$/, '');
+  const next = stripped.length > 0 ? `${stripped}\n\n${dshPatchBlock()}\n` : `${dshPatchBlock()}\n`;
+  await fs.writeFile(patchPath, next, 'utf8');
+}
+
+/** 从 `cordis.patch.yml` 里移除我们的块（无则 no-op）。 */
+async function removeDshPatchBlock(patchPath: string): Promise<void> {
+  const content = await readTextSafe(patchPath);
+  const next = removeDshPatchBlockFrom(content);
+  if (next !== content) await fs.writeFile(patchPath, next, 'utf8');
+}
+
+/** 创建 dsh 的集成安装器。 */
+export function createDshTarget(): IntegrationInstaller {
+  const homeDir = (): string => {
+    const home = process.env.DSH_HOME?.trim();
+    return home ? home : join(homedir(), '.dsh');
+  };
+  const pluginPath = (): string => join(homeDir(), 'plugins', DSH_STATUS_PLUGIN_NAME);
+
+  return new DshInstaller(
+    {
+      // 注册在 YAML 块里，configFile 只用于与其它智能体同构（不会被通用流程读写）。
+      configFile: 'cordis.patch.yml',
+      shape: 'nested',
+      event: 'SessionStart',
+      events: [],
+      artifactSubdir: 'plugins',
+    },
+    {
+      configDir: homeDir,
+      artifactPath: pluginPath,
+      version: () => declaredVersion('dsh'),
+      // dsh 不走 hooks 命令，占位实现即可。
+      command: () => '',
+      artifactIsInstalled: (path) => scriptInstalled(path),
+      artifactContent: () => dshPlugin,
+      io: jsonHooksIo(),
+      ops: { ensureHooksObject, hooksObjectIfPresent, ensureHook, removeHook },
+    },
+    join,
+    {
+      upsertPatch: (path) => upsertDshPatch(path),
+      removePatchBlock: (path) => removeDshPatchBlock(path),
+    },
+  );
+}

@@ -3,13 +3,24 @@
  *
  * 把「来源 + agent + 会话引用」翻译成该 agent 的恢复命令 argv。
  * 设计要点（与 herdr 一致）：
- * - 只接受官方来源（`herdr:<agent>`），自定义命令一律不参与恢复；
- * - id/path 做防御性校验，避免把会话文件/终端里的不可信内容拼进 shell；
- * - 恢复命令表集中在 `resumeTail`，每个 agent 的 flag 各不相同。
+ * - 只接受官方来源（`herdr-desktop:<agent>`），自定义命令一律不参与恢复；
+ * - id/path 做防御性校验，避免把会话文件/终端里的不可信内容拼进 shell。
+ *
+ * 重构后这里**不再持有任何 agent 表**：恢复参数、会话引用偏好、会话替换白名单、
+ * 启动参数反解全部来自 `shared/agents/descriptors/`。原先是三张平行表
+ * （`OFFICIAL_AGENTS` 19 条 / `resumeTail` 18 分支 switch / `SESSION_REPLACEMENT_ALLOWED`
+ * 32 条），每加一个智能体要同步改三处。
  */
 
 import { isAbsolute } from 'node:path';
+import { agentIdFromSource } from '../../shared/agents/agent-id';
+import { agentById } from '../../shared/agents/registry';
+import type { AgentSessionRef } from './terminal/state/agent-session-ref';
+import type { AgentSessionRefLike } from '../../shared/agents/spec/resume-spec';
+import { normalizeSessionStartSource } from '../../shared/agents/spec/session-start-source';
 import type { AgentSessionRefKind, PaneAgentSession } from '../../shared/state';
+
+export { normalizeSessionStartSource };
 
 export const MAX_SESSION_ID_LEN = 512;
 export const MAX_SESSION_PATH_LEN = 4096;
@@ -22,38 +33,11 @@ export const MAX_SESSION_PATH_LEN = 4096;
  */
 export const RESUME_AGENTS_ON_RESTORE = true;
 
-/** 官方恢复白名单（herdr-desktop 的 agent id）。 */
-const OFFICIAL_AGENTS = new Set([
-  'pi',
-  'claude',
-  'codex',
-  'cursor',
-  'devin',
-  'antigravity',
-  'omp',
-  'mastracode',
-  'opencode',
-  'copilot',
-  'kimi',
-  'droid',
-  'grok',
-  'hermes',
-  'kilo',
-  'qodercli',
-  'qwen',
-  'letta',
-  'dsh',
-]);
-
-export interface AgentSessionRef {
-  kind: AgentSessionRefKind;
-  value: string;
-}
+export type { AgentSessionRef } from './terminal/state/agent-session-ref';
 
 export interface AgentResumePlan {
   agent: string;
   argv: string[];
-  dedupeKey: string;
 }
 
 export interface PersistedAgentSession {
@@ -89,15 +73,23 @@ export function sessionRefPath(value: string): AgentSessionRef | null {
   return validSessionPath(value) ? { kind: 'path', value } : null;
 }
 
-/** 官方来源校验（对应 herdr `is_official_agent_source`）。 */
+/**
+ * 官方来源校验（对应 herdr `is_official_agent_source`）。
+ *
+ * 「官方」= 该智能体在本项目注册表里、且声明了官方集成（会主动上报）。
+ * 重构前是一张 19 条的手写白名单，与集成表、恢复表各维护一份。
+ */
 export function isOfficialAgentSource(source: string, agent: string): boolean {
-  return source === `herdr:${agent}` && OFFICIAL_AGENTS.has(agent);
+  if (agentIdFromSource(source) !== agent) return false;
+  const descriptor = agentById(agent);
+  return descriptor?.integration !== undefined;
 }
 
 /**
  * 官方集成上报的 session 引用（对应 herdr `session_ref_from_report`）。
  *
- * pi/omp 优先用 session 文件路径，回退到 id；其余 agent 只用 id。
+ * pi / omp 的会话既是 id 也可以是文件，上报时优先取 path（现已由 descriptor 的
+ * `resume.prefersPathRef` 声明）；其余智能体只用 id。
  */
 export function sessionRefFromReport(
   source: string,
@@ -107,7 +99,8 @@ export function sessionRefFromReport(
 ): AgentSessionRef | null {
   if (!isOfficialAgentSource(source, agent)) return null;
 
-  if (agent === 'pi' || agent === 'omp') {
+  const prefersPath = agentById(agent)?.resume?.prefersPathRef === true;
+  if (prefersPath) {
     return (
       (agentSessionPath != null ? sessionRefPath(agentSessionPath) : null) ??
       (agentSessionId != null ? sessionRefId(agentSessionId) : null)
@@ -117,125 +110,47 @@ export function sessionRefFromReport(
   return agentSessionId != null ? sessionRefId(agentSessionId) : null;
 }
 
-/** 规范化会话启动来源（对应 herdr `normalize_session_start_source`）。 */
-export function normalizeSessionStartSource(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (
-    trimmed === 'startup' ||
-    trimmed === 'resume' ||
-    trimmed === 'clear' ||
-    trimmed === 'compact' ||
-    trimmed === 'branch' ||
-    trimmed === 'new' ||
-    trimmed === 'fork' ||
-    trimmed === 'select'
-  ) {
-    return trimmed;
-  }
-  return null;
-}
-
-/** 会话替换允许表（对应 herdr `session_report_allows_session_replacement`）。 */
-const SESSION_REPLACEMENT_ALLOWED = new Set([
-  'herdr:claude\u0000claude\u0000clear',
-  'herdr:claude\u0000claude\u0000resume',
-  'herdr:claude\u0000claude\u0000compact',
-  /*
-   * --fork-session（source=fork）：fork 出来的是**新会话**，理应能接管 pane 的绑定。
-   *
-   * 上游白名单漏了这一项，导致 claude 走 --fork-session 之后 pane 仍钉在旧会话上，
-   * 重启会续回原对话而不是 fork 出来的分支（实测：加上之前 fork 后 projected 仍是旧 id）。
-   * 注意它和下面那条空 source 不是一回事：fork 的 SessionStart 自带 source="fork"，
-   * 走不到空 source 那条；反之状态上报没有 source，也走不到这条。
-   */
-  'herdr:claude\u0000claude\u0000fork',
-  /*
-   * 带空 source 的条目（对应 herdr 给 antigravity 的那条）。
-   *
-   * claude 现在除了 SessionStart 还会上报 working/idle，而那些上报里**没有** source
-   * 字段（只有 SessionStart 有）。用户 /clear 之后，下一条状态上报带的是新会话 id，
-   * 但因为没有 source，会按「同一个 owner 却换了会话」被判定冲突、退回旧引用——
-   * 于是 pane 一直钉在 /clear 之前的会话上，重启后续回错的对话（实测复现）。
-   * 因此这里和 antigravity 一样放行空 source：允许 claude 的状态上报直接刷新会话引用。
-   */
-  'herdr:claude\u0000claude\u0000',
-  'herdr:codex\u0000codex\u0000startup',
-  'herdr:codex\u0000codex\u0000clear',
-  'herdr:codex\u0000codex\u0000resume',
-  'herdr:codex\u0000codex\u0000compact',
-  'herdr:mastracode\u0000mastracode\u0000startup',
-  'herdr:hermes\u0000hermes\u0000startup',
-  'herdr:hermes\u0000hermes\u0000new',
-  'herdr:hermes\u0000hermes\u0000resume',
-  'herdr:opencode\u0000opencode\u0000select',
-  'herdr:pi\u0000pi\u0000new',
-  'herdr:pi\u0000pi\u0000resume',
-  'herdr:pi\u0000pi\u0000fork',
-  'herdr:grok\u0000grok\u0000new',
-  'herdr:omp\u0000omp\u0000startup',
-  'herdr:omp\u0000omp\u0000new',
-  'herdr:omp\u0000omp\u0000resume',
-  'herdr:omp\u0000omp\u0000fork',
-  'herdr:qwen\u0000qwen\u0000startup',
-  'herdr:qwen\u0000qwen\u0000clear',
-  'herdr:qwen\u0000qwen\u0000resume',
-  'herdr:qwen\u0000qwen\u0000compact',
-  'herdr:qwen\u0000qwen\u0000branch',
-  'herdr:antigravity\u0000antigravity\u0000',
-]);
-
+/**
+ * 上报的会话是否允许替换当前会话（对应 herdr
+ * `session_report_allows_session_replacement`）。
+ *
+ * 白名单按智能体声明（`resume.replacementSources`）；空 source 用空串表示，
+ * 对应「状态上报不带 source」的形态。
+ */
 export function sessionReportAllowsSessionReplacement(
   source: string,
   agent: string,
   sessionStartSource: string | null,
 ): boolean {
-  return SESSION_REPLACEMENT_ALLOWED.has(`${source}\u0000${agent}\u0000${sessionStartSource ?? ''}`);
-}
-
-/**
- * 上报的会话是否应替换当前会话（对应 herdr `set_agent_session_ref_for_session_start`
- * 里的 same-owner 冲突分支：同一 agent 的 id 会话不同时，只有替换表允许才替换）。
- */
-export function shouldReplacePaneAgentSession(
-  current: PaneAgentSession | null,
-  reported: PaneAgentSession,
-  sessionStartSource: string | null | undefined,
-): boolean {
-  if (!current) return true;
-  const conflictingSameOwner =
-    current.source === reported.source &&
-    current.agent === reported.agent &&
-    current.kind === 'id' &&
-    reported.kind === 'id' &&
-    current.value !== reported.value;
-  if (!conflictingSameOwner) return true;
-  return sessionReportAllowsSessionReplacement(
-    reported.source,
-    reported.agent,
-    normalizeSessionStartSource(sessionStartSource),
-  );
+  if (!isOfficialAgentSource(source, agent)) return false;
+  const allowed = agentById(agent)?.resume?.replacementSources ?? [];
+  return allowed.includes(sessionStartSource ?? '');
 }
 
 /**
  * 从启动参数反推会话（对应 herdr `persisted_session_from_launch_args`）。
  *
- * 目前只覆盖 codex 的 `codex resume <id>` 形态；`--last` 等非显式 id 不算。
+ * 具体形态由智能体自己声明（目前只有 codex 的 `codex resume <id>`）。
  */
 export function persistedSessionFromLaunchArgs(
   agent: string,
   args: string[],
 ): PersistedAgentSession | null {
-  if (agent !== 'codex' || args.length !== 2) return null;
-  const [command, sessionId] = args;
-  if (command !== 'resume' || sessionId.startsWith('-')) return null;
-  const sessionRef = sessionRefId(sessionId);
+  const descriptor = agentById(agent);
+  const infer = descriptor?.resume?.fromLaunchArgs;
+  if (!descriptor || !infer) return null;
+  const ref = infer(args);
+  if (!ref) return null;
+  const sessionRef = ref.kind === 'path' ? sessionRefPath(ref.value) : sessionRefId(ref.value);
   if (!sessionRef) return null;
-  return { source: 'herdr:codex', agent: 'codex', sessionRef };
+  return {
+    source: `${'herdr-desktop'}:${descriptor.id}`,
+    agent: descriptor.id,
+    sessionRef,
+  };
 }
 
-/**
- * 从持久化快照恢复会话（对应 herdr `session_ref_from_snapshot`）。
- */
+/** 从持久化快照恢复会话（对应 herdr `session_ref_from_snapshot`）。 */
 export function sessionRefFromSnapshot(
   source: string,
   agent: string,
@@ -243,8 +158,9 @@ export function sessionRefFromSnapshot(
   value: string,
 ): PersistedAgentSession | null {
   if (!isOfficialAgentSource(source, agent)) return null;
+  const prefersPath = agentById(agent)?.resume?.prefersPathRef === true;
   const sessionRef =
-    (agent === 'pi' || agent === 'omp') && kind === 'path'
+    prefersPath && kind === 'path'
       ? sessionRefPath(value)
       : kind === 'id'
         ? sessionRefId(value)
@@ -253,9 +169,17 @@ export function sessionRefFromSnapshot(
   return { source, agent, sessionRef };
 }
 
-/** 去重键（对应 herdr `dedupe_key`）：同一会话不允许被两个 pane 同时恢复。 */
-export function dedupeKey(source: string, agent: string, sessionRef: AgentSessionRef): string {
-  return `${source}\u0000${agent}\u0000${sessionRef.kind}\u0000${sessionRef.value}`;
+
+/**
+ * 该 agent 能否用这个引用生成恢复命令。
+ *
+ * 实现就是「descriptor 里有恢复声明，且 tail 对这条引用返回非 null」。
+ */
+export function resumeTail(agent: string, sessionRef: AgentSessionRefLike): string[] | null {
+  const descriptor = agentById(agent);
+  const tail = descriptor?.resume?.tail;
+  if (!tail) return null;
+  return tail({ kind: sessionRef.kind, value: sessionRef.value });
 }
 
 /**
@@ -276,7 +200,6 @@ export function plan(
   return {
     agent,
     argv: [executable, ...tail],
-    dedupeKey: dedupeKey(source, agent, sessionRef),
   };
 }
 
@@ -295,58 +218,9 @@ export function resumePlanForPane(
  * 该 source/agent/sessionRef 是否能生成恢复命令（对应 herdr `plan(...).is_some()`）。
  *
  * 供终端状态机的会话所有权仲裁使用（foreground_agent_confirms_session_owner）：
- * 只有「官方来源 + 有对应恢复 tail」的组合才被认定为该会话的合法持有者。
+ * 只有「官方来源 + 有对应恢复命令」的组合才被认定为该会话的合法持有者。
  */
 export function canResume(source: string, agent: string, sessionRef: AgentSessionRef): boolean {
   if (!isOfficialAgentSource(source, agent)) return false;
   return resumeTail(agent, sessionRef) !== null;
-}
-
-/**
- * 按 agent 分型的恢复命令尾（不含 argv[0]）。
- *
- * 直接对应 herdr `agent_resume.rs` 的 `plan` 表：
- * claude→--resume、codex→resume、opencode→--session、kilo→--session、
- * pi/omp→--session/--resume=（id 或 path）、letta→--conversation 等。
- */
-function resumeTail(agent: string, sessionRef: AgentSessionRef): string[] | null {
-  switch (agent) {
-    case 'claude':
-      return ['--resume', sessionRef.value];
-    case 'codex':
-      return ['resume', sessionRef.value];
-    case 'copilot':
-      return [`--resume=${sessionRef.value}`];
-    case 'devin':
-    case 'droid':
-    case 'hermes':
-    case 'qodercli':
-    case 'qwen':
-    case 'grok':
-      return ['--resume', sessionRef.value];
-    case 'kimi':
-    case 'pi':
-    case 'opencode':
-    case 'kilo':
-      return ['--session', sessionRef.value];
-    case 'omp':
-      return [`--resume=${sessionRef.value}`];
-    case 'mastracode':
-      return ['--thread', sessionRef.value];
-    case 'cursor':
-      return ['--resume', sessionRef.value];
-    case 'antigravity':
-      return ['--conversation', sessionRef.value];
-    case 'letta': {
-      const prefix = 'default:';
-      if (sessionRef.value.startsWith(prefix)) {
-        const agentId = sessionRef.value.slice(prefix.length);
-        if (agentId.length === 0) return null;
-        return ['--conversation', 'default', '--agent', agentId];
-      }
-      return ['--conversation', sessionRef.value];
-    }
-    default:
-      return null;
-  }
 }

@@ -1,7 +1,7 @@
 /*
  * TerminalState 状态机验证脚本（对应 herdr src/terminal/state.rs 的单元测试）。
  *
- * 用 esbuild 把 electron/runtime/terminal-state.ts 打成 ESM 后 import 真实实现
+ * 用 esbuild 把 electron/runtime/terminal/terminal-state.ts 打成 ESM 后 import 真实实现
  * （而非复制逻辑），与 test-layout-store.mjs / test-unix-platform.mjs 同一做法。
  * agent-status.ts 单独打包，验证 done/seen 投影与完成跳变判定。
  *
@@ -11,11 +11,11 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const terminalPath = join(process.cwd(), '.tmp-terminal-state.mjs');
-const agentStatusPath = join(process.cwd(), '.tmp-agent-status.mjs');
-const detectManifestPath = join(process.cwd(), '.tmp-detect-manifest.mjs');
-const agentDetectorPath = join(process.cwd(), '.tmp-agent-detector.mjs');
-const sessionPath = join(process.cwd(), '.tmp-session.mjs');
+const terminalPath = join(process.cwd(), '.tmp/terminal-state.mjs');
+const agentStatusPath = join(process.cwd(), '.tmp/agent-status.mjs');
+const detectManifestPath = join(process.cwd(), '.tmp/detect-manifest.mjs');
+const agentDetectorPath = join(process.cwd(), '.tmp/agent-detector.mjs');
+const sessionPath = join(process.cwd(), '.tmp/session.mjs');
 for (const p of [terminalPath, agentStatusPath, detectManifestPath, agentDetectorPath, sessionPath]) {
   if (!existsSync(p)) {
     console.error(`missing ${p} — run: npm run test:terminal-state`);
@@ -63,11 +63,11 @@ function setHook(t, source, agent, state, seq, now) {
   const t = new TerminalState('p1');
   setDetected(t, 'pi', 'idle', 1000);
   t.setPersistedAgentSession({
-    source: 'herdr:pi',
+    source: 'herdr-desktop:pi',
     agent: 'pi',
     sessionRef: { kind: 'path', value: '/tmp/root.jsonl' },
   });
-  setHook(t, 'herdr:pi', 'pi', 'working', null, 2000);
+  setHook(t, 'herdr-desktop:pi', 'pi', 'working', null, 2000);
 
   check('1.1 hook 权威生效：state=working', t.state, 'working');
   check('1.2 detectedAgent 保留', t.detectedAgent, 'pi');
@@ -83,11 +83,11 @@ function setHook(t, source, agent, state, seq, now) {
   const t = new TerminalState('p1');
   setDetected(t, 'pi', 'idle', 1000);
   t.setPersistedAgentSession({
-    source: 'herdr:pi',
+    source: 'herdr-desktop:pi',
     agent: 'pi',
     sessionRef: { kind: 'path', value: '/tmp/root.jsonl' },
   });
-  setHook(t, 'herdr:pi', 'pi', 'working', null, 2000);
+  setHook(t, 'herdr-desktop:pi', 'pi', 'working', null, 2000);
   // 屏幕又报 idle（无进程退出），应被 live full-lifecycle 权威忽略
   t.setDetectedStateWithScreenSignalsAt('pi', 'idle', false, false, false, false, 3000);
 
@@ -101,7 +101,7 @@ function setHook(t, source, agent, state, seq, now) {
 {
   const t = new TerminalState('p1');
   setDetected(t, 'pi', 'idle', 1000);
-  setHook(t, 'herdr:pi', 'pi', 'working', null, 2000);
+  setHook(t, 'herdr-desktop:pi', 'pi', 'working', null, 2000);
   t.setDetectedStateWithScreenSignalsAt('pi', 'unknown', false, false, false, true, 3000);
 
   check('3.1 进程退出后 hook 权威清空', t.hookAuthority, null);
@@ -117,12 +117,12 @@ function setHook(t, source, agent, state, seq, now) {
   const t = new TerminalState('p1');
   setDetected(t, 'opencode', 'idle', 1000);
   t.setPersistedAgentSession({
-    source: 'herdr:opencode',
+    source: 'herdr-desktop:opencode',
     agent: 'opencode',
     sessionRef: { kind: 'id', value: 'sess-1' },
   });
   const m1 = t.setHookAuthorityAt(
-    'herdr:opencode',
+    'herdr-desktop:opencode',
     'opencode',
     'working',
     null,
@@ -131,7 +131,7 @@ function setHook(t, source, agent, state, seq, now) {
     2000,
   );
   const m2 = t.setHookAuthorityAt(
-    'herdr:opencode',
+    'herdr-desktop:opencode',
     'opencode',
     'blocked',
     null,
@@ -207,15 +207,15 @@ function setHook(t, source, agent, state, seq, now) {
   const now = 1000;
   t.beginManagedAgent('reviewer', 'codex', now, 100, 1000);
   setDetected(t, 'codex', 'unknown', now);
-  t.observeCodexPromptReady(true);
+  t.observePromptReady(true);
   t.reconcileManagedAgentAt(now, false);
   check('7.1 codex 未知状态+prompt 就绪，尚未交互就绪', t.managedAgentInteractiveReady(), false);
 
-  t.observeCodexPromptReady(false);
+  t.observePromptReady(false);
   check('7.2 settle 后 prompt 未就绪仍不推进', t.reconcileManagedAgentAt(now + 100, false), true);
   check('7.3 仍未交互就绪', t.managedAgentInteractiveReady(), false);
 
-  t.observeCodexPromptReady(true);
+  t.observePromptReady(true);
   check('7.4 prompt 就绪后交互就绪', t.reconcileManagedAgentAt(now + 101, false), true);
   check('7.5 已交互就绪', t.managedAgentInteractiveReady(), true);
   check('7.6 状态保持 unknown（codex 特例）', t.state, 'unknown');
@@ -249,15 +249,15 @@ function setHook(t, source, agent, state, seq, now) {
 
   // TUI 选择会话：{sessionId, sessionStartSource:'select'}（无 seq）
   const ref = { kind: 'id', value: 'sess-1' };
-  t.setAgentSessionRefForSessionStart('herdr:opencode', 'opencode', ref, null, 'select', 2000);
+  t.setAgentSessionRefForSessionStart('herdr-desktop:opencode', 'opencode', ref, null, 'select', 2000);
   check('9.2 select 锚定会话', t.persistedAgentSession?.sessionRef?.value, 'sess-1');
 
   // TUI 状态上报 working：{sessionId, state:'working', seq:5}
-  t.setHookAuthorityAt('herdr:opencode', 'opencode', 'working', null, ref, 5, 3000);
+  t.setHookAuthorityAt('herdr-desktop:opencode', 'opencode', 'working', null, ref, 5, 3000);
   check('9.3 working 生效', t.state, 'working');
 
   // 任务完成：{sessionId, state:'idle', seq:6}
-  t.setHookAuthorityAt('herdr:opencode', 'opencode', 'idle', null, ref, 6, 4000);
+  t.setHookAuthorityAt('herdr-desktop:opencode', 'opencode', 'idle', null, ref, 6, 4000);
   check('9.4 idle 生效（不再卡 working）', t.state, 'idle');
 }
 
@@ -272,7 +272,7 @@ function setHook(t, source, agent, state, seq, now) {
   const sessionOnly = ['hermes', 'qwen', 'letta'];
   /*
    * antigravity 刻意**不**在 session-only 名单里（herdr 上游把它列为
-   * `herdr:antigravity_cli` / `agy`）：它的集成会用 PreInvocation 上报 working、
+   * `herdr-desktop:antigravity_cli` / `agy`）：它的集成会用 PreInvocation 上报 working、
    * Stop + fullyIdle 上报 idle，状态权威因此必须被采纳，否则状态上报会被
    * setHookAuthorityAt 首行直接丢弃。它同样不在 full-lifecycle 名单里，
    * 屏幕检测继续作为兜底。
@@ -280,22 +280,22 @@ function setHook(t, source, agent, state, seq, now) {
   const custom = ['claude', 'codex', 'copilot', 'devin', 'droid', 'qodercli', 'cursor', 'grok', 'antigravity'];
 
   for (const agent of fullLifecycle) {
-    check(`10.1 ${agent} 是 full-lifecycle`, fullLifecycleHookAuthority(`herdr:${agent}`, agent), true);
-    check(`10.2 ${agent} 不是 session-only`, sessionIdentityOnlyIntegration(`herdr:${agent}`, agent), false);
+    check(`10.1 ${agent} 是 full-lifecycle`, fullLifecycleHookAuthority(`herdr-desktop:${agent}`, agent), true);
+    check(`10.2 ${agent} 不是 session-only`, sessionIdentityOnlyIntegration(`herdr-desktop:${agent}`, agent), false);
   }
   for (const agent of sessionOnly) {
-    check(`10.3 ${agent} 是 session-only`, sessionIdentityOnlyIntegration(`herdr:${agent}`, agent), true);
-    check(`10.4 ${agent} 不是 full-lifecycle`, fullLifecycleHookAuthority(`herdr:${agent}`, agent), false);
+    check(`10.3 ${agent} 是 session-only`, sessionIdentityOnlyIntegration(`herdr-desktop:${agent}`, agent), true);
+    check(`10.4 ${agent} 不是 full-lifecycle`, fullLifecycleHookAuthority(`herdr-desktop:${agent}`, agent), false);
   }
   for (const agent of custom) {
     check(`10.5 ${agent} 非 full-lifecycle 非 session-only`,
-      fullLifecycleHookAuthority(`herdr:${agent}`, agent) ||
-        sessionIdentityOnlyIntegration(`herdr:${agent}`, agent),
+      fullLifecycleHookAuthority(`herdr-desktop:${agent}`, agent) ||
+        sessionIdentityOnlyIntegration(`herdr-desktop:${agent}`, agent),
       false);
   }
-  // antigravity 的 desktop 资产标签与 herdr（herdr:antigravity_cli / agy）不同：它上报状态，
+  // antigravity 的 desktop 资产标签与 herdr（herdr-desktop:antigravity_cli / agy）不同：它上报状态，
   // 因此不在 session-only 名单里；这一条锁定「上线报状态」这个桌面端独有的决定。
-  check('10.6 antigravity 上报状态（不在 session-only）', sessionIdentityOnlyIntegration('herdr:antigravity', 'antigravity'), false);
+  check('10.6 antigravity 上报状态（不在 session-only）', sessionIdentityOnlyIntegration('herdr-desktop:antigravity', 'antigravity'), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -506,38 +506,38 @@ function setHook(t, source, agent, state, seq, now) {
 
   const t = new TerminalState('p1');
   setDetected(t, 'claude', 'idle', 1000);
-  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-orig'), null, 'startup', 2000);
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-orig'), seqFor(t, null), 3000);
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'idle', null, claudeRef('sess-orig'), seqFor(t, null), 4000);
+  t.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', claudeRef('sess-orig'), null, 'startup', 2000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, claudeRef('sess-orig'), seqFor(t, null), 3000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'idle', null, claudeRef('sess-orig'), seqFor(t, null), 4000);
 
   // /clear：SessionStart(clear) 照脚本实际行为，不带 seq
-  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-cleared'), null, 'clear', 5000);
+  t.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', claudeRef('sess-cleared'), null, 'clear', 5000);
   check('19.1 /clear 后被 hook 权威接管的会话仍是旧的', t.hookAuthority?.sessionRef?.value, 'sess-orig');
 
   // /clear 之后第一轮状态上报带新 id → 应当允许替换
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-cleared'), seqFor(t, null), 6000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, claudeRef('sess-cleared'), seqFor(t, null), 6000);
   check('19.2 状态上报可把会话引用刷新为新 id', t.hookAuthority?.sessionRef?.value, 'sess-cleared');
   check('19.3 投影出去的会话是新 id', t.currentSessionForPersistence()?.value, 'sess-cleared');
 
   // 不带 seq 的会话上报在有水位之后不能被丢弃（同一条链路的另一半）
   const t2 = new TerminalState('p1');
   setDetected(t2, 'claude', 'idle', 1000);
-  t2.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-a'), seqFor(t2, null), 2000);
-  t2.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-b'), null, 'resume', 3000);
+  t2.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, claudeRef('sess-a'), seqFor(t2, null), 2000);
+  t2.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', claudeRef('sess-b'), null, 'resume', 3000);
   check('19.4 已有水位后 SessionStart(不带 seq) 仍生效', t2.persistedAgentSession?.sessionRef?.value, 'sess-b');
 
   // 放行必须只针对「真的在切换会话」：同一会话的重复上报仍受水位约束
   const t4 = new TerminalState('p1');
   setDetected(t4, 'claude', 'idle', 1000);
-  t4.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-x'), null, 'startup', 2000);
-  t4.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, claudeRef('sess-x'), seqFor(t4, null), 3000);
-  t4.setAgentSessionRefForSessionStart('herdr:claude', 'claude', claudeRef('sess-x'), null, 'resume', 4000);
-  check('19.6 同会话重复上报不放行（仍按水位丢弃）', t4.hookReportIsNewer('herdr:claude', null), false);
+  t4.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', claudeRef('sess-x'), null, 'startup', 2000);
+  t4.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, claudeRef('sess-x'), seqFor(t4, null), 3000);
+  t4.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', claudeRef('sess-x'), null, 'resume', 4000);
+  check('19.6 同会话重复上报不放行（仍按水位丢弃）', t4.hookReportIsNewer('herdr-desktop:claude', null), false);
 
   // nextHookReportSeq 必须严格递增（同毫秒内两条上报不能被 seq 比较丢掉）
   const t3 = new TerminalState('p1');
   const s1 = t3.nextHookReportSeq(1_700_000_000_000);
-  t3.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, null, s1, 3000);
+  t3.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, null, s1, 3000);
   const s2 = t3.nextHookReportSeq(1_700_000_000_000);
   check('19.5 同毫秒补出的 seq 严格递增', s2 > s1, true);
 }
@@ -553,8 +553,8 @@ function setHook(t, source, agent, state, seq, now) {
    */
   const t = new TerminalState('p1');
   setDetected(t, 'claude', 'idle', 1000);
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, null, 100, 2000);
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'idle', null, null, 200, 3000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, null, 100, 2000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'idle', null, null, 200, 3000);
   check('20.1 一轮结束 → idle', t.state, 'idle');
 
   // 迟到的心跳：必须被丢弃
@@ -562,7 +562,7 @@ function setHook(t, source, agent, state, seq, now) {
   // 仍在工作时的心跳：不拦（它只负责刷新 TTL）
   const t2 = new TerminalState('p1');
   setDetected(t2, 'claude', 'idle', 1000);
-  t2.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, null, 100, 2000);
+  t2.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, null, 100, 2000);
   check('20.3 工作中时心跳放行', t2.isStaleHeartbeat('working', true), false);
   // 非心跳的 working（回合起点）不受影响
   check('20.4 回合起点 working 不受影响', t.isStaleHeartbeat('working', false), false);
@@ -589,15 +589,15 @@ function setHook(t, source, agent, state, seq, now) {
   // 端到端：startup(s1) → 一轮 → fork(s2) → 新会话的状态上报
   const t = new TerminalState('p1');
   setDetected(t, 'claude', 'idle', 1000);
-  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('s1'), null, 'startup', 2000);
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, r('s1'), seqFor(t, null), 3000);
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'idle', null, r('s1'), seqFor(t, null), 4000);
+  t.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', r('s1'), null, 'startup', 2000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, r('s1'), seqFor(t, null), 3000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'idle', null, r('s1'), seqFor(t, null), 4000);
 
-  t.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('s2'), null, 'fork', 5000);
+  t.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', r('s2'), null, 'fork', 5000);
   check('21.1 fork 后落库为新会话', t.persistedAgentSession?.sessionRef?.value, 's2');
 
   // fork 之后第一轮状态上报带新 id → 权威也应切过去（空 source 条目负责）
-  t.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, r('s2'), seqFor(t, null), 6000);
+  t.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, r('s2'), seqFor(t, null), 6000);
   check('21.2 fork 后权威切到新会话', t.hookAuthority?.sessionRef?.value, 's2');
   check('21.3 投影出去的会话是新 id', t.currentSessionForPersistence()?.value, 's2');
 
@@ -607,9 +607,9 @@ function setHook(t, source, agent, state, seq, now) {
    */
   const t2 = new TerminalState('p1');
   setDetected(t2, 'claude', 'idle', 1000);
-  t2.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('k1'), null, 'startup', 2000);
-  t2.setHookAuthorityAt('herdr:claude', 'claude', 'working', null, r('k1'), seqFor(t2, null), 3000);
-  t2.setAgentSessionRefForSessionStart('herdr:claude', 'claude', r('k2'), null, 'bogus-source', 4000);
+  t2.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', r('k1'), null, 'startup', 2000);
+  t2.setHookAuthorityAt('herdr-desktop:claude', 'claude', 'working', null, r('k1'), seqFor(t2, null), 3000);
+  t2.setAgentSessionRefForSessionStart('herdr-desktop:claude', 'claude', r('k2'), null, 'bogus-source', 4000);
   check('21.4 未识别/未放行的 source 不改写会话', t2.currentSessionForPersistence()?.value, 'k1');
 }
 
@@ -699,7 +699,7 @@ function setHook(t, source, agent, state, seq, now) {
   check('24.2 启动窗口内屏幕 working 不参与状态', t.state, 'unknown');
 
   // 启动期 hook 的 PreInvocation working → 同样不参与状态
-  setHook(t, 'herdr:antigravity', 'antigravity', 'working', 1, 1200);
+  setHook(t, 'herdr-desktop:antigravity', 'antigravity', 'working', 1, 1200);
   check('24.3 启动窗口内 hook working 不参与状态', t.state, 'unknown');
 
   // 初始化结束：只剩下就绪页脚（visibleIdle）→ 关窗，落到 idle
@@ -820,12 +820,12 @@ function setHook(t, source, agent, state, seq, now) {
   );
   s3.session.applyStateChange(
     s3.paneId,
-    setHook(s3.terminal, 'herdr:antigravity', 'antigravity', 'working', 1, 4000),
+    setHook(s3.terminal, 'herdr-desktop:antigravity', 'antigravity', 'working', 1, 4000),
     false,
   );
   s3.session.applyStateChange(
     s3.paneId,
-    setHook(s3.terminal, 'herdr:antigravity', 'antigravity', 'idle', 2, 6000),
+    setHook(s3.terminal, 'herdr-desktop:antigravity', 'antigravity', 'idle', 2, 6000),
     false,
   );
   const hookDone = projectionOf(s3.session, s3.paneId);

@@ -5,7 +5,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { IPC } from './ipc/protocol';
+import { IPC } from './ipc/channels';
 import type {
   HerdrDesktopApi,
   ControlMessage,
@@ -50,34 +50,34 @@ const api: HerdrDesktopApi = {
     };
   },
   getAppInfo(): Promise<{ version: string; platform: string }> {
-    return ipcRenderer.invoke('herdr:app-info');
+    return ipcRenderer.invoke('herdr-desktop:app-info');
   },
   pickDirectory(options?: { title?: string }): Promise<string | null> {
-    return ipcRenderer.invoke('herdr:pick-directory', options);
+    return ipcRenderer.invoke('herdr-desktop:pick-directory', options);
   },
   getSettings(): Promise<AppSettings> {
-    return ipcRenderer.invoke('herdr:settings');
+    return ipcRenderer.invoke('herdr-desktop:settings');
   },
   getAgentAvailability(commands: string[]): Promise<Record<string, boolean>> {
-    return ipcRenderer.invoke('herdr:agent-availability', commands);
+    return ipcRenderer.invoke('herdr-desktop:agent-availability', commands);
   },
   testProxy(url: string): Promise<ProxyTestResult> {
-    return ipcRenderer.invoke('herdr:test-proxy', url);
+    return ipcRenderer.invoke('herdr-desktop:test-proxy', url);
   },
   getHookStatuses(): Promise<Record<string, import('../shared/protocol').HookStatus>> {
-    return ipcRenderer.invoke('herdr:hook-statuses');
+    return ipcRenderer.invoke('herdr-desktop:hook-statuses');
   },
   installHook(agentId: string): Promise<import('../shared/protocol').HookStatus> {
-    return ipcRenderer.invoke('herdr:hook-install', agentId);
+    return ipcRenderer.invoke('herdr-desktop:hook-install', agentId);
   },
   uninstallHook(agentId: string): Promise<import('../shared/protocol').HookStatus> {
-    return ipcRenderer.invoke('herdr:hook-uninstall', agentId);
+    return ipcRenderer.invoke('herdr-desktop:hook-uninstall', agentId);
   },
   setIntegrationsOnboarded(onboarded: boolean): void {
     ipcRenderer.send(IPC.SET_INTEGRATIONS_ONBOARDED, { onboarded });
   },
   readClipboard(): Promise<ClipboardPayload> {
-    return ipcRenderer.invoke('herdr:read-clipboard');
+    return ipcRenderer.invoke('herdr-desktop:read-clipboard');
   },
   getPathForFile(file: File): string {
     return webUtils.getPathForFile(file);

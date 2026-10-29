@@ -18,9 +18,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-layout.mjs');
+const bundlePath = join(process.cwd(), '.tmp/layout.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-layout.mjs — run: npm run test:layout');
+  console.error('missing .tmp/layout.mjs — run: npm run test:layout');
   process.exit(2);
 }
 const { useLayoutStore, viewProjectId } = await import(pathToFileURL(bundlePath).href);

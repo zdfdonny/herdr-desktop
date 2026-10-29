@@ -171,7 +171,13 @@ function normalizeProxyUrl(value: unknown): string {
   return `http://${url}`;
 }
 
-/** proxyAgents 归一化：只保留值为 true 的键（缺省即视为关闭）。 */
+/**
+ * proxyAgents 归一化：键是 **agentId**，只保留值为 true 的条目。
+ *
+ * 键用 agentId 而不是启动命令：命令含平台分支（cursor 在 Windows 上是
+ * `cursor-agent.cmd`、macOS 上是 `cursor-agent`），用命令作键会让同一智能体
+ * 在两平台互不承认，且改命令会静默丢掉开关。
+ */
 function normalizeProxyAgents(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const result: Record<string, boolean> = {};

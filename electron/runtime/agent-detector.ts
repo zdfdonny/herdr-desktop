@@ -5,8 +5,8 @@
  * 使用 shared/detect-manifest 的声明式规则。
  */
 
-import { detectWithSignals, detectAgentName, detectSessionId, parseAgentLabel } from '../../shared/detect-manifest';
-import { ScreenBuffer } from '../../shared/screen-buffer';
+import { detectWithSignals, detectAgentName, detectSessionId, parseAgentLabel } from '../../shared/detect/facade';
+import { ScreenBuffer } from '../../shared/detect/screen-buffer';
 import type { DetectedState } from '../../shared/state';
 
 export interface DetectionResult {

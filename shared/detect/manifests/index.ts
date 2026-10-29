@@ -8,7 +8,7 @@
  * manifest（它们是 full-lifecycle hook 权威，状态由 hook 提供，屏幕走通用兜底）。
  */
 
-import type { AgentManifest } from '../engine';
+import { validateManifestRegions, type AgentManifest } from '../engine';
 import { ampManifest } from './amp';
 import { antigravityManifest } from './antigravity';
 import { claudeManifest } from './claude';
@@ -57,3 +57,24 @@ export const MANIFESTS: Record<string, AgentManifest> = {
   qodercli: qodercliManifest,
   qwen: qwenManifest,
 };
+
+/*
+ * 加载期校验由 `validateAllManifests()` 完成，**不在这里自动跑**。
+ *
+ * 原因：部分 manifest 使用智能体私有的 region（如 codex 的
+ * `after_last_prompt_marker`），这些解析器声明在各自的 descriptor 里。
+ * 本模块只掌握 manifest，拿不到 extraRegions，贸然校验会误报。
+ *
+ * 真正的完整校验在 `shared/detect/facade.ts`（那里能按 agent 取到 descriptor），
+ * 由它遍历全部 manifest + 各自的 extraRegions 调 `validateManifestRegions`。
+ */
+export function validateAllManifests(
+  extraRegionsFor?: (agentId: string) => Record<string, unknown> | undefined,
+): void {
+  for (const [agentId, manifest] of Object.entries(MANIFESTS)) {
+    validateManifestRegions(
+      manifest,
+      extraRegionsFor?.(agentId) as Parameters<typeof validateManifestRegions>[1],
+    );
+  }
+}

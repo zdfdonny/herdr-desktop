@@ -23,13 +23,11 @@ import type {
   AgentStatus,
   DetectedState,
 } from '../../shared/state';
-import { paneAgentStatus, isCompletionTransition } from '../../shared/agent-status';
-import { TerminalState, type TerminalStateMutation } from './terminal-state';
-
-/** Web agent 的默认展示标签。 */
-const WEB_AGENT_LABEL = 'DeepSeek Harness';
-/** Web agent 的识别名（与 detect-manifest 中的 agent 名一致）。 */
-const WEB_AGENT_NAME = 'dsh';
+import { paneAgentStatus, isCompletionTransition } from '../../shared/agents/status';
+import type { AgentDescriptor } from '../../shared/agents/descriptor';
+import type { HostEnv } from '../../shared/agents/spec/host';
+import { agentById, resolveWebAgent } from '../../shared/agents/registry';
+import { TerminalState, type TerminalStateMutation } from './terminal/terminal-state';
 
 let projectCounter = 0;
 let paneCounter = 0;
@@ -144,6 +142,8 @@ export class Session {
       label: params.label ?? params.command,
       cwd: params.cwd ?? project.path,
       focused: true,
+      // 声明身份：创建时记一次，此后策略查询都以此为准（不再靠命令名反推）。
+      agentId: params.agentId ?? null,
       command: params.command,
       args: params.args ?? [],
       running: true,
@@ -173,20 +173,38 @@ export class Session {
    * 因此 TerminalState 的 fallback 直接置 idle；启动命令固定为 `dsh web` 供恢复重放。
    * 项目不存在时抛错（与 createAgent 一致）。
    */
-  createWebAgent(params: SpawnWebAgentParams): PaneState {
+  /**
+   * 在指定项目内创建一个 **web 型**智能体的 pane。
+   *
+   * web 只是宿主形态（内嵌 Web GUI），不是某个具体智能体：具体是哪一个由
+   * `params.agentId`（缺省时取注册表里唯一的 web 型）决定，启动命令与展示名
+   * 都从 descriptor 派生 —— 不要在这里写死成 dsh。
+   *
+   * 与 createAgent（PTY）不同：web agent 没有终端可检测，
+   * 因此 TerminalState 的 fallback 直接置 idle。
+   * 项目不存在或不是 web 型智能体时抛错。
+   */
+  createWebAgent(params: SpawnWebAgentParams, host: HostEnv): PaneState {
     const project = this.projects.get(params.projectId);
     if (!project) {
       throw new Error(`project ${params.projectId} does not exist`);
+    }
+    const agent = resolveWebAgent(params.agentId);
+    if (!agent) {
+      throw new Error(`no web-type agent for ${params.agentId ?? '(default)'}`);
     }
 
     const paneId = nextId('pane');
     const pane: PaneState = {
       paneId,
       projectId: project.projectId,
-      label: params.label ?? WEB_AGENT_LABEL,
+      label: params.label ?? agent.label,
       cwd: project.path,
       focused: true,
-      command: 'dsh web',
+      // 声明身份来自 descriptor（`kind: 'web'` 只说明传输形态）。
+      agentId: agent.id,
+      // 记录完整启动命令（含 launchArgs），供会话恢复重放。
+      command: [agent.command(host), ...(agent.launchArgs ?? [])].join(' '),
       args: [],
       running: true,
       kind: 'web',
@@ -201,7 +219,7 @@ export class Session {
     this.terminals.set(paneId, terminal);
     this.seen.set(paneId, true);
     this.meta.set(paneId, {
-      name: WEB_AGENT_NAME,
+      name: agent.id,
       title: null,
       label: params.label ?? null,
       createdAt: Date.now(),
@@ -269,6 +287,24 @@ export class Session {
   /** 读取 pane 的终端状态机（不存在返回 undefined）。 */
   getTerminal(paneId: string): TerminalState | undefined {
     return this.terminals.get(paneId);
+  }
+
+  /**
+   * 该 pane 的**有效智能体身份**。
+   *
+   * 分成两层，顺序不可颠倒：
+   * 1. `pane.agentId` —— **声明身份**，创建时由用户选择记录，权威来源；
+   * 2. `terminal.detectedAgent` —— **观测身份**，屏幕/命令/hook 推断的结果。
+   *
+   * 第二层只在第一层缺失时启用：纯终端 pane（用户自己敲 `claude`）没有声明身份，
+   * 但跑起来之后观测得到；而声明了身份的 pane 不该被观测结果改写
+   * （TUI 不一定打印品牌名，opencode / antigravity 尤其不可靠）。
+   */
+  agentForPane(paneId: string): AgentDescriptor | null {
+    const pane = this.panes.get(paneId);
+    const declared = agentById(pane?.agentId);
+    if (declared) return declared;
+    return agentById(this.terminals.get(paneId)?.detectedAgent);
   }
 
   /** 该 pane 是否当前聚焦（用于 done/seen 判定）。 */
@@ -570,6 +606,15 @@ export class Session {
  *
  * 旧版本 / 手改过的 session.json 可能缺字段或 kind 非法；
  * 恢复时只保留结构合法的引用，来源合法性留到恢复计划生成时再判。
+ */
+/**
+ * 归一化持久化的会话引用（对应 herdr `session_ref_from_snapshot` 的前置校验）。
+ *
+ * 旧版本 / 手改过的 session.json 可能缺字段或 kind 非法；
+ * 恢复时只保留结构合法的引用，来源合法性留到恢复计划生成时再判。
+ *
+ * `source` 必须使用当前命名空间（`herdr-desktop:<agent>`）；不是官方来源的引用会被
+ * 恢复侧拒绝，这里只做结构校验。
  */
 function normalizePaneAgentSession(
   session: PaneAgentSession | null | undefined,

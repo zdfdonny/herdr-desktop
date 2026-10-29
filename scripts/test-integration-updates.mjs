@@ -19,9 +19,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const bundlePath = join(process.cwd(), '.tmp-integration-updates.mjs');
+const bundlePath = join(process.cwd(), '.tmp/integration-updates.mjs');
 if (!existsSync(bundlePath)) {
-  console.error('missing .tmp-integration-updates.mjs — run: npm run test:integrations');
+  console.error('missing .tmp/integration-updates.mjs — run: npm run test:integrations');
   process.exit(2);
 }
 const { countIntegrationUpdates, installableAgentIds } = await import(pathToFileURL(bundlePath).href);
