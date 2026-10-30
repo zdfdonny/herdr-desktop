@@ -42,7 +42,7 @@ export const dsh: AgentDescriptor = {
 
   integration: {
     kind: 'web-plugin',
-    version: 5,
+    version: 6,
     configDir: (host) => dshHome(host),
     artifactPath: (host) => joinPath(host, dshHome(host), 'plugins', DSH_STATUS_PLUGIN_NAME),
   },

@@ -270,7 +270,7 @@ console.log('— 7. 集成版本（与资产标记的一致性由 test:integrati
 const EXPECTED_VERSIONS = {
   claude: 5, codex: 4, kimi: 4, copilot: 4, devin: 4, droid: 4, qodercli: 4, qwen: 4,
   letta: 4, cursor: 4, mastracode: 4, antigravity: 6, grok: 4, pi: 4, omp: 5,
-  opencode: 5, kilo: 4, hermes: 3, dsh: 5,
+  opencode: 5, kilo: 4, hermes: 3, dsh: 6,
 };
 for (const [id, version] of Object.entries(EXPECTED_VERSIONS)) {
   check(`${id} 集成版本 = ${version}`, agentById(id)?.integration?.version === version,

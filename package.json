@@ -59,6 +59,7 @@
     "test:integration-version": "node scripts/test-integration-version.mjs",
     "test:pane-service": "esbuild scripts/test-pane-service.entry.mjs --bundle --platform=node --format=esm --outfile=.tmp/pane-service.mjs && node scripts/test-pane-service.mjs",
     "test:dsh-binding": "esbuild scripts/test-dsh-binding.entry.mjs --bundle --platform=node --format=esm --outfile=.tmp/dsh-binding.mjs && node scripts/test-dsh-binding.mjs",
+    "test:dsh-plugin": "node scripts/test-dsh-plugin.mjs",
     "test:state-arbiter": "esbuild scripts/test-state-arbiter.entry.mjs --bundle --platform=node --format=esm --outfile=.tmp/state-arbiter.mjs && node scripts/test-state-arbiter.mjs",
     "test:agent-runtime": "esbuild scripts/test-agent-runtime.entry.mjs --bundle --platform=node --format=esm --outfile=.tmp/agent-runtime.mjs && node scripts/test-agent-runtime.mjs",
     "test:arbitration": "esbuild scripts/test-arbitration.entry.mjs --bundle --platform=node --format=esm --outfile=.tmp/arbitration.mjs && node scripts/test-arbitration.mjs",

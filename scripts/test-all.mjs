@@ -37,6 +37,7 @@ const STEPS = [
   { name: 'test:detect-engine', group: 'main' },
   { name: 'test:pane-service', group: 'main' },
   { name: 'test:dsh-binding', group: 'main' },
+  { name: 'test:dsh-plugin', group: 'main' },
   { name: 'test:notification-scheduler', group: 'main' },
   { name: 'test:agent-runtime', group: 'main' },
   { name: 'test:installer-snapshots', group: 'main' },

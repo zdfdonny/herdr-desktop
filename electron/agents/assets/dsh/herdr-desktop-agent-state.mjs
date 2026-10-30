@@ -1,5 +1,5 @@
 // HERDR_DESKTOP_INTEGRATION_ID=herdr-desktop
-// HERDR_DESKTOP_INTEGRATION_VERSION=5
+// HERDR_DESKTOP_INTEGRATION_VERSION=6
 // Self-contained DeepSeek Harness plugin.
 //
 // Responsibilities (active only when launched by herdr-desktop, i.e. when
@@ -44,13 +44,26 @@ export function apply(ctx) {
   // sessionId -> cwd: attribute sessionId-keyed events back to their project.
   const sessionCwd = new Map()
 
-  // sessionId -> { running, blocked, askUserCallId, turnEndKind, cwd }
+  // sessionId -> { running, blocked, askUserCallId, turnEndKind, cwd, subagent, parentSession }
   // Per-session state (not project-level aggregation).
   // `blocked` covers two cases: permission approval (approval/asked) and the
   // ask_user_question tool waiting for the user's answer.
   // `turnEndKind` records the last turn's end reason, to distinguish a normal
   // completion from a manual stop.
+  // `subagent` marks a child Session (origin "subagent" / has a parentSession):
+  // children run concurrently with their parent and must never drive the pane's
+  // state on their own (see rootSessionOf / childAggregateFor).
   const sessionState = new Map()
+
+  /*
+   * sessionId -> parent Session id (only for child Sessions).
+   *
+   * Kept separately from `sessionState` and **not** pruned on disposal: root
+   * resolution must still work for a grandchild whose intermediate parent was
+   * already disposed (delegationDepth > 1). Entries are two short strings per
+   * Session the process ever created, so growth stays negligible.
+   */
+  const parentOf = new Map()
 
   // Monotonic report sequence.
   let seq = 0
@@ -64,29 +77,118 @@ export function apply(ctx) {
     return null
   }
 
-  function ensureSessionState(sessionId, cwd) {
+  /**
+   * Whether this Session is a subagent (child) Session.
+   *
+   * A child Session runs while its parent is still working, so its own
+   * running -> idle transition says nothing about the pane: reporting it would
+   * mark the pane completed in the middle of the parent's turn.
+   */
+  function isSubagentSession(session) {
+    const header = session && session.header
+    if (!header) return false
+    if (header.origin === 'subagent') return true
+    return typeof header.parentSession === 'string' && header.parentSession.length > 0
+  }
+
+  /** Parent Session id declared by a child Session (null for roots). */
+  function parentOfSession(session) {
+    const header = session && session.header
+    if (!header || typeof header.parentSession !== 'string') return null
+    return header.parentSession.length > 0 ? header.parentSession : null
+  }
+
+  /**
+   * The root Session a (possibly child) Session belongs to.
+   *
+   * Walks the parent links recorded from Session headers. Cycles and dangling
+   * parents fall back to the last id reached, so a corrupt record can never
+   * make reporting recurse forever.
+   */
+  function rootSessionOf(sessionId) {
+    const seen = new Set()
+    let id = sessionId
+    for (;;) {
+      if (seen.has(id)) return id
+      seen.add(id)
+      const parent = parentOf.get(id)
+      if (!parent || parent === id) return id
+      id = parent
+    }
+  }
+
+  /** First blocked message among the root's child Sessions (null when none). */
+  function childBlockerFor(rootId) {
+    for (const [id, st] of sessionState) {
+      if (!st.subagent || !st.blocked) continue
+      if (rootSessionOf(id) === rootId) return st.blocked
+    }
+    return null
+  }
+
+  /** Whether any of the root's child Sessions is still running. */
+  function childRunningFor(rootId) {
+    for (const [id, st] of sessionState) {
+      if (!st.subagent || !st.running) continue
+      if (rootSessionOf(id) === rootId) return true
+    }
+    return false
+  }
+
+  function ensureSessionState(sessionId, cwd, session) {
     let st = sessionState.get(sessionId)
     if (!st) {
-      st = { running: false, blocked: null, askUserCallId: null, turnEndKind: null, cwd }
+      st = {
+        running: false,
+        blocked: null,
+        askUserCallId: null,
+        turnEndKind: null,
+        cwd,
+        subagent: isSubagentSession(session),
+      }
       sessionState.set(sessionId, st)
     }
+    // Record the parent link once, as soon as a header tells us about it.
+    const parent = parentOfSession(session)
+    if (parent && !parentOf.has(sessionId)) parentOf.set(sessionId, parent)
     return st
   }
 
-  /** Per-session state: blocked > working > idle. */
-  function stateForSession(st) {
+  /**
+   * Per-session state: blocked > working > idle.
+   *
+   * Aggregates the root's child Sessions so a pane never looks idle (done)
+   * while a subagent it spawned is still running, and a child waiting for
+   * permission still surfaces as blocked on the pane showing the parent.
+   */
+  function stateForSession(st, sessionId) {
     if (st.blocked) return { state: 'blocked', message: st.blocked }
-    if (st.running) return { state: 'working', message: null }
+    const childBlocked = childBlockerFor(sessionId)
+    if (childBlocked) return { state: 'blocked', message: childBlocked }
+    if (st.running || childRunningFor(sessionId)) return { state: 'working', message: null }
     return { state: 'idle', message: null }
   }
 
-  /** Broadcast one session's state to the project's panes (fallback routing). */
+  /**
+   * Broadcast one session's state to the project's panes (fallback routing).
+   *
+   * Child Sessions are redirected to their root: a pane displays the root
+   * Session, so only the root may name the reported `sessionId`. Reporting a
+   * child under its own id would give Main an unbound session id, which falls
+   * back to the transport pane and overwrites the pane's state with the child's
+   * (a finished subagent would mark the pane completed).
+   */
   function reportForSession(sessionId, replay) {
+    if (!sessionState.has(sessionId)) return
+    const rootId = rootSessionOf(sessionId)
+    if (rootId !== sessionId) {
+      reportForSession(rootId, replay)
+      return
+    }
     const st = sessionState.get(sessionId)
-    if (!st) return
     const paneIds = cwdToPaneIds.get(st.cwd)
     if (!paneIds || paneIds.size === 0) return
-    const agg = stateForSession(st)
+    const agg = stateForSession(st, sessionId)
     const seqNow = ++seq
     for (const paneId of paneIds) {
       const body = {
@@ -154,7 +256,7 @@ export function apply(ctx) {
     const cwd = cwdOfSession(session)
     if (!cwd) return
     sessionCwd.set(session.id, cwd)
-    ensureSessionState(session.id, cwd)
+    ensureSessionState(session.id, cwd, session)
     // Deliberately do NOT register the workspace here: this fires for every
     // session (including subagent/fork sessions), and registering their cwd
     // would pollute the workspace list with subdirectories. Workspace
@@ -169,9 +271,17 @@ export function apply(ctx) {
       sessionState.delete(session.id)
       return
     }
+    // Resolve the root before dropping the record: a disposed child must
+    // re-report its parent's aggregate (it may have been the running/blocked
+    // child), while a disposed root reports idle so panes fall back to idle.
+    const rootId = rootSessionOf(session.id)
+    const isChild = parentOf.has(session.id) || (st !== undefined && st.subagent)
     sessionCwd.delete(session.id)
     sessionState.delete(session.id)
-    // Report idle so any pane still showing this session falls back to idle.
+    if (isChild && rootId !== session.id && sessionState.has(rootId)) {
+      reportForSession(rootId)
+      return
+    }
     reportIdle(cwd, session.id)
   }, { global: true })
 
@@ -195,7 +305,7 @@ export function apply(ctx) {
       if (cwd) sessionCwd.set(session.id, cwd)
     }
     if (!cwd) return
-    const st = ensureSessionState(session.id, cwd)
+    const st = ensureSessionState(session.id, cwd, session)
     const data = event.data || {}
     if (event.type === 'approval/asked') {
       st.blocked = data.reason || data.toolName || 'approval'
