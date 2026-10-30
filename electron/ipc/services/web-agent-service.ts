@@ -26,8 +26,8 @@ export interface WebAgentHost extends PaneErrorSink {
   pushSnapshot(): void;
   /** 广播一条消息给所有窗口。 */
   broadcast(message: MainToRendererMessage): void;
-  /** 按智能体 id 构造环境变量（含代理开关；键用 agentId，非启动命令）。 */
-  launchEnvFor(agentId: string | null): Record<string, string>;
+  /** 按代理开关键构造环境变量（键是 agentId 或普通终端的预设 id，非启动命令）。 */
+  launchEnvFor(proxyKey: string | null, paneId?: string): Record<string, string>;
   /** 注入 herdr-desktop 标记环境变量，让智能体侧插件认得出是本应用拉起的。 */
   injectHookEnv(env: Record<string, string>, paneId: string, command: string): void;
   /** 关闭 pane（共享进程崩溃时收尾用）。 */
@@ -83,8 +83,8 @@ export class WebAgentService {
     // 新建 vs 恢复/重启：新建需要新会话，恢复/重启需要恢复该 pane 上次的会话。
     const restore = this.reviving.has(paneId);
 
-    // 代理开关以 agentId 为键（settings.proxyAgents）。
-    const env = this.host.launchEnvFor(agent.id);
+    // 代理开关以 agentId 为键（settings.proxyAgents），并带上 paneId 写诊断日志。
+    const env = this.host.launchEnvFor(agent.id, paneId);
     this.host.injectHookEnv(env, paneId, agent.command(hostEnv()));
     // 显式带项目目录，插件用它注册工作区（不依赖 process.cwd()，防进程 chdir）。
     if (pane.cwd) env.HERDR_DESKTOP_CWD = pane.cwd;

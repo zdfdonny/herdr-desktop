@@ -27,6 +27,7 @@ import type { SettingsStore } from '../../runtime/settings';
 import type { ReportServer } from '../../runtime/report-server';
 import type { AddProjectParams, PaneState, SpawnAgentParams } from '../../../shared/state';
 import { agentById } from '../../../shared/agents/registry';
+import { TERMINAL_PRESET_ID } from '../../../shared/agents/agent-id';
 import { parseAgentLabel } from '../../../shared/detect/facade';
 import { resolveLaunchEnv } from '../../platform';
 import * as agentResume from '../../runtime/agent-resume';
@@ -47,6 +48,13 @@ export interface PaneLifecycleHost extends PaneErrorSink {
   tryReviveWeb(paneId: string, force?: boolean): boolean;
   /** 通知插件移除 web pane 的广播条目（委托给 WebAgentService）。 */
   unregisterWorkspace(port: number, cwd: string, paneId: string): void;
+  /**
+   * 写一行诊断日志（可选）。
+   *
+   * 用回调注入而不是直接 import `support/logger`：那个模块依赖 electron 的 `app`，
+   * 直接引入会让本服务无法脱离 Electron 打包测试（test:pane-service）。
+   */
+  log?(tag: string, message: string): void;
 }
 
 export class PaneLifecycleService {
@@ -144,7 +152,7 @@ export class PaneLifecycleService {
     const size = this.pendingSizes.get(paneId);
     this.pendingSizes.delete(paneId);
 
-    const env = this.launchEnvFor(params.agentId ?? null);
+    const env = this.launchEnvFor(this.proxyKeyFor(params.agentId, params.command), paneId);
     this.injectHookEnv(env, paneId, params.command);
     const result = this.pty.spawn(paneId, params, env, pane.cwd ?? undefined, size);
 
@@ -308,6 +316,9 @@ export class PaneLifecycleService {
     const resumeParams = resume !== undefined ? resume : this.resumeParamsFor(pane);
     const params = resumeParams ?? {
       projectId: pane.projectId,
+      // 声明身份必须带上：代理注入（launchEnvFor）按 agentId 查开关，
+      // 而这条路径是按 pane 现拼参数，agentId 不会自己出现。
+      agentId: this.agentIdForPane(pane),
       command: pane.command,
       args: pane.args ?? [],
       cwd: pane.cwd ?? undefined,
@@ -344,6 +355,9 @@ export class PaneLifecycleService {
 
     return {
       projectId: pane.projectId,
+      // 恢复参数重新拼了命令（`claude --resume <id>`），但同样必须带上声明身份：
+      // 代理开关、集成状态、策略查询都按 agentId 查，丢了它重启后这些全部退回默认。
+      agentId: this.agentIdForPane(pane),
       command: plan.argv[0],
       args: plan.argv.slice(1),
       cwd: pane.cwd ?? undefined,
@@ -351,27 +365,81 @@ export class PaneLifecycleService {
     };
   }
 
+  /**
+   * 该 pane 的声明智能体 id（`SpawnAgentParams.agentId` 的来源）。
+   *
+   * 优先用 pane 上记录的声明身份；旧快照没有 `agentId` 时退回运行期观测到的身份，
+   * 再退回启动命令首 token 的别名归一 —— 代理开关是用户可见的功能，不能因为一次
+   * 持久化字段缺失就静默失效。
+   */
+  private agentIdForPane(pane: PaneState): SpawnAgentParams['agentId'] {
+    const declared = agentById(pane.agentId);
+    if (declared) return declared.id as SpawnAgentParams['agentId'];
+    const observed = agentById(this.session.getTerminal(pane.paneId)?.detectedAgent ?? null);
+    if (observed) return observed.id as SpawnAgentParams['agentId'];
+    const command = pane.command?.trim().split(/\s+/)[0];
+    const normalized = command ? parseAgentLabel(command) : null;
+    return (normalized ?? null) as SpawnAgentParams['agentId'];
+  }
+
+  /**
+   * 代理开关的键（`settings.proxyAgents` 的 key）。
+   *
+   * 设置页按 `AGENT_PRESETS` 逐个列开关，其中包含**普通终端**（它不是智能体，
+   * `SpawnAgentParams.agentId` 为 null）。若只按 agentId 查，终端那一档永远查不到键，
+   * 用户开了开关也不生效。
+   *
+   * 因此这里把「开关键」显式建模：能解析出智能体就用它的 canonical id，
+   * 否则回落 `TERMINAL_PRESET_ID` —— 与渲染端写键的口径一致。
+   */
+  private proxyKeyFor(agentId: string | null | undefined, command: string | null | undefined): string {
+    const declared = agentById(agentId);
+    if (declared) return declared.id;
+    const head = command?.trim().split(/\s+/)[0];
+    const resolved = head ? parseAgentLabel(head) : null;
+    return resolved ?? TERMINAL_PRESET_ID;
+  }
+
   // -------------------------------------------------------- 环境变量
 
   /**
-   * 组装启动 agent 子进程的环境变量。
+   * 组装启动子进程的环境变量。
    *
-   * 在平台基础环境之上，按设置注入代理：代理地址已配置且该**智能体**在
+   * 在平台基础环境之上，按设置注入代理：代理地址已配置且该**关键词**在
    * proxyAgents 中被开启时，注入 HTTP_PROXY / HTTPS_PROXY（大小写各一份）与
    * ALL_PROXY，并把本地回环地址排除在代理之外。注入发生在进程启动时 ——
-   * 运行中的 agent 不受后续设置变更影响，需要生效时重启该 agent。
+   * 运行中的 agent 不受后续设置变更影响，需要生效时重启该 pane。
+   *
+   * @param proxyKey `proxyKeyFor()` 算出的开关键（智能体 id，或普通终端的预设 id）。
+   * @param paneId 给出时写一行诊断日志，说明「按哪个键查、最终注入没注入」。
    */
-  launchEnvFor(agentId: string | null): Record<string, string> {
+  launchEnvFor(proxyKey: string | null, paneId?: string): Record<string, string> {
     const env = resolveLaunchEnv().env;
     const settings = this.settings.get();
     const proxyUrl = settings.proxyUrl.trim();
     /*
-     * 用 agentId 而不是启动命令作键：命令含平台分支（cursor 在 Windows 上是
+     * 用智能体 id 而不是启动命令作键：命令含平台分支（cursor 在 Windows 上是
      * `cursor-agent.cmd`、macOS 上是 `cursor-agent`），用命令会让同一智能体在
      * 两个平台互不承认，且改命令会静默丢掉用户开关（见附录 D #19）。
      */
-    if (!proxyUrl || !agentId || settings.proxyAgents[agentId] !== true) {
+    if (!proxyUrl || !proxyKey || settings.proxyAgents[proxyKey] !== true) {
+      /*
+       * 诊断日志：只记「键 + 结论」，不记代理地址（可能含凭据）。
+       *
+       * 代理只在 spawn 时注入，出了问题只能事后排查；没有这行日志时
+       * 「没注入」和「注入了但代理不通」在日志里完全无法区分。
+       *
+       * `reason` 只保留两种可达取值：调用方总会给出 key（智能体 id 或
+       * TERMINAL_PRESET_ID），因此不设永远走不到的 no-key 分支。
+       */
+      if (paneId) {
+        const reason = !proxyUrl ? 'no-url' : 'agent-off';
+        this.host.log?.('proxy', `pane=${paneId} key=${proxyKey ?? '-'} injected=false reason=${reason}`);
+      }
       return env;
+    }
+    if (paneId) {
+      this.host.log?.('proxy', `pane=${paneId} key=${proxyKey} injected=true`);
     }
     const noProxy = 'localhost,127.0.0.1,::1';
     return {

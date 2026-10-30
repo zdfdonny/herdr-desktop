@@ -24,7 +24,7 @@ function check(name, condition, detail = '') {
 
 /** 造一个最小可用的服务：只测不依赖真实协作者的路径。 */
 function makeService(overrides = {}) {
-  const calls = { snapshot: 0, error: [], broadcast: [], bindDsh: [], reviveWeb: [] };
+  const calls = { snapshot: 0, error: [], broadcast: [], bindDsh: [], reviveWeb: [], logs: [] };
   const panes = {};
   const session = {
     getPane: (id) => panes[id] ?? null,
@@ -47,6 +47,7 @@ function makeService(overrides = {}) {
     bindDshSession: (paneId, sid) => { calls.bindDsh.push([paneId, sid]); },
     tryReviveWeb: () => { calls.reviveWeb.push(1); return false; },
     unregisterWorkspace: () => {},
+    log: (tag, message) => { calls.logs.push(`${tag}: ${message}`); },
   };
   const service = new PaneLifecycleService(
     session, pty, web, settings, reportServer, reviving, host,
@@ -176,6 +177,172 @@ console.log('— 9. RevivingPanes 语义 —');
   check('delete 后清空', r.has('p1') === false && r.size === 0);
   r.delete('p1');
   check('重复 delete 安全', r.size === 0);
+}
+
+/*
+ * 重启 / 恢复路径必须保留声明身份，否则代理注入失效。
+ *
+ * 回归背景：代理开关从「按启动命令」改成「按 agentId」之后，`tryRevive` 与
+ * `resumeParamsFor` 重新拼的 SpawnAgentParams 忘了带 agentId，`launchEnvFor(null)`
+ * 于是恒不注入 —— 新建 pane 有代理、重启后就没有，表现为「代理功能失效」。
+ */
+console.log('— 10. 重启路径保留 agentId，代理注入不丢 —');
+{
+  /** 捕获 pty.spawn 收到的 env，验证代理变量是否注入。 */
+  const makeProxyWorld = (proxyAgents) => {
+    const world = makeService();
+    const spawned = [];
+    world.pty.spawn = (_paneId, _params, env) => {
+      spawned.push(env);
+      return { ok: true };
+    };
+    world.service.settings = {
+      get: () => ({ proxyUrl: 'http://127.0.0.1:10808', proxyAgents }),
+    };
+    return { ...world, spawned };
+  };
+
+  // 新建 pane：pendingSpawns 里存着原始 params（带 agentId），代理应注入
+  {
+    const { service, panes, spawned } = makeProxyWorld({ claude: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'claude', args: [],
+      running: false, agentId: 'claude',
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    check('重启：开启代理的智能体拿到 HTTP_PROXY',
+      spawned[0] && spawned[0].HTTP_PROXY === 'http://127.0.0.1:10808');
+  }
+
+  // 未开启代理的智能体不应注入
+  {
+    const { service, panes, spawned } = makeProxyWorld({ claude: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'codex', args: [],
+      running: false, agentId: 'codex',
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    check('重启：未开启代理的智能体不注入 HTTP_PROXY',
+      spawned[0] && spawned[0].HTTP_PROXY === undefined);
+  }
+
+  // 旧快照没有 agentId：回退到命令名归一，代理仍应生效
+  {
+    const { service, panes, spawned } = makeProxyWorld({ claude: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'claude', args: [],
+      running: false,
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    check('重启：缺 agentId 时按命令回退，代理仍注入',
+      spawned[0] && spawned[0].HTTP_PROXY === 'http://127.0.0.1:10808');
+  }
+
+  // 恢复参数路径（claude --resume）同样要带 agentId
+  {
+    const { service, panes, spawned, session } = makeProxyWorld({ claude: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'claude', args: [],
+      running: false, agentId: 'claude',
+    };
+    session.getTerminal = () => ({
+      currentSessionForPersistence: () => ({
+        source: 'herdr-desktop:claude', agent: 'claude', kind: 'id', value: 'sess-1',
+      }),
+      detectedAgent: null,
+    });
+    const params = service.resumeParamsFor(panes.p1);
+    // 用 pane 自己的声明身份做期望值，避免在测试里写死某个 agent id
+    // （check:agent-boundaries 会把它当成业务侧的 agent 特例分支）。
+    check('resumeParamsFor 带上 pane 的声明 agentId',
+      params !== null && params.agentId === panes.p1.agentId);
+    check('resumeParamsFor 生成恢复参数',
+      params && params.args.includes('--resume') && params.args.includes('sess-1'));
+  }
+
+  /*
+   * 普通终端：它不是智能体（`SpawnAgentParams.agentId` 为 null），但设置页照样给它
+   * 一个代理开关，键是 `TERMINAL_PRESET_ID`。只按 agentId 查会导致「开了也不生效」，
+   * 这正是「代理功能失效」的一部分。
+   */
+  {
+    const { service, panes, spawned } = makeProxyWorld({ terminal: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'powershell.exe', args: [],
+      running: false, agentId: null,
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    check('重启：普通终端按 terminal 键注入代理',
+      spawned[0] && spawned[0].HTTP_PROXY === 'http://127.0.0.1:10808');
+  }
+
+  // 终端开关关闭时不注入
+  {
+    const { service, panes, spawned } = makeProxyWorld({ claude: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'powershell.exe', args: [],
+      running: false, agentId: null,
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    check('重启：只开了 claude 时终端不注入代理',
+      spawned[0] && spawned[0].HTTP_PROXY === undefined);
+  }
+
+  /*
+   * 诊断日志：代理只在 spawn 时注入，出问题只能事后查日志。没有这行日志时
+   * 「没注入」与「注入了但代理不通」无法区分，所以它是可排障性的一部分。
+   * 日志不得包含代理地址（可能含凭据）。
+   */
+  {
+    const { service, panes, calls } = makeProxyWorld({ claude: true });
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'claude', args: [],
+      running: false, agentId: 'claude',
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    const line = calls.logs.find((l) => l.startsWith('proxy:'));
+    check('诊断日志：注入成功时记录 pane 与键',
+      line !== undefined && line.includes('pane=p1') && line.includes('key=claude') &&
+        line.includes('injected=true'));
+    check('诊断日志：不含代理地址（避免凭据入日志）',
+      line !== undefined && !line.includes('10808'));
+  }
+
+  // 未开启时日志要给出原因，便于判断是「没配地址」还是「开关没开」
+  {
+    const { service, panes, calls } = makeProxyWorld({});
+    panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'claude', args: [],
+      running: false, agentId: 'claude',
+    };
+    service.tryRevive('p1');
+    service.attach('p1');
+    const line = calls.logs.find((l) => l.startsWith('proxy:'));
+    check('诊断日志：未开启时记录 reason=agent-off',
+      line !== undefined && line.includes('injected=false') && line.includes('reason=agent-off'));
+  }
+
+  // 没有配置代理地址时，原因是 no-url
+  {
+    const world = makeService();
+    world.pty.spawn = () => ({ ok: true });
+    world.service.settings = { get: () => ({ proxyUrl: '', proxyAgents: { claude: true } }) };
+    world.panes.p1 = {
+      paneId: 'p1', projectId: 'proj', command: 'claude', args: [],
+      running: false, agentId: 'claude',
+    };
+    world.service.tryRevive('p1');
+    world.service.attach('p1');
+    const line = world.calls.logs.find((l) => l.startsWith('proxy:'));
+    check('诊断日志：未配置地址时记录 reason=no-url',
+      line !== undefined && line.includes('reason=no-url'));
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

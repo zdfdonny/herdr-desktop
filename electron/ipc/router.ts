@@ -16,6 +16,7 @@ import { resolveWebAgent } from '../../shared/agents/registry';
 import { hostEnv } from '../support/host-env';
 import { loadState, flushState } from '../runtime/persist';
 import { ReportServer } from '../runtime/report-server';
+import { logLine } from '../support/logger';
 
 import { hookStatuses, installHook, uninstallHook } from '../integration';
 import { DshSessionBinding } from './services/dsh-session-binding';
@@ -150,7 +151,7 @@ export class IpcRouter {
       pushError: (titleKey, titleVars, extra) => this.pushError(titleKey, titleVars, extra),
       pushSnapshot: () => this.pushSnapshot(),
       broadcast: (message) => this.broadcast(message),
-      launchEnvFor: (agentId) => this.launchEnvFor(agentId),
+      launchEnvFor: (proxyKey, paneId) => this.launchEnvFor(proxyKey, paneId),
       injectHookEnv: (env, paneId, command) => this.injectHookEnv(env, paneId, command),
       closePane: (paneId) => this.closePane(paneId),
     });
@@ -173,6 +174,7 @@ export class IpcRouter {
         tryReviveWeb: (paneId, force) => this.tryReviveWeb(paneId, force),
         unregisterWorkspace: (port, cwd, paneId) =>
           this.webService.unregisterWorkspace(port, cwd, paneId),
+        log: (tag, message) => logLine(tag, message),
       },
     );
 
@@ -483,8 +485,8 @@ export class IpcRouter {
     this.paneService.attach(paneId);
   }
 
-  private launchEnvFor(agentId: string | null): Record<string, string> {
-    return this.paneService.launchEnvFor(agentId);
+  private launchEnvFor(proxyKey: string | null, paneId?: string): Record<string, string> {
+    return this.paneService.launchEnvFor(proxyKey, paneId);
   }
 
   private injectHookEnv(env: Record<string, string>, paneId: string, command: string): void {
