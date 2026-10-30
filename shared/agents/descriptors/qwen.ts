@@ -50,6 +50,13 @@ export const qwen: AgentDescriptor = {
 
   resume: {
     tail: spacedTail('--resume'),
+    /*
+     * qwen 的集成**只上报会话身份**（`hookAuthority: 'none'`），会话引用是它唯一的
+     * 输出，所以这些启动来源必须放行替换 —— 否则 /clear、--resume、branch 之后
+     * pane 仍钉在旧会话上，重启会续回错的对话。
+     * 对应重构前 `SESSION_REPLACEMENT_ALLOWED` 里的 qwen 五行。
+     */
+    replacementSources: ['startup', 'clear', 'resume', 'compact', 'branch'],
   },
 
   policy: statePolicy({ hookAuthority: 'none' }),

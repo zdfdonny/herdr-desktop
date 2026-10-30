@@ -10,7 +10,19 @@
  * - 幂等；旧事件清理；`version: 1` 维护；配置里没有 hooks 时不去凭空创建。
  */
 
-const { JsonHooksInstaller, GrokInstaller, AntigravityInstaller, DshInstaller, KimiInstaller, HermesInstaller } = require('../.tmp/json-hooks-installer.cjs');
+const {
+  JsonHooksInstaller,
+  GrokInstaller,
+  AntigravityInstaller,
+  DshInstaller,
+  KimiInstaller,
+  HermesInstaller,
+  dshPatchBlock,
+  dshPatchBlockIsValid,
+  upsertDshPatch,
+  removeDshPatchBlock,
+  removeDshPatchBlockFrom,
+} = require('../.tmp/json-hooks-installer.cjs');
 
 let passed = 0;
 let failed = 0;
@@ -554,6 +566,139 @@ console.log('— 14. DshInstaller：插件不需要可执行位 —');
   await inst.uninstall();
   check('dsh：卸载移除 YAML 块', removedPatch === 1);
   check('dsh：卸载删掉插件', !mem.files.has('/home/u/.dsh/plugins/state.mjs'));
+}
+
+/*
+ * dsh 的 `cordis.patch.yml` 块必须是 dsh 解析器能吃的形态。
+ *
+ * 这里锁死的是**外部契约**（`dsh-app-boot` 的 `parsePatchList` +
+ * `anchorInsertedPluginNames`）：顶层是 PatchOptions 数组，每项自带 `insert`，
+ * insert 条目是带 `name` 的映射且用 `./` 相对路径。
+ *
+ * 上一个版本把它写成了 `- patch:` + 裸字符串，整块被 dsh 静默忽略 ——
+ * 插件根本没加载，dsh 状态上报与 register-workspace 路由一起消失，
+ * 而当时没有任何测试覆盖这块内容（只有「调用了几次 upsert」的计数桩）。
+ */
+console.log('— 14b. DshInstaller：cordis.patch.yml 块符合 dsh schema —');
+{
+  const block = dshPatchBlock();
+  check('dsh 块：顶层是 insert 数组项，不是 patch 包裹',
+    block.includes('- insert:') && !block.includes('- patch:'));
+  check('dsh 块：insert 条目是带 id 的映射',
+    /- id: herdr-desktop-agent-state/.test(block));
+  check('dsh 块：name 用 ./ 相对路径（解析器只认 ./ ../ 绝对路径）',
+    /name: \.\/plugins\/herdr-desktop-agent-state\.mjs/.test(block));
+  check('dsh 块：没有裸字符串条目', !/- plugins\//.test(block));
+
+  // 用真实文件做一次 upsert / remove 往返
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-patch-'));
+  const patchPath = path.join(dir, 'cordis.patch.yml');
+  try {
+    fs.writeFileSync(patchPath, '- id: user-row\n  disabled: true\n', 'utf8');
+    await upsertDshPatch(patchPath);
+    const after = fs.readFileSync(patchPath, 'utf8');
+    check('dsh 块：upsert 保留用户条目', after.includes('user-row'));
+    check('dsh 块：upsert 写入 insert 形态', after.includes('- insert:'));
+    check('dsh 块：upsert 只写一个块',
+      after.split('# >>> herdr dsh integration').length === 2);
+
+    // 幂等：再 upsert 一次不应重复
+    await upsertDshPatch(patchPath);
+    const twice = fs.readFileSync(patchPath, 'utf8');
+    check('dsh 块：重复 upsert 不重复追加',
+      twice.split('# >>> herdr dsh integration').length === 2);
+
+    await removeDshPatchBlock(patchPath);
+    const removed = fs.readFileSync(patchPath, 'utf8');
+    check('dsh 块：移除后不留标记', !removed.includes('herdr dsh integration'));
+    check('dsh 块：移除后保留用户条目', removed.includes('user-row'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 纯函数：不存在的块 → 原样返回
+  check('dsh 块：无标记时 remove 不改内容',
+    removeDshPatchBlockFrom('- id: x\n') === '- id: x\n');
+
+  // validate：块写坏时必须判失效，否则 hookStatuses 会误报 installed 而无法触发修复
+  check('dsh 校验：正确的块判有效', dshPatchBlockIsValid(dshPatchBlock()) === true);
+  check('dsh 校验：缺少块判失效',
+    dshPatchBlockIsValid('- id: user-row\n') === false);
+  check('dsh 校验：patch 包裹的旧坏格式判失效',
+    dshPatchBlockIsValid(
+      '# >>> herdr dsh integration\n- patch:\n    - insert:\n        - plugins/x.mjs\n# <<< herdr dsh integration',
+    ) === false);
+  check('dsh 校验：缺 name 的条目判失效',
+    dshPatchBlockIsValid(
+      '# >>> herdr dsh integration\n- insert:\n    - id: x\n# <<< herdr dsh integration',
+    ) === false);
+  check('dsh 校验：name 少了 ./ 前缀判失效',
+    dshPatchBlockIsValid(
+      '# >>> herdr dsh integration\n- insert:\n    - id: x\n      name: plugins/x.mjs\n# <<< herdr dsh integration',
+    ) === false);
+}
+
+/*
+ * DshInstaller.validate()：真实文件路径下的三种情形。
+ *
+ * 关键是「产物在、但 patch 文件没了/写坏了」必须判失效 —— 否则 hookStatuses()
+ * 一直报 installed，用户在集成页看不到更新入口，只能手动改文件才能恢复。
+ */
+console.log('— 14c. DshInstaller.validate()：产物在但注册块不可用时判失效 —');
+{
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-validate-'));
+  const patchPath = path.join(dir, 'cordis.patch.yml');
+
+  const makeValidator = () => {
+    const mem = makeIo();
+    const layout = {
+      configFile: 'cordis.patch.yml', shape: 'nested', event: 'SessionStart',
+      events: [], artifactSubdir: 'plugins',
+    };
+    const deps = {
+      configDir: () => dir,
+      artifactPath: () => path.join(dir, 'plugins', 'state.mjs'),
+      version: () => 5,
+      command: () => '',
+      artifactIsInstalled: () => true,
+      artifactContent: () => 'export default {}\n',
+      io: mem.io, ops,
+    };
+    return new DshInstaller(layout, deps, path.join, {
+      upsertPatch: async (p) => { await upsertDshPatch(p); },
+      removePatchBlock: async (p) => { await removeDshPatchBlock(p); },
+    });
+  };
+
+  try {
+    check('dsh validate：patch 文件不存在判失效', makeValidator().validate() === false);
+
+    fs.writeFileSync(patchPath, '- id: user-row\n', 'utf8');
+    check('dsh validate：文件在但没有我们的块判失效',
+      makeValidator().validate() === false);
+
+    fs.writeFileSync(patchPath, dshPatchBlock() + '\n', 'utf8');
+    check('dsh validate：正确块判有效', makeValidator().validate() === true);
+
+    fs.writeFileSync(patchPath, '- id: user-row\n\n' + dshPatchBlock() + '\n', 'utf8');
+    check('dsh validate：与用户条目共存时判有效',
+      makeValidator().validate() === true);
+
+    fs.writeFileSync(
+      patchPath,
+      '# >>> herdr dsh integration\n- patch:\n    - insert:\n        - plugins/x.mjs\n# <<< herdr dsh integration\n',
+      'utf8',
+    );
+    check('dsh validate：旧坏格式判失效', makeValidator().validate() === false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 console.log('— 15. KimiInstaller：版本闸门 + TOML 块 —');
 {

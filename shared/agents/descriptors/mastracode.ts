@@ -67,6 +67,12 @@ export const mastracode: AgentDescriptor = {
 
   resume: {
     tail: spacedTail('--thread'),
+    /*
+     * 对应重构前 `SESSION_REPLACEMENT_ALLOWED` 里的
+     * `herdr:mastracode\0mastracode\0startup`：SessionStart 上报的会话引用
+     * 允许替换当前绑定，否则启动后 pane 会停在恢复出来的旧线程上。
+     */
+    replacementSources: ['startup'],
   },
 
   policy: statePolicy({

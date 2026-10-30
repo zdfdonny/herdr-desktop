@@ -167,6 +167,38 @@ check('「完成交给 hook」需要集成已安装的恰好是 claude + antigra
   allAgents().filter((d) => d.policy.completionRequiresIntegration).map((d) => d.id).join(',') ===
     'claude,antigravity');
 
+/*
+ * 会话替换白名单（对应重构前 `SESSION_REPLACEMENT_ALLOWED` 的 32 条）。
+ *
+ * 这张表决定「一条会话上报是否允许换掉 pane 当前锚定的会话」。漏声明 = 该智能体
+ * 的会话切换静默失效（/clear、--resume、branch 之后 pane 仍钉在旧会话上，
+ * 重启续回错的对话），而这在界面上只有一个很弱的信号，必须逐条锁死。
+ */
+const REPLACEMENT_SOURCES = {
+  claude: ['', 'clear', 'compact', 'fork', 'resume'],
+  codex: ['clear', 'compact', 'resume', 'startup'],
+  antigravity: [''],
+  hermes: ['new', 'resume', 'startup'],
+  qwen: ['branch', 'clear', 'compact', 'resume', 'startup'],
+  mastracode: ['startup'],
+  opencode: ['select'],
+  pi: ['fork', 'new', 'resume'],
+  grok: ['new'],
+  omp: ['fork', 'new', 'resume', 'startup'],
+};
+for (const [id, sources] of Object.entries(REPLACEMENT_SOURCES)) {
+  const declared = [...(agentById(id)?.resume?.replacementSources ?? [])].sort();
+  check(`${id} 的会话替换白名单与重构前一致`,
+    declared.join(',') === [...sources].sort().join(','),
+    `期望 ${[...sources].sort().join(',')}，实际 ${declared.join(',')}`);
+}
+check('没有多余的智能体声明会话替换白名单',
+  allAgents()
+    .filter((d) => d.resume?.replacementSources !== undefined)
+    .map((d) => d.id)
+    .sort()
+    .join(',') === Object.keys(REPLACEMENT_SOURCES).sort().join(','));
+
 console.log('— 4. 旧谓词函数与新策略等价 —');
 for (const id of AGENT_IDS) {
   const d = agentById(id);
@@ -238,7 +270,7 @@ console.log('— 7. 集成版本（与资产标记的一致性由 test:integrati
 const EXPECTED_VERSIONS = {
   claude: 5, codex: 4, kimi: 4, copilot: 4, devin: 4, droid: 4, qodercli: 4, qwen: 4,
   letta: 4, cursor: 4, mastracode: 4, antigravity: 6, grok: 4, pi: 4, omp: 5,
-  opencode: 4, kilo: 4, hermes: 3, dsh: 5,
+  opencode: 5, kilo: 4, hermes: 3, dsh: 5,
 };
 for (const [id, version] of Object.entries(EXPECTED_VERSIONS)) {
   check(`${id} 集成版本 = ${version}`, agentById(id)?.integration?.version === version,

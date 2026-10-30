@@ -292,19 +292,34 @@ export class Session {
   /**
    * 该 pane 的**有效智能体身份**。
    *
-   * 分成两层，顺序不可颠倒：
+   * 分成三层，顺序不可颠倒：
    * 1. `pane.agentId` —— **声明身份**，创建时由用户选择记录，权威来源；
-   * 2. `terminal.detectedAgent` —— **观测身份**，屏幕/命令/hook 推断的结果。
+   * 2. `terminal.detectedAgent` —— **观测身份**，屏幕/命令/hook 推断的结果；
+   * 3. web pane 的兜底 —— 回退到注册表里唯一的 web 型智能体。
    *
-   * 第二层只在第一层缺失时启用：纯终端 pane（用户自己敲 `claude`）没有声明身份，
+   * 第 2 层只在第 1 层缺失时启用：纯终端 pane（用户自己敲 `claude`）没有声明身份，
    * 但跑起来之后观测得到；而声明了身份的 pane 不该被观测结果改写
    * （TUI 不一定打印品牌名，opencode / antigravity 尤其不可靠）。
+   *
+   * 第 3 层是**重构前的等价语义**：那时 web pane 写死等价于 dsh。web pane 没有终端、
+   * 因此 `detectedAgent` 恒为 null；而重构前创建的 pane 在 `session.json` 里没有
+   * `agentId` 字段，若不兜底，`WebAgentService.start()` 会因为拿不到 descriptor 而
+   * 直接放弃启动 —— 表现为该 pane 永远停在「服务启动中」、既不注册 workspace 也
+   * 收不到任何状态上报。
    */
   agentForPane(paneId: string): AgentDescriptor | null {
     const pane = this.panes.get(paneId);
     const declared = agentById(pane?.agentId);
     if (declared) return declared;
-    return agentById(this.terminals.get(paneId)?.detectedAgent);
+    const observed = agentById(this.terminals.get(paneId)?.detectedAgent);
+    if (observed) return observed;
+    /*
+     * web pane 兜底。声明的 agentId 也可能缺失，或指向已删除/改名的智能体
+     * （`resolveWebAgent(requested)` 在 requested 无法解析时**不回退**），
+     * 而 web pane 的传输形态已经确定是 web 型，所以再退回「唯一的 web 型智能体」。
+     */
+    if (pane?.kind !== 'web') return null;
+    return resolveWebAgent(pane.agentId ?? null) ?? resolveWebAgent();
   }
 
   /** 该 pane 是否当前聚焦（用于 done/seen 判定）。 */

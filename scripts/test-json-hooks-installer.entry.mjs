@@ -7,7 +7,14 @@
 export { JsonHooksInstaller } from '../electron/agents/installers/json-hooks-installer';
 export { GrokInstaller } from '../electron/agents/installers/grok-installer';
 export { AntigravityInstaller } from '../electron/agents/installers/antigravity-installer';
-export { DshInstaller } from '../electron/agents/installers/dsh-installer';
+export {
+  DshInstaller,
+  dshPatchBlock,
+  dshPatchBlockIsValid,
+  upsertDshPatch,
+  removeDshPatchBlock,
+  removeDshPatchBlockFrom,
+} from '../electron/agents/installers/dsh-installer';
 export { KimiInstaller } from '../electron/agents/installers/kimi-installer';
 export { HermesInstaller } from '../electron/agents/installers/hermes-installer';
 export {

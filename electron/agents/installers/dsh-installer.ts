@@ -12,7 +12,7 @@
  * 也不属于 profile 自动初始化写入的文件，避免被 `dsh web` 首次启动覆盖。
  */
 
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IntegrationInstaller } from '../installer';
@@ -48,6 +48,26 @@ export interface DshInstallerIo {
   removePatchBlock(patchPath: string): Promise<void>;
 }
 
+/**
+ * 判断 `cordis.patch.yml` 的内容里我们的块是否**仍是 dsh 能吃的形态**。
+ *
+ * 产物存在且版本够、但注册块写坏时，通用三步会误判成 `installed` ——
+ * 用户看不到「需要更新」，也就没有入口触发修复。这里把这种情形暴露出来，
+ * 让 `hookStatuses()` 报 `outdated`，装一次即修好。
+ */
+export function dshPatchBlockIsValid(content: string): boolean {
+  const begin = content.indexOf(DSH_PATCH_BEGIN);
+  const end = content.indexOf(DSH_PATCH_END);
+  if (begin < 0 || end < 0 || end < begin) return false;
+  const block = content.slice(begin, end);
+  return (
+    block.includes('- insert:') &&
+    !block.includes('- patch:') &&
+    /- id:\s*\S+/.test(block) &&
+    /name:\s*\.\/plugins\//.test(block)
+  );
+}
+
 export class DshInstaller extends JsonHooksInstaller {
   constructor(
     layout: JsonHooksLayout,
@@ -66,6 +86,26 @@ export class DshInstaller extends JsonHooksInstaller {
   /** 插件由 Node 直接加载，不需要可执行位（与 hook 脚本不同）。 */
   protected override needsExecutableBit(): boolean {
     return false;
+  }
+
+  /**
+   * 「装好了但注册块已失效」判据。
+   *
+   * 三种情形分开处理，不能一律当有效：
+   * - 不知道配置目录 → 无从判断，报有效（不误报）；
+   * - 产物在但 `cordis.patch.yml` 不存在 → **无效**：注册块是产物的唯一生效途径，
+   *   文件没了等同于没装，否则 `hookStatuses()` 会一直报 `installed`、用户没有修复入口；
+   * - 文件在但读不出来（权限等）→ 报有效（保守：不因一次读失败就提示更新）；
+   * - 读到内容 → 按 schema 判。
+   */
+  validate(): boolean {
+    const dir = this.configDir();
+    if (dir === null) return true;
+    const path = this.join(dir, 'cordis.patch.yml');
+    if (!existsSync(path)) return false;
+    const content = readTextSyncSafe(path);
+    if (content === null) return true;
+    return dshPatchBlockIsValid(content);
   }
 
   /** 产物已由基类写入；这里补 `cordis.patch.yml` 的块。 */
@@ -87,19 +127,32 @@ export class DshInstaller extends JsonHooksInstaller {
   }
 }
 
-/** `cordis.patch.yml` 里插入的块内容。 */
-function dshPatchBlock(): string {
+/**
+ * `cordis.patch.yml` 里插入的块内容。
+ *
+ * 形态由 dsh 的 patch 解析器（`dsh-app-boot: parsePatchList` +
+ * `anchorInsertedPluginNames`）决定，不是自由格式：
+ *
+ * - 顶层必须是 **PatchOptions 数组**，每项自己持有 `insert`；
+ * - `insert` 的每个条目必须是**带 `name` 的映射**，`name` 用 `./` 相对路径
+ *   （解析器只把 `./` / `../` / 绝对路径转成 file URL）；
+ * - 不能多包一层 `patch:` —— 那样顶层项就没有 `insert`，整块被静默忽略。
+ *
+ * 忽略的后果不是报错而是「插件根本没加载」：状态上报全部消失，且
+ * `register-workspace` 路由不存在，主进程拿不到落地会话 id。
+ */
+export function dshPatchBlock(): string {
   return [
     DSH_PATCH_BEGIN,
-    '- patch:',
-    '    - insert:',
-    `        - plugins/${DSH_STATUS_PLUGIN_NAME}`,
+    '- insert:',
+    '    - id: herdr-desktop-agent-state',
+    `      name: ./plugins/${DSH_STATUS_PLUGIN_NAME}`,
     DSH_PATCH_END,
   ].join('\n');
 }
 
 /** 纯函数版：从内容里删掉块标记区间。 */
-function removeDshPatchBlockFrom(content: string): string {
+export function removeDshPatchBlockFrom(content: string): string {
   const begin = content.indexOf(DSH_PATCH_BEGIN);
   if (begin < 0) return content;
   const end = content.indexOf(DSH_PATCH_END);
@@ -116,8 +169,17 @@ async function readTextSafe(path: string): Promise<string> {
   }
 }
 
+/** 同步读文本；读失败返回 null（区别于「读到空文件」）。 */
+function readTextSyncSafe(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 /** upsert：先移除旧块，再追加新块（保证重装同步最新内容）。 */
-async function upsertDshPatch(patchPath: string): Promise<void> {
+export async function upsertDshPatch(patchPath: string): Promise<void> {
   const content = await readTextSafe(patchPath);
   const stripped = removeDshPatchBlockFrom(content).replace(/\n+$/, '');
   const next = stripped.length > 0 ? `${stripped}\n\n${dshPatchBlock()}\n` : `${dshPatchBlock()}\n`;
@@ -125,7 +187,7 @@ async function upsertDshPatch(patchPath: string): Promise<void> {
 }
 
 /** 从 `cordis.patch.yml` 里移除我们的块（无则 no-op）。 */
-async function removeDshPatchBlock(patchPath: string): Promise<void> {
+export async function removeDshPatchBlock(patchPath: string): Promise<void> {
   const content = await readTextSafe(patchPath);
   const next = removeDshPatchBlockFrom(content);
   if (next !== content) await fs.writeFile(patchPath, next, 'utf8');

@@ -39,7 +39,7 @@ export const opencode: AgentDescriptor = {
 
   integration: {
     kind: 'plugin',
-    version: 4,
+    version: 5,
     /** 没有环境变量覆盖：opencode 只认 XDG 默认位置。 */
     configDir: (host) => joinPath(host, host.home, '.config', 'opencode'),
     artifactPath: (host) =>

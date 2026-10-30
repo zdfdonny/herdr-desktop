@@ -1,5 +1,5 @@
 // HERDR_DESKTOP_INTEGRATION_ID=herdr-desktop
-// HERDR_DESKTOP_INTEGRATION_VERSION=4
+// HERDR_DESKTOP_INTEGRATION_VERSION=5
 const SOURCE = "herdr-desktop:opencode";
 const AGENT = "opencode";
 const REPORT_URL = process.env.HERDR_DESKTOP_REPORT_URL;
@@ -9,7 +9,7 @@ let reportSeq = Date.now() * 1000;
 let requestChain = Promise.resolve();
 let reportedRootSessionID;
 
-// 追踪子会话，避免子会话事件覆盖 pane 的根会话。
+// Track child sessions so their events never overwrite the pane's root session.
 const childSessions = new Map();
 const CHILD_EVENT_STATES = new Map([
   ["permission.asked", "blocked"],
@@ -69,17 +69,18 @@ function reportSession(sessionID) {
   return request({ sessionId: sessionID });
 }
 
-function reportState(state, sessionID) {
+function reportState(state, sessionID, extra) {
   const params = { state };
   if (sessionID) {
     reportedRootSessionID = sessionID;
     params.sessionId = sessionID;
   }
+  if (extra) Object.assign(params, extra);
   return request(params);
 }
 
-// 本地 run/Mini 客户端没有 TUI 插件，由这里拥有生命周期；
-// 共享服务器与 TUI worker 的生命周期归各自的 TUI。
+// Local `run` / Mini clients have no TUI plugin, so this plugin owns their lifecycle;
+// shared-server and TUI-worker lifecycles belong to their own TUI.
 function ownsLocalLifecycle() {
   const args = process.argv.slice(2);
   const separator = args.indexOf("--");
@@ -146,8 +147,18 @@ export const HerdrAgentStatePlugin = async () => {
           break;
         case "permission.asked":
         case "question.asked":
-        case "session.error":
           await reportState("blocked", sessionID);
+          break;
+        /*
+         * A turn ended with an error: the turn is over, the model is not waiting for
+         * the user. `blocked` means "waiting for user input" (permission prompt /
+         * pending question) and projects as a red blocked pane; an error hands control
+         * back to the user, so it is a finished turn - report idle so it projects as
+         * done (green), exactly like a normal completion. Reporting `blocked` here left
+         * the pane red-blocked until the next turn started.
+         */
+        case "session.error":
+          await reportState("idle", sessionID, { completion: "completed" });
           break;
         case "session.idle":
           await reportState("idle", sessionID);
